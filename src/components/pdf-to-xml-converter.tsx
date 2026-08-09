@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { parseNFE, verifyChaveCNPJ, type NFEData } from '@/lib/nfe-parser'
+import { parsePdfClientSide } from '@/lib/client-pdf-parser'
 import { Dashboard } from '@/components/dashboard'
 import {
   FileText,
@@ -361,9 +362,11 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
   // MODO 1: CONVERTER PDF PARA XML
   // =========================================================================
   const convertSinglePDF = async (file: File): Promise<PDFConversionResult[]> => {
+    let apiSuccess = false
+    let data: any = null
+
     try {
       const base64Data = await fileToBase64(file)
-      
       const response = await fetch('/api/pdf-to-xml', {
         method: 'POST',
         headers: {
@@ -375,26 +378,30 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         }),
       })
 
-      const responseText = await response.text()
-      let data: any = {}
-      try {
-        data = JSON.parse(responseText)
-      } catch (parseErr) {
+      if (response.ok) {
+        const responseText = await response.text()
         try {
-          const cleanedText = responseText.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-          data = JSON.parse(cleanedText)
-        } catch (retryErr) {
-          if (!response.ok) {
-            throw new Error(data.error || `Erro (${response.status}): ${responseText.replace(/<[^>]*>/g, '').trim().slice(0, 150) || response.statusText}`)
+          data = JSON.parse(responseText)
+          if (data && (data.xml || (data.items && data.items.length > 0))) {
+            apiSuccess = true
           }
-          throw new Error('Falha ao interpretar resposta do servidor de conversão.')
+        } catch (parseErr) {
+          try {
+            const cleanedText = responseText.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+            data = JSON.parse(cleanedText)
+            if (data && (data.xml || (data.items && data.items.length > 0))) {
+              apiSuccess = true
+            }
+          } catch (retryErr) {
+            // Ignora falha de parse do servidor e usa fallback do cliente
+          }
         }
       }
+    } catch (apiErr) {
+      // Servidor inacessível, cai no processamento direto no navegador
+    }
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro inesperado ao converter PDF para XML')
-      }
-
+    if (apiSuccess && data) {
       if (data.items && Array.isArray(data.items) && data.items.length > 0) {
         return data.items.map((it: any) => {
           let nfeData: any = null
@@ -431,13 +438,39 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         parsedData: data.parsedData,
         nfeData,
       }]
-    } catch (err: any) {
-      console.error(`Erro ao converter ${file.name}:`, err)
+    }
+
+    // Fallback 100% no navegador (Client-Side) com pdfjs-dist
+    try {
+      const clientResult = await parsePdfClientSide(file, file.name)
+      if (clientResult.items && clientResult.items.length > 0) {
+        return clientResult.items.map((it: any) => ({
+          fileName: it.fileName || file.name,
+          fileType: 'pdf' as const,
+          xmlContent: it.xml,
+          error: null,
+          isProcessing: false,
+          parsedData: it.parsedData,
+          nfeData: it.nfeData,
+        }))
+      }
+
+      return [{
+        fileName: file.name,
+        fileType: 'pdf' as const,
+        xmlContent: clientResult.xml,
+        error: null,
+        isProcessing: false,
+        parsedData: clientResult.parsedData,
+        nfeData: clientResult.nfeData,
+      }]
+    } catch (clientErr: any) {
+      console.error(`Erro ao converter ${file.name} no cliente:`, clientErr)
       return [{
         fileName: file.name,
         fileType: 'pdf' as const,
         xmlContent: null,
-        error: err.message || 'Falha ao conectar ao servidor de conversão.',
+        error: clientErr.message || 'Não foi possível ler o arquivo PDF.',
         isProcessing: false,
       }]
     }

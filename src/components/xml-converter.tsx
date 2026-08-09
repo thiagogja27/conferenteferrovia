@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { parseNFE, verifyChaveCNPJ, type NFEData } from '@/lib/nfe-parser'
+import { parsePdfClientSide } from '@/lib/client-pdf-parser'
 import { Dashboard } from '@/components/dashboard'
 import { SearchPanel } from '@/components/search-panel'
 import { MapPanel } from '@/components/map-panel' // Importar o novo painel do mapa
@@ -264,6 +265,9 @@ export function XMLConverter() {
     originalPath: string,
     fileOrBlob: File | Blob
   ): Promise<ProcessedFile[]> => {
+    let apiSuccess = false
+    let data: any = null
+
     try {
       const base64Data = await fileToBase64(fileOrBlob)
       const response = await fetch('/api/pdf-to-xml', {
@@ -271,8 +275,31 @@ export function XMLConverter() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileBase64: base64Data, fileName }),
       })
-      const data = await response.json()
 
+      if (response.ok) {
+        const responseText = await response.text()
+        try {
+          data = JSON.parse(responseText)
+          if (data && (data.xml || (data.items && data.items.length > 0))) {
+            apiSuccess = true
+          }
+        } catch (parseErr) {
+          try {
+            const cleanedText = responseText.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+            data = JSON.parse(cleanedText)
+            if (data && (data.xml || (data.items && data.items.length > 0))) {
+              apiSuccess = true
+            }
+          } catch (retryErr) {
+            // Ignora falha de parse do servidor e usa fallback do cliente
+          }
+        }
+      }
+    } catch (apiErr) {
+      // Servidor inacessível, cai no processamento direto no navegador
+    }
+
+    if (apiSuccess && data) {
       if (data.items && Array.isArray(data.items) && data.items.length > 0) {
         return data.items.map((it: any) => {
           const nfeData = parseNFE(it.xml)
@@ -286,30 +313,47 @@ export function XMLConverter() {
         })
       }
 
-      if (!response.ok || !data.xml) {
+      if (data.xml) {
+        const nfeData = parseNFE(data.xml)
         return [{
           fileName,
           originalPath,
-          xmlContent: '',
-          nfeData: null,
-          error: data.error || 'Erro ao converter PDF em XML.',
+          xmlContent: data.xml,
+          nfeData,
+          error: nfeData ? null : 'Não foi possível interpretar os dados do PDF.',
         }]
       }
-      const nfeData = parseNFE(data.xml)
+    }
+
+    // Fallback 100% no navegador (Client-Side) com pdfjs-dist
+    try {
+      const fileToParse = fileOrBlob instanceof File ? fileOrBlob : new File([fileOrBlob], fileName, { type: 'application/pdf' })
+      const clientResult = await parsePdfClientSide(fileToParse, fileName)
+
+      if (clientResult.items && clientResult.items.length > 0) {
+        return clientResult.items.map((it: any) => ({
+          fileName: it.fileName || fileName,
+          originalPath,
+          xmlContent: it.xml,
+          nfeData: it.nfeData || (it.xml ? parseNFE(it.xml) : null),
+          error: it.xml ? null : 'Não foi possível interpretar os dados do PDF.',
+        }))
+      }
+
       return [{
         fileName,
         originalPath,
-        xmlContent: data.xml,
-        nfeData,
-        error: nfeData ? null : 'Não foi possível interpretar os dados do PDF.',
+        xmlContent: clientResult.xml || '',
+        nfeData: clientResult.nfeData || (clientResult.xml ? parseNFE(clientResult.xml) : null),
+        error: clientResult.xml ? null : 'Não foi possível interpretar os dados do PDF.',
       }]
-    } catch (err: any) {
+    } catch (clientErr: any) {
       return [{
         fileName,
         originalPath,
         xmlContent: '',
         nfeData: null,
-        error: err.message || 'Erro ao processar PDF.',
+        error: clientErr.message || 'Erro ao processar PDF.',
       }]
     }
   }
