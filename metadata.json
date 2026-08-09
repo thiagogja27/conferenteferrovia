@@ -1,0 +1,6 @@
+{
+  "name": "VLIC - Conversor & Visualizador de NF-e",
+  "description": "Conversor e analisador inteligente de notas fiscais (XML/PDF), com dashboard, mapa interativo de rotas logísticas e exportação para Excel e PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
