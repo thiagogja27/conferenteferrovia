@@ -6,10 +6,12 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { parseNFE, verifyChaveCNPJ, type NFEData } from '@/lib/nfe-parser'
 import { parsePdfClientSide } from '@/lib/client-pdf-parser'
+import { generatePDF } from '@/lib/pdf-generator'
 import { Dashboard } from '@/components/dashboard'
 import { SearchPanel } from '@/components/search-panel'
 import { MapPanel } from '@/components/map-panel' // Importar o novo painel do mapa
 import { PDFToXMLConverter } from '@/components/pdf-to-xml-converter'
+import { MDFExcelComparator } from '@/components/mdf-excel-comparator'
 import { DocumentationPanel } from '@/components/documentation-panel'
 import {
   FileText,
@@ -40,6 +42,7 @@ import {
   BookOpen,
   Filter,
   Layers,
+  TrainTrack,
 } from 'lucide-react'
 import JSZip from 'jszip'
 import * as XLSX from 'xlsx'
@@ -155,7 +158,7 @@ export function XMLConverter() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<string>('list')
-  const [converterMode, setConverterMode] = useState<'xml-to-pdf' | 'pdf-to-xml' | 'documentation'>('xml-to-pdf')
+  const [converterMode, setConverterMode] = useState<'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'documentation'>('xml-to-pdf')
   const [processFileType, setProcessFileType] = useState<'all' | 'xml' | 'pdf'>('all')
 
   // Estados e funções para Alerta por Voz (Web Speech API)
@@ -596,7 +599,6 @@ export function XMLConverter() {
   const handleDownloadPDF = async (processedFile: ProcessedFile) => {
     if (!processedFile.nfeData) return;
 
-    const { generatePDF } = await import('@/lib/pdf-generator');
     const doc = generatePDF(processedFile.nfeData);
     const baseName = processedFile.fileName.replace(/\.xml$/i, '');
     const fileName = `NF_${processedFile.nfeData.numero || baseName}_${Date.now()}.pdf`;
@@ -617,7 +619,6 @@ export function XMLConverter() {
     setIsDownloading(true);
 
     try {
-      const { generatePDF } = await import('@/lib/pdf-generator');
       const zip = new JSZip();
 
       for (const file of files) {
@@ -762,16 +763,16 @@ export function XMLConverter() {
 
   return (
     <div className='min-h-screen bg-background p-4 md:p-8'>
-      <div className='mx-auto max-w-4xl'>
+      <div className={`mx-auto transition-all ${converterMode === 'mdf-x-excel' ? 'max-w-6xl xl:max-w-7xl' : 'max-w-4xl lg:max-w-5xl'}`}>
         <div className='mb-8 text-center'>
           <div className='mb-4 inline-flex items-center justify-center rounded-full bg-primary/10 p-3'>
             <FileText className='h-8 w-8 text-primary' />
           </div>
           <h1 className='text-3xl font-bold tracking-tight text-foreground'>
-            Conversor de Notas Fiscais
+            Conversor de Notas Fiscais & MDF-e
           </h1>
           <p className='mt-2 text-muted-foreground'>
-            Converta, analise e extraia dados de suas notas fiscais de forma inteligente
+            Converta, analise e concilie notas fiscais, manifestos ferroviários e planilhas de forma inteligente
           </p>
         </div>
 
@@ -801,10 +802,21 @@ export function XMLConverter() {
               PDF para XML & Conferência
             </button>
             <button
+              onClick={() => setConverterMode('mdf-x-excel')}
+              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all cursor-pointer ${
+                converterMode === 'mdf-x-excel'
+                  ? 'bg-indigo-600 text-white shadow-sm font-bold'
+                  : 'text-zinc-700 hover:text-zinc-950 dark:text-zinc-300 dark:hover:text-zinc-50'
+              }`}
+            >
+              <TrainTrack className="h-4 w-4 text-amber-400" />
+              MDF x EXCEL (Vagões)
+            </button>
+            <button
               onClick={() => setConverterMode('documentation')}
               className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all cursor-pointer ${
                 converterMode === 'documentation'
-                  ? 'bg-indigo-600 text-white shadow-sm font-bold'
+                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900 font-bold'
                   : 'text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200'
               }`}
             >
@@ -816,6 +828,8 @@ export function XMLConverter() {
 
         {converterMode === 'documentation' ? (
           <DocumentationPanel />
+        ) : converterMode === 'mdf-x-excel' ? (
+          <MDFExcelComparator onOpenDoc={() => setConverterMode('documentation')} />
         ) : converterMode === 'pdf-to-xml' ? (
           <PDFToXMLConverter
             onAnalyzeXML={handleAnalyzeGeneratedXML}

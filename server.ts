@@ -32,6 +32,11 @@ function cleanControlChars(val: any): any {
   return val;
 }
 
+// Endpoint de saúde
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
 // Endpoint da API para converter PDF em XML de NF-e usando Regras Locais (Processamento Local e 100% Gratuito)
 app.post("/api/pdf-to-xml", async (req, res, next) => {
   try {
@@ -74,6 +79,34 @@ app.post("/api/pdf-to-xml", async (req, res, next) => {
   } catch (err: any) {
     console.error("Erro geral na rota de conversão:", err);
     return res.status(500).json({ error: err.message || "Erro ao processar conversão do PDF." });
+  }
+});
+
+// Endpoint genérico para extração de texto de PDFs (DANFE, MDF-e, Conhecimento de Transporte, etc.)
+app.post("/api/parse-pdf-text", async (req, res) => {
+  try {
+    const { fileBase64, fileName } = req.body || {};
+    if (!fileBase64) {
+      return res.status(400).json({ error: "Nenhum arquivo PDF enviado no corpo da requisição." });
+    }
+
+    const pdfBuffer = Buffer.from(fileBase64, "base64");
+    const parser = new PDFParse({ data: pdfBuffer });
+    try {
+      const textResult = await parser.getText();
+      const text = textResult?.text || "";
+      const pages = (textResult?.pages as any) || [];
+      return res.status(200).json({
+        text,
+        pages,
+        fileName: fileName || "documento.pdf",
+      });
+    } finally {
+      await parser.destroy();
+    }
+  } catch (err: any) {
+    console.error(`Erro ao extrair texto do PDF ${req.body?.fileName}:`, err);
+    return res.status(500).json({ error: err.message || "Erro ao extrair texto do PDF." });
   }
 });
 

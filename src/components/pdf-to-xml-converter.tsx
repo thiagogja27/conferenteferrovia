@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { parseNFE, verifyChaveCNPJ, type NFEData } from '@/lib/nfe-parser'
 import { parsePdfClientSide } from '@/lib/client-pdf-parser'
+import { generatePDF } from '@/lib/pdf-generator'
 import { Dashboard } from '@/components/dashboard'
 import {
   FileText,
@@ -798,7 +799,6 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     }
 
     try {
-      const { generatePDF } = await import('@/lib/pdf-generator')
       const doc = generatePDF(result.nfeData)
       const baseName = result.fileName.replace(/\.xml$/i, '')
       const pdfFileName = `DANFE_NF_${result.nfeData.numero || baseName}_${Date.now()}.pdf`
@@ -817,7 +817,6 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     }
 
     try {
-      const { generatePDF } = await import('@/lib/pdf-generator')
       const zip = new JSZip()
       activeResults.forEach((res) => {
         if (res.nfeData) {

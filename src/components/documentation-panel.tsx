@@ -23,11 +23,12 @@ import {
   ArrowRight,
   Info,
   Check,
-  Filter
+  Filter,
+  TrainTrack,
 } from 'lucide-react'
 
 export function DocumentationPanel() {
-  const [activeTopic, setActiveTopic] = useState<'excel-conferencia' | 'pdf-to-xml' | 'conferencia-geral' | 'faq'>('excel-conferencia')
+  const [activeTopic, setActiveTopic] = useState<'mdf-x-excel' | 'excel-conferencia' | 'pdf-to-xml' | 'conferencia-geral' | 'faq'>('mdf-x-excel')
   const [searchDocQuery, setSearchDocQuery] = useState('')
 
   return (
@@ -44,11 +45,11 @@ export function DocumentationPanel() {
                 <CardTitle className="text-xl font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
                   Guia Oficial & Documentação do Sistema
                   <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-indigo-100 text-indigo-800 dark:bg-indigo-900/80 dark:text-indigo-200">
-                    v2.5 Atualizado
+                    v3.0 Ferroviário
                   </span>
                 </CardTitle>
                 <CardDescription className="text-sm mt-1 text-zinc-600 dark:text-zinc-400">
-                  Instruções completas para conferência entre planilhas Excel e notas fiscais (PDF/XML), conversão de DANFE e auditoria logística.
+                  Instruções completas para conferência de vagões (MDF-e x Excel), cruzamento de notas fiscais, extração de DAMDFE/DANFE e auditoria logística.
                 </CardDescription>
               </div>
             </div>
@@ -72,15 +73,28 @@ export function DocumentationPanel() {
           <div className="flex flex-wrap gap-2 pt-3">
             <button
               type="button"
+              onClick={() => setActiveTopic('mdf-x-excel')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
+                activeTopic === 'mdf-x-excel'
+                  ? 'bg-indigo-600 text-white shadow-xs font-bold'
+                  : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
+              }`}
+            >
+              <TrainTrack className="h-4 w-4 text-amber-300" />
+              1. Conciliação MDF-e x Excel (Vagões)
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTopic('excel-conferencia')}
               className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
                 activeTopic === 'excel-conferencia'
-                  ? 'bg-indigo-600 text-white shadow-xs'
+                  ? 'bg-indigo-600 text-white shadow-xs font-bold'
                   : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
               }`}
             >
               <FileSpreadsheet className="h-4 w-4" />
-              1. Conferência Excel x Notas (Peso e Chaves)
+              2. Conferência Excel x Notas (Peso e Chaves)
             </button>
 
             <button
@@ -88,12 +102,12 @@ export function DocumentationPanel() {
               onClick={() => setActiveTopic('pdf-to-xml')}
               className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
                 activeTopic === 'pdf-to-xml'
-                  ? 'bg-indigo-600 text-white shadow-xs'
+                  ? 'bg-indigo-600 text-white shadow-xs font-bold'
                   : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
               }`}
             >
               <Sparkles className="h-4 w-4" />
-              2. Extração de PDF (DANFE) para XML
+              3. Extração de PDF (DANFE) para XML
             </button>
 
             <button
@@ -101,12 +115,12 @@ export function DocumentationPanel() {
               onClick={() => setActiveTopic('conferencia-geral')}
               className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
                 activeTopic === 'conferencia-geral'
-                  ? 'bg-indigo-600 text-white shadow-xs'
+                  ? 'bg-indigo-600 text-white shadow-xs font-bold'
                   : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
               }`}
             >
               <ShieldCheck className="h-4 w-4" />
-              3. Audit. CNPJ, Áudio, Dashboard e Mapa
+              4. Audit. CNPJ, Áudio, Dashboard e Mapa
             </button>
 
             <button
@@ -114,16 +128,92 @@ export function DocumentationPanel() {
               onClick={() => setActiveTopic('faq')}
               className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
                 activeTopic === 'faq'
-                  ? 'bg-indigo-600 text-white shadow-xs'
+                  ? 'bg-indigo-600 text-white shadow-xs font-bold'
                   : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
               }`}
             >
               <HelpCircle className="h-4 w-4" />
-              4. Perguntas Frequentes & Dicas
+              5. Perguntas Frequentes & Dicas
             </button>
           </div>
         </CardContent>
       </Card>
+
+      {/* CONTEÚDO TÓPICO: CONCILIAÇÃO MDF-E X EXCEL (VAGÕES) */}
+      {activeTopic === 'mdf-x-excel' && (
+        <div className="space-y-6">
+          <Card className="border-indigo-200 dark:border-indigo-900/40">
+            <CardHeader className="bg-indigo-50/50 dark:bg-indigo-950/20 rounded-t-xl">
+              <div className="flex items-center gap-2 text-indigo-900 dark:text-indigo-200 font-bold text-base">
+                <TrainTrack className="h-5 w-5 text-indigo-600" />
+                <span>Como Funciona o Módulo MDF-e Ferroviário x Planilha Excel</span>
+              </div>
+              <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1">
+                Projetado especificamente para operações ferroviárias de granéis e cargas gerais (MRS Logística, Rumo, VLI, Fiol, etc.), permitindo conciliar 100% dos vagões carregados em segundos.
+              </p>
+            </CardHeader>
+
+            <CardContent className="p-6 space-y-6 text-sm text-zinc-700 dark:text-zinc-300">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-2">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 flex items-center justify-center font-bold text-sm">
+                    1
+                  </div>
+                  <h4 className="font-bold text-zinc-900 dark:text-zinc-100">Upload do DAMDFE (PDF/XML)</h4>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    Arraste o PDF do DAMDFE ou o arquivo XML do MDF-e. O sistema extrai automaticamente o prefixo do trem, origem, destino, quantidade declarada e cada vagão individual (Série, Número e Tonelagem Útil).
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-2">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 flex items-center justify-center font-bold text-sm">
+                    2
+                  </div>
+                  <h4 className="font-bold text-zinc-900 dark:text-zinc-100">Upload da Planilha Excel</h4>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    Carregue a planilha (.xlsx, .xls ou .csv) da sua programação ou terminal. A coluna que contém o nome ou número do vagão é auto-detectada com seletor manual opcional.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-2">
+                  <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 flex items-center justify-center font-bold text-sm">
+                    3
+                  </div>
+                  <h4 className="font-bold text-zinc-900 dark:text-zinc-100">Auditoria & Exportação</h4>
+                  <p className="text-xs text-zinc-500 leading-relaxed">
+                    O sistema categoriza instantaneamente os vagões em: Conferidos, Faltam no Excel e Faltam no MDF. Exporte uma planilha formatada ou copie a lista de pendências com um clique.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <h4 className="font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-indigo-600" />
+                  Padrões e Normalização Inteligente de Vagões Suportados
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 bg-zinc-50 dark:bg-zinc-900/80 rounded-lg border border-zinc-200 dark:border-zinc-800 space-y-1">
+                    <span className="font-bold text-indigo-700 dark:text-indigo-300">Formatos Aceitos na Planilha:</span>
+                    <ul className="list-disc list-inside text-zinc-600 dark:text-zinc-400 space-y-0.5 mt-1 font-mono">
+                      <li>HPT 250490 (Série + Espaço + Número)</li>
+                      <li>HPT-250490 ou HPT_250490</li>
+                      <li>HPT250490 (Junto)</li>
+                      <li>250490 ou 0250490 (Apenas o número)</li>
+                    </ul>
+                  </div>
+
+                  <div className="p-3 bg-zinc-50 dark:bg-zinc-900/80 rounded-lg border border-zinc-200 dark:border-zinc-800 space-y-1">
+                    <span className="font-bold text-emerald-700 dark:text-emerald-300">Principais Séries Ferroviárias:</span>
+                    <p className="text-zinc-600 dark:text-zinc-400 mt-1 leading-relaxed">
+                      Reconhece automaticamente frotas <code className="font-bold text-zinc-800 dark:text-zinc-200">HPT, HFS, HTT, HPS, HAD, FDD, TCT, GDT, PRD, PEM, PES, TCG</code> e dezenas de outros tipos de vagões de trem.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* CONTEÚDO TÓPICO 1: CONFERÊNCIA EXCEL X NOTAS */}
       {activeTopic === 'excel-conferencia' && (
