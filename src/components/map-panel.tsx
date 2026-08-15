@@ -20,6 +20,7 @@ import {
   Train
 } from "lucide-react"
 import L from "leaflet"
+import "leaflet/dist/leaflet.css"
 
 interface ProcessedFile {
   fileName: string
@@ -73,18 +74,6 @@ export function MapPanel({ files }: MapPanelProps) {
   // Filtra as notas processadas com dados completos
   const filesWithData = files.filter((f) => f.nfeData !== null)
   const activeFile = filesWithData[selectedFileIndex]
-
-  // Carrega folhas de estilo do Leaflet dinamicamente
-  useEffect(() => {
-    const linkId = "leaflet-css"
-    if (!document.getElementById(linkId)) {
-      const link = document.createElement("link")
-      link.id = linkId
-      link.rel = "stylesheet"
-      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      document.head.appendChild(link)
-    }
-  }, [])
 
   // Geocodificador inteligente: Verificação rápida offline -> extração heurística -> OpenStreetMap Nominatim
   const performGeocoding = async (addressText: string): Promise<[number, number] | null> => {

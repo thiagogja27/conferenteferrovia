@@ -56,6 +56,7 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   const [mdfeList, setMdfeList] = useState<MdfeData[]>([])
   const [isProcessingMdf, setIsProcessingMdf] = useState(false)
   const [mdfError, setMdfError] = useState<string | null>(null)
+  const [isDraggingMdf, setIsDraggingMdf] = useState(false)
 
   // Estado da Planilha Excel
   const [excelFileName, setExcelFileName] = useState<string>('')
@@ -65,9 +66,11 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   const [rawExcelRows, setRawExcelRows] = useState<any[]>([])
   const [excelColumns, setExcelColumns] = useState<string[]>([])
   const [selectedWagonColumn, setSelectedWagonColumn] = useState<string>('')
+  const [selectedSecondaryWagonColumn, setSelectedSecondaryWagonColumn] = useState<string>('')
   const [selectedWeightColumn, setSelectedWeightColumn] = useState<string>('')
   const [isProcessingExcel, setIsProcessingExcel] = useState(false)
   const [excelError, setExcelError] = useState<string | null>(null)
+  const [isDraggingExcel, setIsDraggingExcel] = useState(false)
 
   // Estados de Interface e Filtros
   const [searchTerm, setSearchTerm] = useState('')
@@ -157,39 +160,54 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
       const cols = Object.keys(jsonData[0] || {})
       setExcelColumns(cols)
 
-      // Auto-detectar coluna de Vagão
-      let detectedWagonCol = cols.find((c) => {
+      // Priorização e Auto-detecção das Colunas de Vagão
+      // Procura com máxima prioridade por "Número de ident.", "Numero de ident", "Número de ident. vagão", etc.
+      const isIdentWagonColumn = (c: string) => {
         const cLower = c.toLowerCase().trim()
         return (
+          cLower.includes('número de ident') ||
+          cLower.includes('numero de ident') ||
+          cLower.includes('num. ident') ||
+          cLower.includes('num ident') ||
+          cLower.includes('nº ident') ||
+          cLower.includes('nr ident') ||
+          cLower.includes('ident. vag') ||
+          cLower.includes('identifica') ||
           cLower.includes('vag') ||
           cLower.includes('wagon') ||
           cLower.includes('carro') ||
           cLower.includes('prefixo') ||
           cLower.includes('equipamento') ||
           cLower.includes('veiculo') ||
-          cLower.includes('identificacao') ||
-          cLower.includes('identificação')
+          cLower.includes('veículo')
         )
-      })
+      }
 
-      // Se não achou pelo nome da coluna, inspeciona valores das primeiras 10 linhas
-      if (!detectedWagonCol) {
+      const wagonCandidates = cols.filter(isIdentWagonColumn)
+
+      let detectedCol1 = wagonCandidates[0] || ''
+      let detectedCol2 = wagonCandidates.length > 1 ? wagonCandidates[1] : ''
+
+      // Se não achou pelos nomes, inspeciona valores das primeiras 10 linhas
+      if (!detectedCol1) {
         for (const col of cols) {
           const isLikelyWagon = jsonData.slice(0, 10).some((row) => {
             const val = String(row[col] || '').trim()
             return /^[A-Z]{2,4}\s*\d{4,8}$/i.test(val) || /^\d{5,8}$/.test(val)
           })
           if (isLikelyWagon) {
-            detectedWagonCol = col
+            detectedCol1 = col
             break
           }
         }
       }
 
-      setSelectedWagonColumn(detectedWagonCol || cols[0] || '')
+      setSelectedWagonColumn(detectedCol1 || cols[0] || '')
+      setSelectedSecondaryWagonColumn(detectedCol2 || '')
 
       // Auto-detectar coluna de Peso (se existir)
       const detectedWeightCol = cols.find((c) => {
+        if (c === detectedCol1 || c === detectedCol2) return false
         const cLower = c.toLowerCase().trim()
         return (
           cLower.includes('peso') ||
@@ -202,7 +220,7 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
           cLower.includes('volume')
         )
       })
-      if (detectedWeightCol && detectedWeightCol !== detectedWagonCol) {
+      if (detectedWeightCol) {
         setSelectedWeightColumn(detectedWeightCol)
       } else {
         setSelectedWeightColumn('')
@@ -221,46 +239,70 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   }
 
   // -------------------------------------------------------------
-  // 3. EXTRAÇÃO ESTRUTURADA DOS VAGÕES DO EXCEL
+  // 3. EXTRAÇÃO ESTRUTURADA DOS VAGÕES DO EXCEL (SUPORTA 1 OU 2 COLUNAS DE IDENTIFICAÇÃO)
   // -------------------------------------------------------------
   const excelVagoesList = useMemo<ExcelVagaoRow[]>(() => {
     if (!selectedWagonColumn || rawExcelRows.length === 0) return []
 
-    return rawExcelRows
-      .map((row, idx) => {
-        const rawVal = row[selectedWagonColumn]
-        if (rawVal === undefined || rawVal === null || String(rawVal).trim() === '') {
-          return null
-        }
+    const list: ExcelVagaoRow[] = []
 
-        const strVal = String(rawVal).trim()
-        const norm = normalizarVagao(strVal)
-        const digits = extrairApenasDigitos(strVal)
-        const serie = extrairSerieVagao(strVal)
+    rawExcelRows.forEach((row, idx) => {
+      // 1. Extração da Coluna Principal de Vagão
+      const rawVal1 = row[selectedWagonColumn]
+      if (rawVal1 !== undefined && rawVal1 !== null && String(rawVal1).trim() !== '') {
+        const cleanStr1 = String(rawVal1).replace(/\.0+$/, '').trim()
+        const norm1 = normalizarVagao(cleanStr1)
+        const digits1 = extrairApenasDigitos(cleanStr1)
+        const serie1 = extrairSerieVagao(cleanStr1)
 
-        let peso: number | undefined
+        let peso1: number | undefined
         if (selectedWeightColumn && row[selectedWeightColumn] !== undefined) {
           const rawWeight = String(row[selectedWeightColumn]).replace(/\./g, '').replace(',', '.')
           const parsed = parseFloat(rawWeight)
           if (!isNaN(parsed) && parsed > 0) {
-            peso = parsed
+            peso1 = parsed
           }
         }
 
-        const item: ExcelVagaoRow = {
-          rowIndex: idx + 2, // Excel geralmente tem cabeçalho na Linha 1, dados começam na Linha 2
-          vagaoRaw: strVal,
-          vagaoNormalizado: norm,
-          numeroApenas: digits,
-          serie,
-          peso,
-          pesoFormatado: peso ? `${peso.toLocaleString('pt-BR', { minimumFractionDigits: 3 })} t` : undefined,
-          dadosCompletos: row,
+        if (norm1.length > 0 || digits1.length > 0) {
+          list.push({
+            rowIndex: idx + 2, // Linha 1 no Excel é cabeçalho
+            vagaoRaw: cleanStr1,
+            vagaoNormalizado: norm1,
+            numeroApenas: digits1,
+            serie: serie1,
+            peso: peso1,
+            pesoFormatado: peso1 ? `${peso1.toLocaleString('pt-BR', { minimumFractionDigits: 3 })} t` : undefined,
+            dadosCompletos: row,
+          })
         }
-        return item
-      })
-      .filter((v): v is ExcelVagaoRow => v !== null && (v.vagaoNormalizado.length > 0 || v.numeroApenas.length > 0))
-  }, [rawExcelRows, selectedWagonColumn, selectedWeightColumn])
+      }
+
+      // 2. Extração da Segunda Coluna de Vagão (Continuação, se houver)
+      if (selectedSecondaryWagonColumn && selectedSecondaryWagonColumn !== selectedWagonColumn) {
+        const rawVal2 = row[selectedSecondaryWagonColumn]
+        if (rawVal2 !== undefined && rawVal2 !== null && String(rawVal2).trim() !== '') {
+          const cleanStr2 = String(rawVal2).replace(/\.0+$/, '').trim()
+          const norm2 = normalizarVagao(cleanStr2)
+          const digits2 = extrairApenasDigitos(cleanStr2)
+          const serie2 = extrairSerieVagao(cleanStr2)
+
+          if (norm2.length > 0 || digits2.length > 0) {
+            list.push({
+              rowIndex: idx + 2,
+              vagaoRaw: cleanStr2,
+              vagaoNormalizado: norm2,
+              numeroApenas: digits2,
+              serie: serie2,
+              dadosCompletos: row,
+            })
+          }
+        }
+      }
+    })
+
+    return list
+  }, [rawExcelRows, selectedWagonColumn, selectedSecondaryWagonColumn, selectedWeightColumn])
 
   // -------------------------------------------------------------
   // 4. CONSOLIDAÇÃO DE TODOS OS VAGÕES DOS MDF-es
@@ -601,10 +643,41 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
         </div>
       </div>
 
-      {/* ÁREA DE UPLOAD: DUAS COLUNAS LADO A LADO */}
+      {/* ÁREA DE UPLOAD: DUAS COLUNAS LADO A LADO COM DRAG & DROP NATIVO */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* LADO 1: UPLOAD DO MDF-E (PDF OU XML) */}
-        <Card className={`border-2 transition-all ${allMdfVagoes.length > 0 ? 'border-indigo-500/40 bg-indigo-50/20 dark:bg-indigo-950/20' : 'border-dashed border-zinc-300 dark:border-zinc-800'}`}>
+        {/* LADO 1: UPLOAD DO MDF-E (PDF OU XML) COM DRAG & DROP */}
+        <Card
+          onDragOver={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setIsDraggingMdf(true)
+          }}
+          onDragEnter={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setIsDraggingMdf(true)
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setIsDraggingMdf(false)
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setIsDraggingMdf(false)
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+              processMdfFiles(e.dataTransfer.files)
+            }
+          }}
+          className={`border-2 transition-all relative ${
+            isDraggingMdf
+              ? 'border-indigo-600 ring-4 ring-indigo-500/30 bg-indigo-100/50 dark:bg-indigo-950/80 shadow-lg scale-[1.01]'
+              : allMdfVagoes.length > 0
+              ? 'border-indigo-500/40 bg-indigo-50/20 dark:bg-indigo-950/20'
+              : 'border-dashed border-zinc-300 dark:border-zinc-800'
+          }`}
+        >
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base font-semibold flex items-center gap-2">
@@ -619,19 +692,48 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
               )}
             </div>
             <CardDescription className="text-xs">
-              Arraste o PDF do DAMDFE Ferroviário ou arquivo XML do MDF-e
+              Arraste e solte o PDF do DAMDFE Ferroviário ou arquivo XML do MDF-e
             </CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-4">
             {mdfeList.length === 0 ? (
-              <label className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-zinc-300 dark:border-zinc-700 hover:border-indigo-500 dark:hover:border-indigo-400 rounded-xl cursor-pointer bg-zinc-50/60 dark:bg-zinc-900/40 transition-colors">
-                <Upload className="h-8 w-8 text-indigo-500 mb-2" />
-                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
-                  Clique ou arraste o DAMDFE (PDF) ou MDF-e (XML)
+              <label
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setIsDraggingMdf(true)
+                }}
+                onDragEnter={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setIsDraggingMdf(true)
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setIsDraggingMdf(false)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setIsDraggingMdf(false)
+                  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    processMdfFiles(e.dataTransfer.files)
+                  }
+                }}
+                className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl cursor-pointer transition-all ${
+                  isDraggingMdf
+                    ? 'border-indigo-600 bg-indigo-100/60 dark:bg-indigo-900/60 scale-[1.02]'
+                    : 'border-zinc-300 dark:border-zinc-700 hover:border-indigo-500 dark:hover:border-indigo-400 bg-zinc-50/60 dark:bg-zinc-900/40'
+                }`}
+              >
+                <Upload className={`h-8 w-8 mb-2 transition-transform ${isDraggingMdf ? 'text-indigo-600 scale-125 animate-bounce' : 'text-indigo-500'}`} />
+                <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 text-center">
+                  {isDraggingMdf ? 'Solte os arquivos PDF/XML do MDF-e aqui!' : 'Clique ou arraste e solte o DAMDFE (PDF) ou MDF-e (XML)'}
                 </span>
-                <span className="text-[11px] text-zinc-400 mt-1">
-                  Suporta MRS, Rumo, VLI, Fiol, EFC, etc.
+                <span className="text-[11px] text-zinc-400 mt-1 text-center">
+                  Suporta MRS, Rumo, VLI, Fiol, EFC, etc. Extrai automaticamente as duas colunas de vagões.
                 </span>
                 <input
                   type="file"
@@ -719,7 +821,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                 <div className="flex items-center justify-between pt-1">
                   <label className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 cursor-pointer inline-flex items-center gap-1">
                     <Upload className="h-3.5 w-3.5" />
-                    Adicionar outro MDF-e
+                    Adicionar ou arrastar outro MDF-e
                     <input
                       type="file"
                       multiple
@@ -759,8 +861,39 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
           </CardContent>
         </Card>
 
-        {/* LADO 2: UPLOAD DA PLANILHA EXCEL (.XLSX / .CSV) */}
-        <Card className={`border-2 transition-all ${excelVagoesList.length > 0 ? 'border-emerald-500/40 bg-emerald-50/20 dark:bg-emerald-950/20' : 'border-dashed border-zinc-300 dark:border-zinc-800'}`}>
+        {/* LADO 2: UPLOAD DA PLANILHA EXCEL (.XLSX / .CSV) COM DRAG & DROP */}
+        <Card
+          onDragOver={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setIsDraggingExcel(true)
+          }}
+          onDragEnter={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setIsDraggingExcel(true)
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setIsDraggingExcel(false)
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setIsDraggingExcel(false)
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+              processExcelFile(e.dataTransfer.files[0])
+            }
+          }}
+          className={`border-2 transition-all relative ${
+            isDraggingExcel
+              ? 'border-emerald-600 ring-4 ring-emerald-500/30 bg-emerald-100/50 dark:bg-emerald-950/80 shadow-lg scale-[1.01]'
+              : excelVagoesList.length > 0
+              ? 'border-emerald-500/40 bg-emerald-50/20 dark:bg-emerald-950/20'
+              : 'border-dashed border-zinc-300 dark:border-zinc-800'
+          }`}
+        >
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base font-semibold flex items-center gap-2">
@@ -775,19 +908,48 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
               )}
             </div>
             <CardDescription className="text-xs">
-              Selecione a planilha de programação/carregamento contendo a coluna de vagões
+              Arraste e solte a planilha com a coluna "Número de ident." dos vagões
             </CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-4">
             {!workbook && rawExcelRows.length === 0 ? (
-              <label className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-zinc-300 dark:border-zinc-700 hover:border-emerald-500 dark:hover:border-emerald-400 rounded-xl cursor-pointer bg-zinc-50/60 dark:bg-zinc-900/40 transition-colors">
-                <FileSpreadsheet className="h-8 w-8 text-emerald-500 mb-2" />
-                <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
-                  Clique ou arraste a planilha (.xlsx, .xls ou .csv)
+              <label
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setIsDraggingExcel(true)
+                }}
+                onDragEnter={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setIsDraggingExcel(true)
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setIsDraggingExcel(false)
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setIsDraggingExcel(false)
+                  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    processExcelFile(e.dataTransfer.files[0])
+                  }
+                }}
+                className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl cursor-pointer transition-all ${
+                  isDraggingExcel
+                    ? 'border-emerald-600 bg-emerald-100/60 dark:bg-emerald-900/60 scale-[1.02]'
+                    : 'border-zinc-300 dark:border-zinc-700 hover:border-emerald-500 dark:hover:border-emerald-400 bg-zinc-50/60 dark:bg-zinc-900/40'
+                }`}
+              >
+                <FileSpreadsheet className={`h-8 w-8 mb-2 transition-transform ${isDraggingExcel ? 'text-emerald-600 scale-125 animate-bounce' : 'text-emerald-500'}`} />
+                <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 text-center">
+                  {isDraggingExcel ? 'Solte a planilha Excel aqui!' : 'Clique ou arraste e solte a planilha (.xlsx, .xls ou .csv)'}
                 </span>
-                <span className="text-[11px] text-zinc-400 mt-1">
-                  A coluna de vagões será detectada automaticamente
+                <span className="text-[11px] text-zinc-400 mt-1 text-center">
+                  A coluna de vagões ("Número de ident.") é detectada automaticamente
                 </span>
                 <input
                   type="file"
@@ -807,7 +969,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                       </span>
                     </div>
                     <span className="text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">
-                      {rawExcelRows.length} linhas
+                      {rawExcelRows.length} linhas ({excelVagoesList.length} vagões)
                     </span>
                   </div>
 
@@ -831,11 +993,11 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                     </div>
                   )}
 
-                  {/* Seletores de Colunas */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* Seletores de Colunas (Coluna 1, Coluna 2 Continuação, Peso) */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     <div>
                       <label className="block text-[10px] uppercase font-bold text-zinc-500 dark:text-zinc-400 mb-1">
-                        Coluna do Vagão:
+                        Coluna de Vagão (Principal):
                       </label>
                       <select
                         value={selectedWagonColumn}
@@ -844,7 +1006,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                       >
                         {excelColumns.map((col) => (
                           <option key={col} value={col}>
-                            {col} {col === selectedWagonColumn ? '✓ (Selecionada)' : ''}
+                            {col} {col === selectedWagonColumn ? '✓' : ''}
                           </option>
                         ))}
                       </select>
@@ -852,7 +1014,29 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
 
                     <div>
                       <label className="block text-[10px] uppercase font-bold text-zinc-500 dark:text-zinc-400 mb-1">
-                        Coluna de Peso / Ton (Opcional):
+                        2ª Coluna Vagão (Continuação):
+                      </label>
+                      <select
+                        value={selectedSecondaryWagonColumn}
+                        onChange={(e) => setSelectedSecondaryWagonColumn(e.target.value)}
+                        className={`w-full h-8 px-2 text-xs rounded-lg border transition-colors ${
+                          selectedSecondaryWagonColumn
+                            ? 'border-indigo-300 dark:border-indigo-700 bg-indigo-50/50 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 font-semibold'
+                            : 'border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200'
+                        }`}
+                      >
+                        <option value="">-- Nenhuma (Apenas 1 Coluna) --</option>
+                        {excelColumns.map((col) => (
+                          <option key={col} value={col}>
+                            {col} {col === selectedSecondaryWagonColumn ? '✓ (2ª Coluna)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-zinc-500 dark:text-zinc-400 mb-1">
+                        Coluna de Peso (Opcional):
                       </label>
                       <select
                         value={selectedWeightColumn}
@@ -873,7 +1057,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                 <div className="flex items-center justify-between pt-1">
                   <label className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 cursor-pointer inline-flex items-center gap-1">
                     <Upload className="h-3.5 w-3.5" />
-                    Trocar planilha Excel
+                    Trocar ou arrastar outra planilha Excel
                     <input
                       type="file"
                       accept=".xlsx,.xls,.csv"

@@ -230,21 +230,15 @@ export function parseMdfeFromText(rawText: string, fileName?: string): MdfeData 
     pesoTotal = parseFloat(rawPeso) || 0
   }
 
-  // 6. Extração dos Vagões (Table Informações dos vagões)
+  // 6. Extração dos Vagões (Tabela de Informações dos vagões - 2 Colunas Paralelas no DAMDFE)
   const vagoes: MdfeVagao[] = []
   const vagoesMap = new Map<string, MdfeVagao>()
 
-  // Padrões de vagões:
-  // Regex 1: "HPT 250490 91,040" ou "HFS 6110860 74,720" ou com sequência
-  // Ex: ([A-Z]{2,5})\s+(\d{4,8})(?:\s+(\d{1,3}))?\s+(\d{1,3}(?:[,\.]\d{1,4})?)
-  const wagonRegexGlobal = /\b([A-Z]{2,5})\s*[-_/\s]?\s*(\d{4,8})(?:\s+(\d{1,3}))?\s+(\d{1,3}(?:[,\.]\d{1,4})?)/g
-  let wMatch: RegExpExecArray | null
-
-  // Restringir a busca de vagões a partir de "Informações dos vagões" se possível, ou em todo o texto
+  // Restringir a busca de vagões a partir de "Informações dos vagões" ou "Série de ident." se possível
   let vagoesSection = text
-  const vagoesHeaderIdx = text.search(/Informa[çc][õo]es\s+dos\s+vag[õo]es/i)
+  const vagoesHeaderIdx = text.search(/Informa[çc][õo]es\s+dos\s+vag[õo]es|S[ée]rie\s+de\s+ident\.?\s*vag[ãa]o|N[úu]mero\s+de\s+ident\.?\s*vag[ãa]o/i)
   if (vagoesHeaderIdx !== -1) {
-    const obsIdx = text.search(/Observa[çc][ãa]o/i)
+    const obsIdx = text.search(/Observa[çc][ãa]o|Informa[çc][õo]es\s+Complementares|DADOS\s+ADICIONAIS/i)
     if (obsIdx > vagoesHeaderIdx) {
       vagoesSection = text.substring(vagoesHeaderIdx, obsIdx)
     } else {
@@ -252,31 +246,36 @@ export function parseMdfeFromText(rawText: string, fileName?: string): MdfeData 
     }
   }
 
-  while ((wMatch = wagonRegexGlobal.exec(vagoesSection)) !== null) {
-    const serieVag = wMatch[1].toUpperCase()
-    const numVag = wMatch[2]
-    const seqStr = wMatch[3]
-    const tonStr = wMatch[4]
+  // Função auxiliar para cadastrar um vagão identificado
+  const registrarVagao = (serieVag: string, numVag: string, seqNum?: number, tonUtil?: number) => {
+    serieVag = (serieVag || '').toUpperCase().trim()
+    numVag = (numVag || '').trim()
 
-    // Ignora cabeçalhos acidentais como "FL 1/1" ou "SP 3526"
-    if (['FL', 'SP', 'RJ', 'MG', 'PR', 'SC', 'RS', 'GO', 'MS', 'MT', 'ES', 'BA', 'DF'].includes(serieVag) && numVag.length < 5) {
-      continue
+    // Ignora termos de cabeçalho ou siglas de estado se numVag for muito curto
+    if (['FL', 'SP', 'RJ', 'MG', 'PR', 'SC', 'RS', 'GO', 'MS', 'MT', 'ES', 'BA', 'DF', 'SE', 'TO', 'PA'].includes(serieVag) && numVag.length < 5) {
+      return
     }
 
-    const tonUtil = tonStr ? parseFloat(tonStr.replace(',', '.')) : undefined
-    const key = `${serieVag}${numVag}`
+    if (numVag.length < 4 || numVag.length > 10) return
+
+    const numDigitos = extrairApenasDigitos(numVag)
+    if (!numDigitos || numDigitos.length < 4) return
+
+    // Chave única: preferencialmente série + número ou apenas número
+    const key = serieVag ? `${serieVag}${numDigitos}` : numDigitos
 
     if (!vagoesMap.has(key)) {
+      const vagCompleto = serieVag ? `${serieVag} ${numVag}` : numVag
       const item: MdfeVagao = {
         id: `mdf-vag-${vagoes.length + 1}`,
         serie: serieVag,
         numero: numVag,
-        vagaoCompleto: `${serieVag} ${numVag}`,
-        vagaoNormalizado: normalizarVagao(`${serieVag}${numVag}`),
-        numeroApenas: extrairApenasDigitos(numVag),
-        seq: seqStr ? parseInt(seqStr, 10) : vagoes.length + 1,
+        vagaoCompleto: vagCompleto,
+        vagaoNormalizado: normalizarVagao(vagCompleto),
+        numeroApenas: numDigitos,
+        seq: seqNum || vagoes.length + 1,
         tonUtil,
-        tonUtilFormatado: tonUtil ? `${tonUtil.toLocaleString('pt-BR', { minimumFractionDigits: 3 })} t` : undefined,
+        tonUtilFormatado: tonUtil !== undefined ? `${tonUtil.toLocaleString('pt-BR', { minimumFractionDigits: 3 })} t` : undefined,
         origemArquivo: fileName,
       }
       vagoesMap.set(key, item)
@@ -284,27 +283,48 @@ export function parseMdfeFromText(rawText: string, fileName?: string): MdfeData 
     }
   }
 
-  // Fallback caso a tabela tenha formato de colunas separadas
+  // PASSO A: Padrão MRS/Rumo/VLI com duas colunas lado a lado:
+  // Ex: "HPT 250490 91,040" ou "HFS 6110860 74,720" ou com sequência "HPT 250490 1 91,040"
+  const wagonRegexGlobal = /\b([A-Z]{2,5})\s*[-_/\s]?\s*(\d{4,8})(?:\s+(\d{1,4}))?\s+(\d{1,4}(?:[,\.]\d{1,4})?)/g
+  let wMatch: RegExpExecArray | null
+
+  while ((wMatch = wagonRegexGlobal.exec(vagoesSection)) !== null) {
+    const serieVag = wMatch[1]
+    const numVag = wMatch[2]
+    const seqStr = wMatch[3]
+    const tonStr = wMatch[4]
+    const tonUtil = tonStr ? parseFloat(tonStr.replace(/\./g, '').replace(',', '.')) : undefined
+    const seqNum = seqStr ? parseInt(seqStr, 10) : undefined
+
+    registrarVagao(serieVag, numVag, seqNum, tonUtil)
+  }
+
+  // PASSO B: Caso haja linhas com Série e Número sem o peso na mesma linha ou formato compacto
+  // Ex: "HPT 250490" ou "HFS6110860" ou "HTT-7537778"
+  const serieNumRegex = /\b([A-Z]{2,5})\s*[-_/\s]?\s*(\d{5,8})\b/g
+  while ((wMatch = serieNumRegex.exec(vagoesSection)) !== null) {
+    const serieVag = wMatch[1]
+    const numVag = wMatch[2]
+    registrarVagao(serieVag, numVag)
+  }
+
+  // PASSO C: Caso a coluna "Número de ident. vagão" venha com números de 5 a 8 dígitos e pesos associados
+  // Ex: "250490 91,040" ou "6110860 74,720"
+  if (vagoes.length < 5) {
+    const numPesoRegex = /\b(\d{5,8})\s+(\d{1,4}(?:[,\.]\d{1,4})?)\b/g
+    while ((wMatch = numPesoRegex.exec(vagoesSection)) !== null) {
+      const numVag = wMatch[1]
+      const tonStr = wMatch[2]
+      const tonUtil = tonStr ? parseFloat(tonStr.replace(/\./g, '').replace(',', '.')) : undefined
+      registrarVagao('', numVag, undefined, tonUtil)
+    }
+  }
+
+  // PASSO D: Se ainda não tiver extraído todos os vagões declarados, varre todo o documento
   if (vagoes.length === 0) {
-    const lineRegex = /([A-Z]{2,5})\s+(\d{5,8})/g
-    while ((wMatch = lineRegex.exec(vagoesSection)) !== null) {
-      const serieVag = wMatch[1].toUpperCase()
-      const numVag = wMatch[2]
-      const key = `${serieVag}${numVag}`
-      if (!vagoesMap.has(key)) {
-        const item: MdfeVagao = {
-          id: `mdf-vag-${vagoes.length + 1}`,
-          serie: serieVag,
-          numero: numVag,
-          vagaoCompleto: `${serieVag} ${numVag}`,
-          vagaoNormalizado: normalizarVagao(`${serieVag}${numVag}`),
-          numeroApenas: extrairApenasDigitos(numVag),
-          seq: vagoes.length + 1,
-          origemArquivo: fileName,
-        }
-        vagoesMap.set(key, item)
-        vagoes.push(item)
-      }
+    const lineRegex = /\b([A-Z]{2,5})\s*[-_/\s]?\s*(\d{5,8})\b/g
+    while ((wMatch = lineRegex.exec(text)) !== null) {
+      registrarVagao(wMatch[1], wMatch[2])
     }
   }
 
