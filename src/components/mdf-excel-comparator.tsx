@@ -90,64 +90,22 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   const [showMdfDetails, setShowMdfDetails] = useState(false)
   const [showNfeKeys, setShowNfeKeys] = useState(false)
 
-  // Estado do Modal de Colar Texto do DAMDFE
-  const [pastedTextModalOpen, setPastedTextModalOpen] = useState(false)
-  const [pastedTextContent, setPastedTextContent] = useState('')
-  const [pastedTextTitle, setPastedTextTitle] = useState('DAMDFE Copiado')
-
-  // -------------------------------------------------------------
-  // 1. PROCESSAMENTO DE ARQUIVOS MDF-E (PDF, XML ou TXT)
-  // -------------------------------------------------------------
-  const processMdfFiles = useCallback(async (files: FileList | File[]) => {
-    setIsProcessingMdf(true)
-    setMdfError(null)
-    const newMdfeList: MdfeData[] = []
-
-    try {
-      for (const file of Array.from(files)) {
-        const lower = file.name.toLowerCase()
-        if (lower.endsWith('.pdf')) {
-          const parsed = await parseMdfePdfClient(file, file.name)
-          if (parsed.vagoes.length === 0) {
-            setMdfError(`Atenção: Não foram encontrados vagões no texto do PDF "${file.name}". Se o documento for escaneado/imagem, use o botão "Colar Texto do DAMDFE" ou importe o arquivo XML.`)
-          }
-          newMdfeList.push(parsed)
-        } else if (lower.endsWith('.xml')) {
-          const text = await file.text()
-          const parsed = parseMdfeFromXml(text, file.name)
-          newMdfeList.push(parsed)
-        } else if (lower.endsWith('.txt')) {
-          const text = await file.text()
-          const parsed = parseMdfeFromText(text, file.name)
-          newMdfeList.push(parsed)
-        }
-      }
-
-      if (newMdfeList.length === 0) {
-        setMdfError('Nenhum arquivo válido (.pdf, .xml, .txt) de MDF-e/DAMDFE foi identificado.')
-      } else {
-        setMdfeList((prev) => [...prev, ...newMdfeList])
-      }
-    } catch (err: any) {
-      console.error('Erro ao processar arquivo MDF-e:', err)
-      setMdfError(err.message || 'Erro ao processar o arquivo PDF/XML de MDF-e.')
-    } finally {
-      setIsProcessingMdf(false)
-    }
-  }, [])
+  // Estado de Colar Texto do MDF-e (Entrada direta sem PDF)
+  const [directPasteText, setDirectPasteText] = useState('')
+  const [pastedTextTitle, setPastedTextTitle] = useState('DAMDFE')
 
   // Processar texto colado diretamente do DAMDFE
-  const handleProcessPastedText = () => {
-    if (!pastedTextContent.trim()) return
+  const handleProcessPastedText = (customText?: string) => {
+    const textToProcess = customText !== undefined ? customText : directPasteText
+    if (!textToProcess.trim()) return
     setIsProcessingMdf(true)
+    setMdfError(null)
     try {
-      const parsed = parseMdfeFromText(pastedTextContent, pastedTextTitle || 'DAMDFE Copiado')
+      const parsed = parseMdfeFromText(textToProcess, pastedTextTitle || 'DAMDFE Copiado')
       if (parsed.vagoes.length === 0) {
-        setMdfError('Não foi possível identificar vagões no texto colado. Certifique-se de colar a tabela de vagões ou o texto do DAMDFE.')
+        setMdfError('Não foi possível identificar vagões no texto colado. Cole o conteúdo do DAMDFE ou a listagem dos vagões.')
       } else {
-        setMdfeList((prev) => [...prev, parsed])
-        setPastedTextModalOpen(false)
-        setPastedTextContent('')
+        setMdfeList([parsed])
         setMdfError(null)
       }
     } catch (err: any) {
@@ -155,6 +113,12 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
     } finally {
       setIsProcessingMdf(false)
     }
+  }
+
+  const handleClearMdf = () => {
+    setMdfeList([])
+    setDirectPasteText('')
+    setMdfError(null)
   }
 
   // -------------------------------------------------------------
@@ -411,109 +375,6 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   }, [comparisonItems, activeFilter, searchTerm])
 
   // -------------------------------------------------------------
-  // 7. CARREGAR DADOS DE EXEMPLO (DEMONSTRAÇÃO REALISTA MRS)
-  // -------------------------------------------------------------
-  const handleLoadDemo = () => {
-    // 82 vagões reais idênticos ao DAMDFE da MRS fornecido na imagem
-    const rawDemoText = `
-    DAMDFE Documento Auxiliar de Manifesto Eletrônico de Documentos Fiscais
-    MODELO 58 SÉRIE 53 NÚMERO 217482 12/08/2026 18:19
-    CHAVE DE ACESSO: 3526 0801 4172 2200 0258 5805 3000 2174 8218 1599 0226
-    PROTOCOLO DE AUTORIZAÇÃO DE USO: 935260098905873 12/08/2026 18:21:11
-    MRS Logistica S/A CNPJ: 01417222000258 IE: 114818785112
-    UF Carreg. SP UF Descar. SP
-    Modal Ferroviário de Carga
-    Informações da composição do trem
-    Prefixo do trem: JDU9524 Data e hora: 12/08/2026 18:19 Origem do trem: ZXE Destino do trem: ICZ Quantidade de vagões carregados: 82
-    Qtd. CT-e: 89 Peso Total (Kg): 7.850,340
-    Informações dos vagões
-    HPT 250490 91,040 HFS 6110860 74,720
-    HFS 6202250 74,660 HFS 6215301 74,900
-    HFS 6217010 74,920 HPT 6150900 90,600
-    HFS 6104886 73,280 HFS 6221297 73,980
-    HFS 6197264 72,440 HPS 6202292 73,280
-    HPS 6215785 74,040 HFS 6215831 74,720
-    HFS 6216374 74,020 HFS 6221611 74,760
-    HFS 6222307 74,640 HFS 6200231 75,060
-    HPT 7293135 100,340 HPT 7294280 91,300
-    HPT 7294336 91,000 HPT 7294727 100,940
-    HPT 7296223 100,600 HPT 7530277 98,760
-    HPT 7530099 98,960 HPT 7530625 98,980
-    HPT 7530579 99,300 HPT 7530871 99,660
-    HPT 7532148 101,300 HPT 7532539 101,320
-    HPT 7532776 101,400 HPT 7531702 101,420
-    HPT 7530994 100,920 HPT 7531974 101,000
-    HPT 7532814 100,780 HPT 7532911 101,180
-    HPT 7530901 101,360 HPT 7530927 100,480
-    HPT 7533471 98,500 HPT 7533276 99,000
-    HPT 7533896 99,440 HPT 7534655 100,780
-    HPT 7534736 100,380 HPT 7533594 99,080
-    HPT 7536046 101,000 HPT 7535945 91,460
-    HPT 7535554 100,700 HPT 7537212 100,740
-    HTT 7537778 101,280 HTT 7537794 101,280
-    HTT 7537808 101,300 HTT 7538316 101,000
-    HTT 7537875 101,320 HTT 7538812 101,320
-    HTT 7538871 101,300 HTT 7538928 101,100
-    HTT 7538944 101,340 HTT 7538979 101,460
-    HTT 7539037 101,360 HTT 7539169 101,400
-    HTT 7539304 101,400 HTT 7538324 101,440
-    HTT 7538359 101,440 HTT 7539436 101,140
-    HTT 7538553 101,280 HTT 7538723 101,520
-    HTT 7539053 101,360 HTT 7539185 101,260
-    HTT 7539711 101,500 HTT 7539886 101,280
-    HTT 7539924 101,240 HTT 7542241 101,080
-    HTT 7542119 101,400 HTT 7542186 101,460
-    Observação: 35260801417222000258570330025318901848263022, 35260801417222000258570330025318891454425073, 35260801417222000258570330025318881297814658, 35260801417222000258570330025318871041182582
-    `
-
-    const demoMdf = parseMdfeFromText(rawDemoText, 'DAMDFE_MRS_JDU9524_217482.pdf')
-    setMdfeList([demoMdf])
-
-    // Planilha Excel simulada com a maioria dos vagões batendo + 2 divergências
-    const demoExcelRows: any[] = demoMdf.vagoes.slice(0, 80).map((vag, idx) => ({
-      Vagão: vag.vagaoCompleto,
-      'Peso Líquido (t)': vag.tonUtil || 100.0,
-      Produto: 'AÇÚCAR A GRANEL',
-      Origem: 'ZXE',
-      Destino: 'ICZ - TERMINAL TEAG',
-      Lote: `LT-${202600 + idx}`,
-      Status: 'Programado',
-    }))
-
-    // Adiciona 3 vagões extras na planilha que não estão no MDF (para testar FALTA NO MDF)
-    demoExcelRows.push(
-      {
-        Vagão: 'HTT 7599991',
-        'Peso Líquido (t)': 101.5,
-        Produto: 'AÇÚCAR A GRANEL',
-        Origem: 'ZXE',
-        Destino: 'ICZ - TERMINAL TEAG',
-        Lote: 'LT-99991',
-        Status: 'Carregado Pátio',
-      },
-      {
-        Vagão: 'HPT 7288882',
-        'Peso Líquido (t)': 99.8,
-        Produto: 'AÇÚCAR A GRANEL',
-        Origem: 'ZXE',
-        Destino: 'ICZ - TERMINAL TEAG',
-        Lote: 'LT-88882',
-        Status: 'Carregado Pátio',
-      }
-    )
-
-    setExcelFileName('Programacao_Ferroviaria_Trem_JDU9524.xlsx')
-    setAvailableSheets(['Vagões_Carregamento', 'Geral'])
-    setSelectedSheet('Vagões_Carregamento')
-    setRawExcelRows(demoExcelRows)
-    setExcelColumns(['Vagão', 'Peso Líquido (t)', 'Produto', 'Origem', 'Destino', 'Lote', 'Status'])
-    setSelectedWagonColumn('Vagão')
-    setSelectedWeightColumn('Peso Líquido (t)')
-    setMdfError(null)
-    setExcelError(null)
-  }
-
-  // -------------------------------------------------------------
   // 8. EXPORTAÇÃO EXCEL DA CONCILIAÇÃO
   // -------------------------------------------------------------
   const handleExportExcel = () => {
@@ -646,198 +507,72 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
 
   return (
     <div className="space-y-6">
-      {/* Banner Superior com Identidade Visual e Demonstração Rápida */}
-      <div className="rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-indigo-900 via-zinc-900 to-slate-900 p-6 text-white shadow-xl">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1.5 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-200 text-xs font-semibold">
-              <TrainTrack className="h-3.5 w-3.5 text-indigo-300" />
-              Modal Ferroviário de Carga (MRS, Rumo, VLI)
-            </div>
-            <h2 className="text-2xl font-bold tracking-tight">MDF-e x Planilha Excel — Conferência de Vagões</h2>
-            <p className="text-sm text-zinc-300">
-              Faça a leitura automática do DAMDFE (PDF/XML) e cruze instantaneamente os vagões com a coluna de vagões da sua planilha Excel. Identifique faltantes, sobras e divergências de peso com 100% de precisão.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <Button
-              type="button"
-              onClick={handleLoadDemo}
-              variant="outline"
-              size="sm"
-              className="bg-white/10 hover:bg-white/20 text-white border-white/20 text-xs font-medium cursor-pointer shadow-sm"
-            >
-              <Sparkles className="h-4 w-4 text-amber-300 mr-1.5" />
-              Carregar Dados de Exemplo
-            </Button>
-            {onOpenDoc && (
-              <Button
-                type="button"
-                onClick={onOpenDoc}
-                variant="ghost"
-                size="sm"
-                className="text-zinc-300 hover:text-white text-xs cursor-pointer"
-              >
-                Como Funciona?
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ÁREA DE UPLOAD: DUAS COLUNAS LADO A LADO COM DRAG & DROP NATIVO */}
+      {/* ÁREA DE ENTRADA: MDF-E (APENAS COLAR) E PLANILHA EXCEL */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* LADO 1: UPLOAD DO MDF-E (PDF OU XML) COM DRAG & DROP */}
+        {/* LADO 1: ENTRADA DO MDF-E (APENAS OPÇÃO DE COLAR TEXTO) */}
         <Card
-          onDragOver={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            setIsDraggingMdf(true)
-          }}
-          onDragEnter={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            setIsDraggingMdf(true)
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            setIsDraggingMdf(false)
-          }}
-          onDrop={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            setIsDraggingMdf(false)
-            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-              processMdfFiles(e.dataTransfer.files)
-            }
-          }}
-          className={`border-2 transition-all relative ${
-            isDraggingMdf
-              ? 'border-indigo-600 ring-4 ring-indigo-500/30 bg-indigo-100/50 dark:bg-indigo-950/80 shadow-lg scale-[1.01]'
-              : allMdfVagoes.length > 0
-              ? 'border-indigo-500/40 bg-indigo-50/20 dark:bg-indigo-950/20'
-              : 'border-dashed border-zinc-300 dark:border-zinc-800'
+          className={`border transition-all ${
+            allMdfVagoes.length > 0
+              ? 'border-indigo-500/40 bg-indigo-50/20 dark:bg-indigo-950/20 shadow-xs'
+              : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-xs'
           }`}
         >
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-base font-semibold flex items-center gap-2">
-                <TrainTrack className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-                1. Arquivo MDF-e / DAMDFE (PDF ou XML)
+                <ClipboardPaste className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                1. Entrada do MDF-e / DAMDFE (Colar Texto)
               </CardTitle>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPastedTextModalOpen(true)}
-                  className="h-7 px-2.5 text-xs font-medium border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 cursor-pointer flex items-center gap-1.5"
-                  title="Colar texto copiado do DAMDFE ou OCR"
-                >
-                  <ClipboardPaste className="h-3.5 w-3.5" />
-                  <span>Colar Texto</span>
-                </Button>
-                {allMdfVagoes.length > 0 && (
+              {allMdfVagoes.length > 0 && (
+                <div className="flex items-center gap-2">
                   <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 px-2.5 py-0.5 rounded-full">
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    {allMdfVagoes.length} vagões
+                    {allMdfVagoes.length} vagões carregados
                   </span>
-                )}
-              </div>
-            </div>
-            <CardDescription className="text-xs">
-              Arraste e solte o PDF do DAMDFE Ferroviário, arquivo XML ou cole o texto
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent className="space-y-4">
-            {mdfeList.length === 0 ? (
-              <div className="space-y-3">
-                <label
-                  onDragOver={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setIsDraggingMdf(true)
-                  }}
-                  onDragEnter={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setIsDraggingMdf(true)
-                  }}
-                  onDragLeave={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setIsDraggingMdf(false)
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setIsDraggingMdf(false)
-                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                      processMdfFiles(e.dataTransfer.files)
-                    }
-                  }}
-                  className={`flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-xl cursor-pointer transition-all ${
-                    isDraggingMdf
-                      ? 'border-indigo-600 bg-indigo-100/60 dark:bg-indigo-900/60 scale-[1.02]'
-                      : 'border-zinc-300 dark:border-zinc-700 hover:border-indigo-500 dark:hover:border-indigo-400 bg-zinc-50/60 dark:bg-zinc-900/40'
-                  }`}
-                >
-                  <Upload className={`h-8 w-8 mb-2 transition-transform ${isDraggingMdf ? 'text-indigo-600 scale-125 animate-bounce' : 'text-indigo-500'}`} />
-                  <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 text-center">
-                    {isDraggingMdf ? 'Solte os arquivos PDF/XML do MDF-e aqui!' : 'Clique ou arraste e solte o DAMDFE (PDF) ou MDF-e (XML/TXT)'}
-                  </span>
-                  <span className="text-[11px] text-zinc-400 mt-1 text-center">
-                    Suporta MRS, Rumo, VLI, Fiol, EFC, etc. Extrai automaticamente as duas colunas de vagões.
-                  </span>
-                  <input
-                    type="file"
-                    multiple
-                    accept=".pdf,.xml,.txt"
-                    onChange={(e) => e.target.files && processMdfFiles(e.target.files)}
-                    className="hidden"
-                  />
-                </label>
-
-                <div className="flex items-center justify-center">
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => setPastedTextModalOpen(true)}
-                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer flex items-center gap-1.5"
+                    onClick={handleClearMdf}
+                    className="h-6 px-2 text-[11px] text-zinc-500 hover:text-red-600 dark:hover:text-red-400 cursor-pointer"
                   >
-                    <ClipboardPaste className="h-3.5 w-3.5" />
-                    Prefere colar o texto do MDF-e / DAMDFE? Clique aqui
+                    Limpar
                   </Button>
                 </div>
-              </div>
-            ) : (
+              )}
+            </div>
+            <CardDescription className="text-xs">
+              Cole o texto do DAMDFE ou a lista de vagões diretamente no campo abaixo
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-3">
+            {mdfeList.length > 0 && (
               <div className="space-y-3">
                 {mdfeList.map((mdf, idx) => (
                   <div
                     key={idx}
-                    className="p-3.5 rounded-xl border border-indigo-200 dark:border-indigo-900 bg-white dark:bg-zinc-900 shadow-xs space-y-2 text-xs"
+                    className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900 bg-white dark:bg-zinc-900 shadow-xs space-y-2 text-xs"
                   >
                     <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-2">
                       <div className="flex items-center gap-2">
-                        <FileText className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                        <TrainTrack className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
                         <span className="font-bold text-zinc-900 dark:text-zinc-100">
-                          {mdf.fileName || `MDF-e nº ${mdf.numero}`}
+                          {mdf.fileName || `MDF-e nº ${mdf.numero || 'Manifesto'}`}
                         </span>
                       </div>
-                      <span className="text-[11px] font-mono text-zinc-500">
-                        {mdf.dataEmissao} {mdf.horaEmissao}
-                      </span>
+                      {mdf.dataEmissao && (
+                        <span className="text-[11px] font-mono text-zinc-500">
+                          {mdf.dataEmissao} {mdf.horaEmissao}
+                        </span>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                       <div className="bg-zinc-50 dark:bg-zinc-800/60 p-2 rounded-lg">
                         <span className="text-zinc-400 block font-semibold text-[10px] uppercase">Emitente</span>
                         <span className="font-bold text-zinc-800 dark:text-zinc-200 truncate block" title={mdf.emitenteNome}>
-                          {mdf.emitenteNome}
+                          {mdf.emitenteNome || 'Identificado no texto'}
                         </span>
                       </div>
                       <div className="bg-zinc-50 dark:bg-zinc-800/60 p-2 rounded-lg">
@@ -888,38 +623,59 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                     )}
                   </div>
                 ))}
+              </div>
+            )}
 
-                <div className="flex items-center justify-between pt-1">
-                  <label className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 cursor-pointer inline-flex items-center gap-1">
-                    <Upload className="h-3.5 w-3.5" />
-                    Adicionar ou arrastar outro MDF-e
-                    <input
-                      type="file"
-                      multiple
-                      accept=".pdf,.xml"
-                      onChange={(e) => e.target.files && processMdfFiles(e.target.files)}
-                      className="hidden"
-                    />
-                  </label>
-
+            {/* Caixa de Texto Direta para Colar */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+                  <ClipboardPaste className="h-3.5 w-3.5 text-indigo-600" />
+                  {mdfeList.length > 0 ? 'Colar ou substituir texto do MDF-e:' : 'Cole o texto do MDF-e / DAMDFE:'}
+                </label>
+                {directPasteText.trim() && (
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => setShowMdfDetails(!showMdfDetails)}
-                    className="h-7 text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                    onClick={() => setDirectPasteText('')}
+                    className="h-5 px-1.5 text-[10px] text-zinc-400 hover:text-zinc-600"
                   >
-                    {showMdfDetails ? 'Ocultar Detalhes do MDF' : 'Ver Detalhes do Trem'}
-                    {showMdfDetails ? <ChevronUp className="h-3.5 w-3.5 ml-1" /> : <ChevronDown className="h-3.5 w-3.5 ml-1" />}
+                    Limpar campo
                   </Button>
-                </div>
+                )}
               </div>
-            )}
+
+              <textarea
+                value={directPasteText}
+                onChange={(e) => setDirectPasteText(e.target.value)}
+                rows={mdfeList.length > 0 ? 4 : 8}
+                placeholder={`Cole aqui o texto copiado do DAMDFE ou a lista de vagões. Exemplo:&#10;HPT 250490 91,040 HFS 6110860 74,720&#10;HFS 6202250 74,660 HFS 6215301 74,900`}
+                className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/60 p-3 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-y"
+              />
+
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <span className="text-[11px] text-zinc-400">
+                  {directPasteText.trim() ? `${directPasteText.trim().split('\n').length} linhas no campo` : 'Copie o texto do documento e cole aqui.'}
+                </span>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!directPasteText.trim() || isProcessingMdf}
+                  onClick={() => handleProcessPastedText()}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 cursor-pointer flex items-center gap-1.5 h-8"
+                >
+                  <ClipboardPaste className="h-3.5 w-3.5" />
+                  {isProcessingMdf ? 'Processando...' : mdfeList.length > 0 ? 'Atualizar Vagões' : 'Processar Texto e Extrair Vagões'}
+                </Button>
+              </div>
+            </div>
 
             {isProcessingMdf && (
-              <div className="text-xs text-indigo-600 flex items-center gap-2 animate-pulse">
+              <div className="text-xs text-indigo-600 flex items-center gap-2 animate-pulse pt-1">
                 <TrainTrack className="h-4 w-4 animate-spin" />
-                Extraindo dados e vagões do documento...
+                Extraindo dados e vagões do texto...
               </div>
             )}
 
@@ -1580,140 +1336,6 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
           </Card>
         </>
       )}
-
-      {/* MODAL PARA COLAR TEXTO DO DAMDFE / MDF-E */}
-      <Dialog open={pastedTextModalOpen} onOpenChange={setPastedTextModalOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg">
-              <ClipboardPaste className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-              Colar Texto do DAMDFE / MDF-e
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Copie o conteúdo do DAMDFE (do leitor de PDF, documento ou OCR) e cole aqui. O sistema extrai automaticamente o Emitente, Trem, as duas colunas de vagões, pesos e chaves vinculadas.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Identificação / Nome de Referência
-              </label>
-              <Input
-                type="text"
-                value={pastedTextTitle}
-                onChange={(e) => setPastedTextTitle(e.target.value)}
-                placeholder="Ex: DAMDFE 217482 - MRS Logística"
-                className="h-8 text-xs"
-              />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                  Conteúdo / Texto do Documento
-                </label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    const sample = `DAMDFE Documento Auxiliar de Manifesto Eletrônico de Documentos Fiscais
-MODELO SÉRIE NÚMERO FL DATA E HORA DE EMISSÃO
-CHAVE DE ACESSO
-58 53 217482 12/08/2026 18:19
-CNPJ: 01417222000258 IE: 114818785112
-Logradouro: AV IBIRAPUERA, 2332 -ED TORRE
-MRS Logistica S/A
-Modal Ferroviário de Carga
-Informações da composição do trem
-Prefixo do trem Data e hora Origem do trem Destino do trem Quantidade de vagões carregados
-JDU9524 12/08/2026 18:19 ZXE ICZ 82
-Peso Total (Kg): 7.850,340
-Informações dos vagões
-Série de ident. vagão Número de ident. vagão Seq. Ton. Útil Série de ident. vagão Número de ident. vagão Seq. Ton. Útil
-HPT 250490 91,040 HFS 6110860 74,720
-HFS 6202250 74,660 HFS 6215301 74,900
-HFS 6217010 74,920 HPT 6150900 90,600
-HFS 6104886 73,280 HFS 6221297 73,980
-HFS 6197264 72,440 HPS 6202292 73,280
-HPS 6215785 74,040 HFS 6215831 74,720
-HFS 6216374 74,020 HFS 6221611 74,760
-HFS 6222307 74,640 HFS 6200231 75,060
-HPT 7293135 100,340 HPT 7294280 91,300
-HPT 7294336 91,000 HPT 7294727 100,940
-HPT 7296223 100,600 HPT 7530277 98,760
-HPT 7530099 98,960 HPT 7530625 98,980
-HPT 7530579 99,300 HPT 7530871 99,660
-HPT 7532148 101,300 HPT 7532539 101,320
-HPT 7532776 101,400 HPT 7531702 101,420
-HPT 7530994 100,920 HPT 7531974 101,000
-HPT 7532814 100,780 HPT 7532911 101,180
-HPT 7530901 101,360 HPT 7530927 100,480
-HPT 7533471 98,500 HPT 7533276 99,000
-HPT 7533896 99,440 HPT 7534655 100,780
-HPT 7534736 100,380 HPT 7533594 99,080
-HPT 7536046 101,000 HPT 7535945 91,460
-HPT 7535554 100,700 HPT 7537212 100,740
-HTT 7537778 101,280 HTT 7537794 101,280
-HTT 7537808 101,300 HTT 7538316 101,000
-HTT 7537875 101,320 HTT 753891 101,080
-HTT 7538413 101,420 HTT 7538464 101,220
-HTT 7538529 101,340 HTT 7538022 101,240
-HTT 7537824 101,480 HTT 7538154 101,220
-HTT 7538171 101,200 HTT 7538219 101,280
-HTT 7538600 101,460 HTT 7538812 101,320
-HTT 7538871 101,300 HTT 7538928 101,100
-HTT 7538944 101,340 HTT 7538979 101,460
-HTT 7539037 101,360 HTT 7539169 101,400
-HTT 7539304 101,400 HTT 7538324 101,440
-HTT 7538359 101,440 HTT 7539436 101,140
-HTT 7538553 101,280 HTT 7538723 101,520
-HTT 7539053 101,360 HTT 7539185 101,260
-HTT 7539711 101,500 HTT 7539886 101,280
-HTT 7539924 101,240 HTT 7542241 101,080
-HTT 7542119 101,400 HTT 7542186 101,460`
-                    setPastedTextContent(sample)
-                    setPastedTextTitle('DAMDFE 217482 - MRS 82 Vagões')
-                  }}
-                  className="h-6 px-2 text-[10px] text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
-                >
-                  <Sparkles className="h-3 w-3 mr-1" />
-                  Preencher Exemplo (82 Vagões)
-                </Button>
-              </div>
-              <textarea
-                value={pastedTextContent}
-                onChange={(e) => setPastedTextContent(e.target.value)}
-                rows={12}
-                placeholder="Cole aqui o texto do DAMDFE ou a lista de vagões. Exemplo:&#10;HPT 250490 91,040 HFS 6110860 74,720&#10;HFS 6202250 74,660 HFS 6215301 74,900"
-                className="w-full rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 p-3 text-xs font-mono text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-          </div>
-
-          <DialogFooter className="flex items-center justify-between sm:justify-between pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setPastedTextModalOpen(false)}
-              className="text-xs"
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={!pastedTextContent.trim() || isProcessingMdf}
-              onClick={handleProcessPastedText}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 cursor-pointer"
-            >
-              {isProcessingMdf ? 'Processando...' : 'Extrair Vagões e Adicionar'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
