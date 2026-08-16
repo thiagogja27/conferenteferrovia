@@ -165,32 +165,51 @@ export function parseMultiDanfePdf(
 ): { items: PDFDanfeItem[]; xml: string; data: ParsedNFeData } {
   const baseName = defaultFileName ? defaultFileName.replace(/\.pdf$/i, '') : 'nota';
 
-  // 1. Estratégia Principal: Agrupamento Inteligente por Páginas
+  // 1. Estratégia Principal: Agrupamento Inteligente por Páginas com Detecção de DANFE x DCL/Romaneio
   if (pagesText && pagesText.length > 0) {
     const groupedItems: { key: string; pagesText: string[] }[] = [];
     let currentGroup: { key: string; pagesText: string[] } | null = null;
 
     for (const page of pagesText) {
-      const pageKeys = findKeysInText(page.text);
-      if (pageKeys.length > 0) {
-        // Encontrou chave(s) nesta página
-        for (const k of pageKeys) {
-          if (!currentGroup || currentGroup.key !== k) {
-            // Nova chave encontrada = Novo documento DANFE
-            currentGroup = { key: k, pagesText: [page.text] };
-            groupedItems.push(currentGroup);
-          } else {
-            // Mesma chave = Continuação do mesmo documento DANFE
-            currentGroup.pagesText.push(page.text);
-          }
+      const pText = page.text || '';
+      const isDanfe = /DANFE|DOCUMENTO AUXILIAR DA NOTA|DOCUMENTO AUXILIAR/i.test(pText);
+      const isDCL = /\bDCL\b/i.test(pText) && /Documento de Carga|Fluxo Comercial|Rumo/i.test(pText);
+      const isRomaneio = /Notas Fiscais Carregadas|Romaneio|Ticket de Pesagem/i.test(pText);
+
+      const pageKeys = findKeysInText(pText);
+
+      if (isDanfe) {
+        // Encontrou página de DANFE legítima
+        const mainKey = pageKeys[0] || '';
+        if (mainKey) {
+          currentGroup = { key: mainKey, pagesText: [pText] };
+          groupedItems.push(currentGroup);
+        } else if (currentGroup) {
+          currentGroup.pagesText.push(pText);
+        } else {
+          currentGroup = { key: '', pagesText: [pText] };
+          groupedItems.push(currentGroup);
+        }
+      } else if (isDCL || isRomaneio || pageKeys.length > 1) {
+        // É página de DCL, Romaneio ou Manifesto que referencia chaves existentes
+        // Anexa ao grupo atual se existir para enriquecer dados sem gerar DANFE falso
+        if (currentGroup) {
+          currentGroup.pagesText.push(pText);
+        }
+      } else if (pageKeys.length === 1) {
+        const k = pageKeys[0];
+        if (!currentGroup || currentGroup.key !== k) {
+          currentGroup = { key: k, pagesText: [pText] };
+          groupedItems.push(currentGroup);
+        } else {
+          currentGroup.pagesText.push(pText);
         }
       } else {
-        // Página sem chave expressa (ex: Folha de continuação com tabela de produtos)
+        // Página sem chave expressa (continuação)
         if (currentGroup) {
-          currentGroup.pagesText.push(page.text);
+          currentGroup.pagesText.push(pText);
         } else {
-          // Fallback se for a primeira página sem chave
-          currentGroup = { key: '', pagesText: [page.text] };
+          currentGroup = { key: '', pagesText: [pText] };
           groupedItems.push(currentGroup);
         }
       }
@@ -342,12 +361,12 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
 
   // 3. Emitente
   let emitNome = '';
-  const reciboMatch = text.match(/RECEBEMOS DE\s+([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)\s+(?:OS PRODUTOS|DANFE|NF-e)/i);
+  const reciboMatch = text.match(/RECEBEMOS DE\s+([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)\s+(?:OS PRODUTOS|DANFE|NF-e|CNPJ)/i);
   if (reciboMatch) {
     emitNome = reciboMatch[1].trim();
   }
 
-  if (!emitNome) {
+  if (!emitNome || emitNome === 'EMPRESA EMITENTE S/A') {
     const topMatch = text.match(/([A-ZÀ-Ú0-9\s\.\-&]{5,70})\s+DANFE/i);
     if (topMatch) {
       emitNome = topMatch[1].trim();
@@ -355,6 +374,8 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       const emitMatchBeforeNat = text.match(/([A-ZÀ-Ú0-9\s\.\-&]{5,70})\s+(?:NATUREZA DA OPERAÇÃO|NATUREZA DA OPERACAO)/i);
       if (emitMatchBeforeNat) {
         emitNome = emitMatchBeforeNat[1].trim();
+      } else if (/CORURIPE/i.test(text)) {
+        emitNome = 'S/A USINA CORURIPE ACUCAR E ALCOOL';
       } else {
         emitNome = 'EMPRESA EMITENTE S/A';
       }
@@ -408,17 +429,33 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   // Se não foi encontrado nome de destinatário ou ficou genérico
   if (!destNome || destNome.length < 3 || /DESTINATÁRIO|DESTINATARIO/i.test(destNome)) {
     const textUpper = text.toUpperCase();
-    if (textUpper.includes('CARGILL')) {
+    if (textUpper.includes('CORURIPE')) {
+      destNome = 'S/A USINA CORURIPE ACUCAR E ALCOOL';
+    } else if (textUpper.includes('CARGILL')) {
       destNome = 'CARGILL AGRICOLA SA';
     } else if (textUpper.includes('COPERSUCAR')) {
       destNome = 'COPERSUCAR S.A.';
     } else if (textUpper.includes('RAIZEN') || textUpper.includes('RAÍZEN')) {
       destNome = 'RAIZEN ENERGIA S.A.';
+    } else if (textUpper.includes('SAO MARTINHO') || textUpper.includes('SÃO MARTINHO')) {
+      destNome = 'USINA SAO MARTINHO S/A';
+    } else if (textUpper.includes('ADECOAGRO')) {
+      destNome = 'ADECOAGRO VALE DO IVINHEMA S.A.';
+    } else if (textUpper.includes('ALTA MOGIANA')) {
+      destNome = 'USINA ALTA MOGIANA S/A - ACUCAR E ALCOOL';
+    } else if (textUpper.includes('SANTA TEREZINHA') || textUpper.includes('USACUCAR')) {
+      destNome = 'USINA SANTA TEREZINHA LTDA';
+    } else if (textUpper.includes('BATATAIS')) {
+      destNome = 'USINA BATATAIS S/A ACUCAR E ALCOOL';
+    } else if (textUpper.includes('TEREOS') || textUpper.includes('GUARANI')) {
+      destNome = 'TEREOS ACUCAR E ENERGIA BRASIL S.A.';
+    } else if (textUpper.includes('BP BUNGE')) {
+      destNome = 'BP BUNGE BIOENERGIA S.A.';
     } else if (textUpper.includes('BOM FUTURO')) {
       destNome = 'BOM FUTURO AGRICOLA LTDA';
     } else if (textUpper.includes('ADM DO BRASIL') || textUpper.includes('ADM ')) {
       destNome = 'ADM DO BRASIL LTDA';
-    } else if (textUpper.includes('LOUIS DREYFUS') || textUpper.includes('LDC BRASIL')) {
+    } else if (textUpper.includes('LOUIS DREYFUS') || textUpper.includes('LDC BRASIL') || textUpper.includes('LDC -')) {
       destNome = 'LOUIS DREYFUS COMPANY BRASIL S.A.';
     } else if (textUpper.includes('BUNGE')) {
       destNome = 'BUNGE ALIMENTOS S.A.';
@@ -428,6 +465,18 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       destNome = 'COAMO AGROINDUSTRIAL COOPERATIVA';
     } else if (textUpper.includes('C.VALE') || textUpper.includes('C VALE')) {
       destNome = 'C.VALE COOPERATIVA AGROINDUSTRIAL';
+    } else if (textUpper.includes('VITERRA') || textUpper.includes('GLENCORE')) {
+      destNome = 'VITERRA BRASIL S.A.';
+    } else if (textUpper.includes('COFCO')) {
+      destNome = 'COFCO INTERNATIONAL BRASIL S.A.';
+    } else if (textUpper.includes('JALLES MACHADO')) {
+      destNome = 'JALLES MACHADO S.A.';
+    } else if (textUpper.includes('AGROVALE')) {
+      destNome = 'AGROVALE - AGRO INDUSTRIAS DO VALE DO SAO FRANCISCO S.A.';
+    } else if (textUpper.includes('USINA CAETE') || textUpper.includes('CAETÉ')) {
+      destNome = 'USINA CAETE S/A';
+    } else if (textUpper.includes('SANTA FE') || textUpper.includes('SANTA FÉ')) {
+      destNome = 'USINA SANTA FE S/A';
     } else if (destCNPJ) {
       destNome = `DESTINATÁRIO (CNPJ: ${formatCNPJStr(destCNPJ)})`;
     } else {
@@ -881,9 +930,9 @@ export function extractDataFromXML(xml: string, fileName: string): ParsedNFeData
   const transpPesoL = getTagValue('pesoL');
   const transpPesoB = getTagValue('pesoB');
 
-  let terminalEntrega = extractTerminalEntrega(infCpl);
-  let transbordo = extractTransbordo(infCpl);
-  let retirada = extractRetirada(infCpl);
+  let terminalEntrega = extractTerminalEntrega(infCpl || xml);
+  let transbordo = extractTransbordo(infCpl || xml);
+  let retirada = extractRetirada(infCpl || xml);
 
   return {
     chave,

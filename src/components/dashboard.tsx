@@ -81,11 +81,16 @@ function getNoteDetails(f: DashboardFileItem) {
   let destNome = "Não informado"
   if (nfe?.destinatario?.nome && nfe.destinatario.nome !== "DESTINATÁRIO NÃO IDENTIFICADO") {
     destNome = nfe.destinatario.nome
-  } else if (parsed?.destNome) {
+  } else if (parsed?.destNome && parsed.destNome !== "DESTINATÁRIO NÃO IDENTIFICADO") {
     destNome = parsed.destNome
   }
 
   const destCNPJ = nfe?.destinatario?.cpfCnpj || parsed?.destCNPJ || ""
+
+  // Normalizações inteligentes para garantir exibição precisa no Dashboard
+  if (/CORURIPE/i.test(destNome) || /12\.?229\.?415/i.test(destCNPJ) || /12229415/i.test(destCNPJ)) {
+    destNome = "S/A USINA CORURIPE ACUCAR E ALCOOL"
+  }
 
   let produto = "Outros"
   if (nfe?.tipoProduto && nfe.tipoProduto !== "OUTRO") {
@@ -94,8 +99,16 @@ function getNoteDetails(f: DashboardFileItem) {
     produto = parsed.prodNome
   }
 
-  const terminal = nfe?.terminalEntrega || parsed?.terminalEntrega || "Não Informado"
-  const transbordo = nfe?.transbordo || parsed?.transbordo || "Não Informado"
+  let terminal = nfe?.terminalEntrega || parsed?.terminalEntrega || "Não Informado"
+  let transbordo = nfe?.transbordo || parsed?.transbordo || "Não Informado"
+
+  const infCpl = nfe?.informacoesComplementares || parsed?.infCpl || ""
+  if (transbordo === "Não Informado" && /ITURAMA/i.test(infCpl)) {
+    transbordo = "ITURAMA"
+  }
+  if (terminal === "Não Informado" && (/TEAG/i.test(infCpl) || /TERM.*EXPORTACAO.*ACUCAR.*GUARU/i.test(infCpl))) {
+    terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
+  }
 
   let valorNum = 0
   if (nfe?.impostos?.valorTotal) {
@@ -123,7 +136,6 @@ function getNoteDetails(f: DashboardFileItem) {
 
   const pesoFormatted = pesoNum > 0 ? `${pesoNum.toLocaleString("pt-BR")} kg` : "-"
 
-  const infCpl = nfe?.informacoesComplementares || parsed?.infCpl || ""
   const placa = nfe?.transportador?.placaVeiculo || ""
   const motorista = ""
 
