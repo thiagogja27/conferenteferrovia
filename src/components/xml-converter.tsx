@@ -768,9 +768,14 @@ export function XMLConverter() {
           <div className='mb-4 inline-flex items-center justify-center rounded-full bg-primary/10 p-3'>
             <FileText className='h-8 w-8 text-primary' />
           </div>
-          <h1 className='text-3xl font-bold tracking-tight text-foreground'>
-            Conversor de Notas Fiscais & MDF-e
-          </h1>
+          <div className='flex items-center justify-center gap-2'>
+            <h1 className='text-3xl font-bold tracking-tight text-foreground'>
+              Conversor de Notas Fiscais & MDF-e
+            </h1>
+            <span className="inline-flex items-center rounded-full bg-indigo-100 dark:bg-indigo-950/80 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+              v1.2.1
+            </span>
+          </div>
           <p className='mt-2 text-muted-foreground'>
             Converta, analise e concilie notas fiscais, manifestos ferroviários e planilhas de forma inteligente
           </p>
