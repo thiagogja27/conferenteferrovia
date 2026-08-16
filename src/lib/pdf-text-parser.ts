@@ -733,6 +733,17 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   return { xml, data: parserData };
 }
 
+function escapeXml(unsafe: string | number | undefined | null): string {
+  if (unsafe === undefined || unsafe === null) return '';
+  const str = String(unsafe);
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 export function generateNFeXML(p: ParsedNFeData): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
@@ -741,7 +752,7 @@ export function generateNFeXML(p: ParsedNFeData): string {
       <ide>
         <cUF>${p.cUF}</cUF>
         <cNF>${p.cNF}</cNF>
-        <natOp>${p.natOp}</natOp>
+        <natOp>${escapeXml(p.natOp)}</natOp>
         <mod>55</mod>
         <serie>${p.serie}</serie>
         <nNF>${p.nNF}</nNF>
@@ -761,51 +772,51 @@ export function generateNFeXML(p: ParsedNFeData): string {
       </ide>
       <emit>
         <CNPJ>${p.emitCNPJ.replace(/\D/g, '')}</CNPJ>
-        <xNome>${p.emitNome}</xNome>
-        <xFant>${p.emitFant}</xFant>
+        <xNome>${escapeXml(p.emitNome)}</xNome>
+        <xFant>${escapeXml(p.emitFant)}</xFant>
         <enderEmit>
-          <xLgr>${p.emitLgr || 'LOGRADOURO EMITENTE'}</xLgr>
-          <nro>${p.emitNro || 'SN'}</nro>
-          <xBairro>${p.emitBairro || 'CENTRO'}</xBairro>
+          <xLgr>${escapeXml(p.emitLgr || 'LOGRADOURO EMITENTE')}</xLgr>
+          <nro>${escapeXml(p.emitNro || 'SN')}</nro>
+          <xBairro>${escapeXml(p.emitBairro || 'CENTRO')}</xBairro>
           <cMun>3512304</cMun>
-          <xMun>${p.emitMun || 'SAO PAULO'}</xMun>
-          <UF>${p.emitUF || 'SP'}</UF>
+          <xMun>${escapeXml(p.emitMun || 'SAO PAULO')}</xMun>
+          <UF>${escapeXml(p.emitUF || 'SP')}</UF>
           <CEP>${p.emitCEP.replace(/\D/g, '') || '00000000'}</CEP>
           <cPais>1058</cPais>
           <xPais>BRASIL</xPais>
         </enderEmit>
-        <IE>${p.emitIE || '000000000'}</IE>
+        <IE>${escapeXml(p.emitIE || '000000000')}</IE>
       </emit>
       <dest>
         <CNPJ>${p.destCNPJ.replace(/\D/g, '')}</CNPJ>
-        <xNome>${p.destNome}</xNome>
+        <xNome>${escapeXml(p.destNome)}</xNome>
         <enderDest>
-          <xLgr>${p.destLgr || 'LOGRADOURO DESTINATARIO'}</xLgr>
-          <nro>${p.destNro || 'SN'}</nro>
-          <xBairro>${p.destBairro || 'CENTRO'}</xBairro>
+          <xLgr>${escapeXml(p.destLgr || 'LOGRADOURO DESTINATARIO')}</xLgr>
+          <nro>${escapeXml(p.destNro || 'SN')}</nro>
+          <xBairro>${escapeXml(p.destBairro || 'CENTRO')}</xBairro>
           <cMun>3512304</cMun>
-          <xMun>${p.destMun || 'SAO PAULO'}</xMun>
-          <UF>${p.destUF || 'SP'}</UF>
+          <xMun>${escapeXml(p.destMun || 'SAO PAULO')}</xMun>
+          <UF>${escapeXml(p.destUF || 'SP')}</UF>
           <CEP>${p.destCEP.replace(/\D/g, '') || '00000000'}</CEP>
           <cPais>1058</cPais>
           <xPais>BRASIL</xPais>
         </enderDest>
         <indIEDest>1</indIEDest>
-        <IE>${p.destIE || '000000000'}</IE>
+        <IE>${escapeXml(p.destIE || '000000000')}</IE>
       </dest>
       <det nItem="1">
         <prod>
-          <cProd>${p.prodCodigo}</cProd>
+          <cProd>${escapeXml(p.prodCodigo)}</cProd>
           <cEAN>SEM GTIN</cEAN>
-          <xProd>${p.prodNome}</xProd>
-          <NCM>${p.prodNCM}</NCM>
-          <CFOP>${p.prodCFOP}</CFOP>
-          <uCom>${p.prodUCom}</uCom>
+          <xProd>${escapeXml(p.prodNome)}</xProd>
+          <NCM>${escapeXml(p.prodNCM)}</NCM>
+          <CFOP>${escapeXml(p.prodCFOP)}</CFOP>
+          <uCom>${escapeXml(p.prodUCom)}</uCom>
           <qCom>${p.prodQCom.toFixed(4)}</qCom>
           <vUnCom>${p.prodVUnCom.toFixed(4)}</vUnCom>
           <vProd>${p.prodVProd.toFixed(2)}</vProd>
           <cEANTrib>SEM GTIN</cEANTrib>
-          <uTrib>${p.prodUCom}</uTrib>
+          <uTrib>${escapeXml(p.prodUCom)}</uTrib>
           <qTrib>${p.prodQCom.toFixed(4)}</qTrib>
           <vUnTrib>${p.prodVUnCom.toFixed(4)}</vUnTrib>
           <indTot>1</indTot>
@@ -863,21 +874,21 @@ export function generateNFeXML(p: ParsedNFeData): string {
         <modFrete>0</modFrete>
         <transporta>
           <CNPJ>${p.transpCNPJ.replace(/\D/g, '')}</CNPJ>
-          <xNome>${p.transpNome}</xNome>
-          <IE>${p.transpIE}</IE>
-          <xEnder>${p.transpEnder}</xEnder>
-          <xMun>${p.transpMun}</xMun>
-          <UF>${p.transpUF}</UF>
+          <xNome>${escapeXml(p.transpNome)}</xNome>
+          <IE>${escapeXml(p.transpIE)}</IE>
+          <xEnder>${escapeXml(p.transpEnder)}</xEnder>
+          <xMun>${escapeXml(p.transpMun)}</xMun>
+          <UF>${escapeXml(p.transpUF)}</UF>
         </transporta>
         <vol>
-          <qVol>${p.transpQVol}</qVol>
-          <esp>${p.transpEsp}</esp>
-          <pesoL>${p.transpPesoL}</pesoL>
-          <pesoB>${p.transpPesoB}</pesoB>
+          <qVol>${escapeXml(p.transpQVol)}</qVol>
+          <esp>${escapeXml(p.transpEsp)}</esp>
+          <pesoL>${escapeXml(p.transpPesoL)}</pesoL>
+          <pesoB>${escapeXml(p.transpPesoB)}</pesoB>
         </vol>
       </transp>
       <infAdic>
-        <infCpl>${p.infCpl}</infCpl>
+        <infCpl>${escapeXml(p.infCpl)}</infCpl>
       </infAdic>
     </infNFe>
   </NFe>

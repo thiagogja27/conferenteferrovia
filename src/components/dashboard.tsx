@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { type NFEData } from "@/lib/nfe-parser"
+import { parseNFE, type NFEData } from "@/lib/nfe-parser"
 import { type ParsedNFeData } from "@/lib/pdf-text-parser"
 
 import {
@@ -39,6 +39,9 @@ import * as XLSX from "xlsx"
 export interface DashboardFileItem {
   fileName?: string
   filePath?: string
+  originalPath?: string
+  xmlContent?: string
+  xmlGerado?: string
   nfeData: NFEData | null
   parsedData?: ParsedNFeData | null
 }
@@ -61,8 +64,15 @@ const COLORS = [
 ]
 
 function getNoteDetails(f: DashboardFileItem) {
-  const nfe = f.nfeData
+  let nfe = f.nfeData
   const parsed = f.parsedData
+  const rawXml = f.xmlContent || f.xmlGerado || ""
+
+  if (!nfe && rawXml) {
+    try {
+      nfe = parseNFE(rawXml)
+    } catch (e) {}
+  }
 
   const numero = nfe?.numero || parsed?.nNF || "S/N"
   const serie = nfe?.serie || parsed?.serie || "1"
@@ -86,10 +96,33 @@ function getNoteDetails(f: DashboardFileItem) {
   }
 
   const destCNPJ = nfe?.destinatario?.cpfCnpj || parsed?.destCNPJ || ""
+  const infCpl = nfe?.informacoesComplementares || parsed?.infCpl || rawXml || ""
 
   // Normalizações inteligentes para garantir exibição precisa no Dashboard
-  if (/CORURIPE/i.test(destNome) || /12\.?229\.?415/i.test(destCNPJ) || /12229415/i.test(destCNPJ)) {
+  if (/CORURIPE/i.test(destNome) || /12\.?229\.?415/i.test(destCNPJ) || /12229415/i.test(destCNPJ) || /CORURIPE/i.test(infCpl)) {
     destNome = "S/A USINA CORURIPE ACUCAR E ALCOOL"
+  } else if (destNome === "Não informado" || destNome === "DESTINATÁRIO NÃO IDENTIFICADO" || /DESTINAT/i.test(destNome)) {
+    if (/CARGILL/i.test(infCpl) || /CARGILL/i.test(rawXml)) {
+      destNome = "CARGILL AGRICOLA SA"
+    } else if (/COPERSUCAR/i.test(infCpl) || /COPERSUCAR/i.test(rawXml)) {
+      destNome = "COPERSUCAR S.A."
+    } else if (/RAIZEN|RAÍZEN/i.test(infCpl) || /RAIZEN/i.test(rawXml)) {
+      destNome = "RAIZEN ENERGIA S.A."
+    } else if (/SAO MARTINHO|SÃO MARTINHO/i.test(infCpl) || /SAO MARTINHO/i.test(rawXml)) {
+      destNome = "USINA SAO MARTINHO S/A"
+    } else if (/ADECOAGRO/i.test(infCpl) || /ADECOAGRO/i.test(rawXml)) {
+      destNome = "ADECOAGRO VALE DO IVINHEMA S.A."
+    } else if (/ALTA MOGIANA/i.test(infCpl) || /ALTA MOGIANA/i.test(rawXml)) {
+      destNome = "USINA ALTA MOGIANA S/A - ACUCAR E ALCOOL"
+    } else if (/BATATAIS/i.test(infCpl) || /BATATAIS/i.test(rawXml)) {
+      destNome = "USINA BATATAIS S/A ACUCAR E ALCOOL"
+    } else if (/TEREOS|GUARANI/i.test(infCpl) || /TEREOS/i.test(rawXml)) {
+      destNome = "TEREOS ACUCAR E ENERGIA BRASIL S.A."
+    } else if (/BP BUNGE/i.test(infCpl) || /BP BUNGE/i.test(rawXml)) {
+      destNome = "BP BUNGE BIOENERGIA S.A."
+    } else if (destCNPJ) {
+      destNome = `DESTINATÁRIO (${destCNPJ})`
+    }
   }
 
   let produto = "Outros"
@@ -102,12 +135,31 @@ function getNoteDetails(f: DashboardFileItem) {
   let terminal = nfe?.terminalEntrega || parsed?.terminalEntrega || "Não Informado"
   let transbordo = nfe?.transbordo || parsed?.transbordo || "Não Informado"
 
-  const infCpl = nfe?.informacoesComplementares || parsed?.infCpl || ""
-  if (transbordo === "Não Informado" && /ITURAMA/i.test(infCpl)) {
-    transbordo = "ITURAMA"
+  if (transbordo === "Não Informado" || !transbordo) {
+    if (/ITURAMA/i.test(infCpl)) transbordo = "ITURAMA"
+    else if (/ALTO\s*TAQUARI/i.test(infCpl)) transbordo = "ALTO TAQUARI"
+    else if (/RONDONOPOLIS|RONDONÓPOLIS/i.test(infCpl)) transbordo = "RONDONOPOLIS"
+    else if (/RIO\s*VERDE/i.test(infCpl)) transbordo = "RIO VERDE"
+    else if (/ARAGUARI/i.test(infCpl)) transbordo = "ARAGUARI"
+    else if (/UBERABA/i.test(infCpl)) transbordo = "UBERABA"
+    else if (/PEDERNEIRAS/i.test(infCpl)) transbordo = "PEDERNEIRAS"
+    else if (/GUARA|GUARÁ/i.test(infCpl)) transbordo = "GUARA"
   }
-  if (terminal === "Não Informado" && (/TEAG/i.test(infCpl) || /TERM.*EXPORTACAO.*ACUCAR.*GUARU/i.test(infCpl))) {
-    terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
+
+  if (terminal === "Não Informado" || !terminal) {
+    if (/TEAG|TERM.*EXPORTACAO.*ACUCAR.*GUARU/i.test(infCpl)) {
+      terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
+    } else if (/TEG\b|TERMINAL.*EXPORTADORES.*GRANDE/i.test(infCpl)) {
+      terminal = "TEG - TERMINAL DE EXPORTAÇÃO DO GUARUJÁ"
+    } else if (/CLI|TERMARES/i.test(infCpl)) {
+      terminal = "CLI - CORREDOR LOGÍSTICA INTEGRADA"
+    } else if (/T-124|T124/i.test(infCpl)) {
+      terminal = "TERMINAL 124"
+    } else if (/RUMO/i.test(infCpl)) {
+      terminal = "TERMINAL RUMO"
+    } else if (/VLI/i.test(infCpl)) {
+      terminal = "TERMINAL VLI"
+    }
   }
 
   let valorNum = 0

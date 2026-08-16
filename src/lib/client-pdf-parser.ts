@@ -1,5 +1,17 @@
+import * as pdfjsLib from 'pdfjs-dist'
 import { parseMultiDanfePdf } from './pdf-text-parser'
 import { parseNFE } from './nfe-parser'
+
+// Configuração segura do worker do pdf.js no browser
+if (typeof window !== 'undefined') {
+  try {
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version || '4.10.38'}/build/pdf.worker.min.mjs`
+    }
+  } catch (e) {
+    console.warn('Configuração de worker pdf.js:', e)
+  }
+}
 
 // Helper para converter ArrayBuffer para Base64 com segurança
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -12,6 +24,46 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
     binary += String.fromCharCode.apply(null, chunk as unknown as number[])
   }
   return btoa(binary)
+}
+
+/**
+ * Extrator com pdfjs-dist no navegador
+ */
+export async function extractPdfTextWithPdfJs(arrayBuffer: ArrayBuffer): Promise<{ text: string; pages: { num: number; text: string }[] }> {
+  try {
+    if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version || '4.10.38'}/build/pdf.worker.min.mjs`
+    }
+    const data = new Uint8Array(arrayBuffer)
+    const loadingTask = pdfjsLib.getDocument({
+      data,
+      useSystemFonts: true,
+    })
+    const pdfDoc = await loadingTask.promise
+    const pages: { num: number; text: string }[] = []
+    const fullTextParts: string[] = []
+
+    for (let i = 1; i <= pdfDoc.numPages; i++) {
+      const page = await pdfDoc.getPage(i)
+      const textContent = await page.getTextContent()
+      const pageText = textContent.items
+        .map((item: any) => item.str || '')
+        .join(' ')
+      pages.push({ num: i, text: pageText })
+      fullTextParts.push(pageText)
+    }
+
+    if (fullTextParts.length > 0 && fullTextParts.join(' ').trim().length > 10) {
+      return {
+        text: fullTextParts.join('\n\n'),
+        pages,
+      }
+    }
+  } catch (err) {
+    console.warn('pdfjs-dist falhou, usando extrator nativo:', err)
+  }
+
+  return extractPdfTextClientPure(arrayBuffer)
 }
 
 /**
@@ -208,8 +260,8 @@ export async function parsePdfClientSide(fileOrBuffer: File | ArrayBuffer | Uint
     console.warn('API /api/parse-pdf-text indisponível, usando extração local nativa...', textApiErr)
   }
 
-  // 3. Fallback Client-Side Puro e Seguro (para Vercel 100% estático ou sem backend)
-  const localRes = await extractPdfTextClientPure(arrayBuffer)
+  // 3. Fallback Client-Side no Navegador (com pdfjs-dist para Vercel / Ambientes Estáticos)
+  const localRes = await extractPdfTextWithPdfJs(arrayBuffer)
   const { items, xml, data } = parseMultiDanfePdf(localRes.text || '', fileName, localRes.pages || [])
   const itemsWithNFe = items.map((it) => {
     let nfeData = null

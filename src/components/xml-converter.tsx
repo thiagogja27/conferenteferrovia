@@ -773,7 +773,7 @@ export function XMLConverter() {
               Conversor de Notas Fiscais & MDF-e
             </h1>
             <span className="inline-flex items-center rounded-full bg-indigo-100 dark:bg-indigo-950/80 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-              v1.2.1
+              v1.2.2
             </span>
           </div>
           <p className='mt-2 text-muted-foreground'>
