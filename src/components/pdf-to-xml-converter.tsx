@@ -261,6 +261,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
   // Estados para a funcionalidade de conferência de chaves com planilha Excel
   const [excelData, setExcelData] = useState<ExcelData | null>(null)
+  const [rawWorkbook, setRawWorkbook] = useState<XLSX.WorkBook | null>(null)
+  const [excelFileName, setExcelFileName] = useState<string>('')
+  const [availableExcelColumns, setAvailableExcelColumns] = useState<string[]>([])
+  const [selectedExcelWeightCol, setSelectedExcelWeightCol] = useState<string>('auto')
   const [isExcelLoading, setIsExcelLoading] = useState<boolean>(false)
   const [excelFilter, setExcelFilter] = useState<'all' | 'matched' | 'unmatched' | 'excel_only' | 'weight_divergent'>('all')
   const [excelSearchQuery, setExcelSearchQuery] = useState<string>('')
@@ -986,380 +990,401 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
   // =========================================================================
   // LÓGICA DE PROCESSAMENTO DA PLANILHA EXCEL DE CONFERÊNCIA DE CHAVES
   // =========================================================================
+  const processExcelWorkbook = (
+    workbook: XLSX.WorkBook,
+    fileName: string,
+    weightColumnChoice: string = selectedExcelWeightCol
+  ) => {
+    const keysMap = new Map<string, ExcelMatchInfo>()
+    const allKeysList: string[] = []
+    let totalRows = 0
+    const allColsSet = new Set<string>()
+
+    const globalWagonMap = new Map<string, { vagao: string; sheetName: string; sumPeso: number; tara: number; count: number; rows: number[] }>()
+
+    workbook.SheetNames.forEach((sheetName) => {
+      const worksheet = workbook.Sheets[sheetName]
+      const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
+      totalRows += rows.length
+
+      // Coletar nomes de todas as colunas para o seletor do usuário
+      for (let r = 0; r < Math.min(rows.length, 10); r++) {
+        const headerRow = rows[r]
+        if (!headerRow) continue
+        headerRow.forEach((c) => {
+          const colName = String(c || '').trim()
+          if (colName && colName.length < 80 && !allColsSet.has(colName)) {
+            allColsSet.add(colName)
+          }
+        })
+      }
+
+      // Identificar colunas no cabeçalho
+      let pesoColIndex = -1
+      let pesoNotaVagaoColIndex = -1
+      let taraColIndex = -1
+      let vagaoColIndex = -1
+      let brutoColIndex = -1
+
+      for (let r = 0; r < Math.min(rows.length, 30); r++) {
+        const headerRow = rows[r]
+        if (!headerRow) continue
+        for (let c = 0; c < headerRow.length; c++) {
+          const cellStr = String(headerRow[c] || '').trim().toLowerCase()
+
+          if (
+            pesoNotaVagaoColIndex === -1 &&
+            (cellStr.includes('peso_nota_vagao') ||
+              cellStr.includes('peso nota vagao') ||
+              cellStr.includes('peso_nota_vagão') ||
+              cellStr.includes('peso nota vagão') ||
+              cellStr.includes('peso_vagao') ||
+              cellStr.includes('peso vagao') ||
+              cellStr.includes('peso_rateado'))
+          ) {
+            pesoNotaVagaoColIndex = c
+          }
+
+          if (
+            taraColIndex === -1 &&
+            (cellStr === 'tara' ||
+              cellStr.includes('tara_vagao') ||
+              cellStr.includes('tara vagao') ||
+              cellStr.includes('tara_vagão') ||
+              cellStr.includes('tara(kg)') ||
+              cellStr.includes('tara (kg)') ||
+              cellStr.includes('tara (t)'))
+          ) {
+            taraColIndex = c
+          }
+
+          if (
+            vagaoColIndex === -1 &&
+            (cellStr === 'vagao' ||
+              cellStr === 'vagão' ||
+              cellStr.includes('num_vagao') ||
+              cellStr.includes('numero_vagao') ||
+              cellStr.includes('nº vagao') ||
+              cellStr.includes('cod_vagao') ||
+              cellStr.includes('serie_vag'))
+          ) {
+            vagaoColIndex = c
+          }
+
+          if (
+            brutoColIndex === -1 &&
+            (cellStr === 'bruto' ||
+              cellStr.includes('peso_bruto') ||
+              cellStr.includes('peso bruto') ||
+              cellStr.includes('bruto_vagao'))
+          ) {
+            brutoColIndex = c
+          }
+
+          // Identificação da Coluna de Peso Selecionado
+          if (pesoColIndex === -1) {
+            if (weightColumnChoice === 'none') {
+              pesoColIndex = -1
+            } else if (weightColumnChoice && weightColumnChoice !== 'auto') {
+              if (String(headerRow[c] || '').trim().toLowerCase() === weightColumnChoice.trim().toLowerCase()) {
+                pesoColIndex = c
+              }
+            } else {
+              // Modo Automático: BUSCA ESTRITAMENTE a coluna "Peso Selecionado" / "peso_selecionado" / "peso sel"
+              // REGRA CRÍTICA: NÃO faz fallback para outras colunas (como peso liq, balança, quant, etc.)!
+              if (
+                cellStr === 'peso selecionado' ||
+                cellStr === 'peso_selecionado' ||
+                cellStr === 'peso_sel' ||
+                cellStr === 'peso sel' ||
+                cellStr === 'peso selec' ||
+                cellStr === 'peso_selec' ||
+                cellStr.startsWith('peso selecionado') ||
+                cellStr.startsWith('peso_selecionado') ||
+                cellStr.startsWith('peso sel ')
+              ) {
+                pesoColIndex = c
+              }
+            }
+          }
+        }
+      }
+
+      // Estrutura temporária para armazenar registros e agrupar por vagão
+      interface TempRowRecord {
+        rowIndex: number
+        sheetName: string
+        keys: string[]
+        rawValue: string
+        pesoSelecionado: number | null
+        pesoSelecionadoStr: string
+        pesoNotaVagao: number | null
+        pesoNotaVagaoStr: string
+        tara: number | null
+        taraStr: string
+        vagao: string
+        brutoRow: number | null
+      }
+
+      const tempRowRecords: TempRowRecord[] = []
+
+      rows.forEach((row, rowIndex) => {
+        // REGRA ESTRITA: Extração exclusiva da coluna de Peso Selecionado.
+        // Se a linha não tiver valor nesta coluna, NÃO busca em nenhuma outra coluna!
+        let pesoSelecionado: number | null = null
+        let pesoSelecionadoStr = ''
+
+        if (
+          pesoColIndex !== -1 &&
+          row[pesoColIndex] !== undefined &&
+          row[pesoColIndex] !== null &&
+          String(row[pesoColIndex]).trim() !== ''
+        ) {
+          const rawVal = String(row[pesoColIndex]).trim()
+          const numVal = parseBRFloat(rawVal)
+          if (!isNaN(numVal) && numVal > 0) {
+            pesoSelecionado = numVal
+            pesoSelecionadoStr = rawVal
+          }
+        }
+
+        let pesoNotaVagao: number | null = null
+        let pesoNotaVagaoStr = ''
+        if (
+          pesoNotaVagaoColIndex !== -1 &&
+          row[pesoNotaVagaoColIndex] !== undefined &&
+          row[pesoNotaVagaoColIndex] !== null &&
+          String(row[pesoNotaVagaoColIndex]).trim() !== ''
+        ) {
+          const rawVal = String(row[pesoNotaVagaoColIndex]).trim()
+          const numVal = parseBRFloat(rawVal)
+          if (!isNaN(numVal) && numVal > 0) {
+            pesoNotaVagao = numVal
+            pesoNotaVagaoStr = rawVal
+          }
+        }
+
+        let tara: number | null = null
+        let taraStr = ''
+        if (
+          taraColIndex !== -1 &&
+          row[taraColIndex] !== undefined &&
+          row[taraColIndex] !== null &&
+          String(row[taraColIndex]).trim() !== ''
+        ) {
+          const rawVal = String(row[taraColIndex]).trim()
+          const numVal = parseBRFloat(rawVal)
+          if (!isNaN(numVal) && numVal > 0) {
+            tara = numVal
+            taraStr = rawVal
+          }
+        }
+
+        let vagao = ''
+        if (
+          vagaoColIndex !== -1 &&
+          row[vagaoColIndex] !== undefined &&
+          row[vagaoColIndex] !== null
+        ) {
+          vagao = String(row[vagaoColIndex]).trim()
+        }
+
+        let brutoRow: number | null = null
+        if (
+          brutoColIndex !== -1 &&
+          row[brutoColIndex] !== undefined &&
+          row[brutoColIndex] !== null &&
+          String(row[brutoColIndex]).trim() !== ''
+        ) {
+          const rawVal = String(row[brutoColIndex]).trim()
+          const numVal = parseBRFloat(rawVal)
+          if (!isNaN(numVal) && numVal > 0) {
+            brutoRow = numVal
+          }
+        }
+
+        // Extração de chaves de acesso
+        const rowKeys: string[] = []
+        let primaryRawValue = ''
+
+        row.forEach((cellVal) => {
+          if (!cellVal) return
+          const strVal = String(cellVal).trim()
+
+          const foundKeys = findKeysInText(strVal)
+          if (foundKeys.length > 0) {
+            foundKeys.forEach((k) => {
+              if (!rowKeys.includes(k)) rowKeys.push(k)
+            })
+            if (!primaryRawValue) primaryRawValue = strVal
+          } else {
+            const digitsOnly = strVal.replace(/\D/g, '')
+            if (digitsOnly.length === 44 && isValidNFeKey(digitsOnly)) {
+              if (!rowKeys.includes(digitsOnly)) rowKeys.push(digitsOnly)
+              if (!primaryRawValue) primaryRawValue = strVal
+            } else if (digitsOnly.length === 43 && isValidNFeKey('0' + digitsOnly)) {
+              const fixedKey = '0' + digitsOnly
+              if (!rowKeys.includes(fixedKey)) rowKeys.push(fixedKey)
+              if (!primaryRawValue) primaryRawValue = strVal
+            }
+          }
+        })
+
+        if (rowKeys.length > 0) {
+          tempRowRecords.push({
+            rowIndex: rowIndex + 1,
+            sheetName,
+            keys: rowKeys,
+            rawValue: primaryRawValue || rowKeys[0],
+            pesoSelecionado,
+            pesoSelecionadoStr,
+            pesoNotaVagao,
+            pesoNotaVagaoStr,
+            tara,
+            taraStr,
+            vagao,
+            brutoRow,
+          })
+        }
+      })
+
+      // Agrupar por Vagão para calcular somatório do peso da nota no vagão e tara
+      const wagonTotals = new Map<string, { sumPeso: number; tara: number; bruto: number; count: number }>()
+
+      tempRowRecords.forEach((rec) => {
+        if (!rec.vagao) return
+        const effPeso = rec.pesoNotaVagao ?? rec.pesoSelecionado ?? 0
+        const curr = wagonTotals.get(rec.vagao) || { sumPeso: 0, tara: 0, bruto: 0, count: 0 }
+        wagonTotals.set(rec.vagao, {
+          sumPeso: curr.sumPeso + effPeso,
+          tara: rec.tara && rec.tara > 0 ? rec.tara : curr.tara,
+          bruto: rec.brutoRow && rec.brutoRow > 0 ? rec.brutoRow : curr.bruto,
+          count: curr.count + 1,
+        })
+
+        const gCurr = globalWagonMap.get(rec.vagao) || { vagao: rec.vagao, sheetName, sumPeso: 0, tara: 0, count: 0, rows: [] }
+        globalWagonMap.set(rec.vagao, {
+          vagao: rec.vagao,
+          sheetName,
+          sumPeso: gCurr.sumPeso + effPeso,
+          tara: rec.tara && rec.tara > 0 ? rec.tara : gCurr.tara,
+          count: gCurr.count + 1,
+          rows: [...gCurr.rows, rec.rowIndex],
+        })
+      })
+
+      // Processar cada registro e alimentar o keysMap
+      tempRowRecords.forEach((rec) => {
+        const effPeso = rec.pesoNotaVagao ?? rec.pesoSelecionado ?? 0
+        let pesoBrutoCalc: number | null = null
+
+        if (rec.vagao && wagonTotals.has(rec.vagao)) {
+          const wInfo = wagonTotals.get(rec.vagao)!
+          if (wInfo.sumPeso > 0 && wInfo.tara > 0) {
+            // Rateia a tara do vagão proporcionalmente ao peso da nota no vagão
+            const taraRateada = wInfo.tara * (effPeso / wInfo.sumPeso)
+            pesoBrutoCalc = effPeso + taraRateada
+          } else if (wInfo.bruto > 0 && wInfo.sumPeso > 0) {
+            pesoBrutoCalc = wInfo.bruto * (effPeso / wInfo.sumPeso)
+          } else if (effPeso > 0) {
+            pesoBrutoCalc = effPeso + (rec.tara || 0)
+          }
+        } else if (effPeso > 0) {
+          pesoBrutoCalc = effPeso + (rec.tara || 0)
+        }
+
+        let pesoBrutoStr = ''
+        if (pesoBrutoCalc !== null && !isNaN(pesoBrutoCalc) && pesoBrutoCalc > 0) {
+          pesoBrutoStr = pesoBrutoCalc.toLocaleString('pt-BR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 3,
+          })
+        }
+
+        rec.keys.forEach((k) => {
+          if (!keysMap.has(k)) {
+            // CRÍTICO: Registra ESTRITAMENTE rec.pesoSelecionado.
+            // Se for null, PERMANECE NULL. Nunca substitui por effPeso ou pesoNotaVagao!
+            keysMap.set(k, {
+              row: rec.rowIndex,
+              rawValue: rec.rawValue,
+              sheetName: rec.sheetName,
+              pesoSelecionado: rec.pesoSelecionado,
+              pesoSelecionadoStr: rec.pesoSelecionadoStr,
+              pesoNotaVagao: rec.pesoNotaVagao,
+              pesoNotaVagaoStr: rec.pesoNotaVagaoStr,
+              tara: rec.tara,
+              taraStr: rec.taraStr,
+              vagao: rec.vagao,
+              pesoBruto: pesoBrutoCalc,
+              pesoBrutoStr,
+            })
+            allKeysList.push(k)
+          }
+        })
+      })
+    })
+
+    const wagonSummariesList: WagonSummary[] = Array.from(globalWagonMap.values()).map((w) => {
+      const pesoBrutoTotal = w.sumPeso + w.tara
+      const somaPesoNotaVagaoStr = w.sumPeso > 0
+        ? w.sumPeso.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+        : '0,00'
+      const taraStr = w.tara > 0
+        ? w.tara.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+        : '0,00'
+      const pesoBrutoTotalStr = pesoBrutoTotal > 0
+        ? pesoBrutoTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+        : '0,00'
+      const linhas = w.rows.length <= 8
+        ? `Linhas ${w.rows.join(', ')}`
+        : `Linhas ${w.rows.slice(0, 8).join(', ')}... (+${w.rows.length - 8})`
+
+      return {
+        vagao: w.vagao,
+        sheetName: w.sheetName,
+        qtdNotas: w.count,
+        somaPesoNotaVagao: w.sumPeso,
+        somaPesoNotaVagaoStr,
+        tara: w.tara,
+        taraStr,
+        pesoBrutoTotal,
+        pesoBrutoTotalStr,
+        linhas,
+      }
+    })
+
+    setAvailableExcelColumns(Array.from(allColsSet))
+    setExcelData({
+      fileName,
+      totalRows,
+      keysMap,
+      allKeysList,
+      sheets: workbook.SheetNames,
+      wagonSummaries: wagonSummariesList,
+    })
+  }
+
   const parseExcelForKeys = async (file: File) => {
     setIsExcelLoading(true)
     try {
       const arrayBuffer = await file.arrayBuffer()
       const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-
-      const keysMap = new Map<string, ExcelMatchInfo>()
-      const allKeysList: string[] = []
-      let totalRows = 0
-
-      const globalWagonMap = new Map<string, { vagao: string; sheetName: string; sumPeso: number; tara: number; count: number; rows: number[] }>()
-
-      workbook.SheetNames.forEach((sheetName) => {
-        const worksheet = workbook.Sheets[sheetName]
-        const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
-        totalRows += rows.length
-
-        // Identificar colunas no cabeçalho
-        let pesoColIndex = -1
-        let pesoNotaVagaoColIndex = -1
-        let taraColIndex = -1
-        let vagaoColIndex = -1
-        let brutoColIndex = -1
-
-        for (let r = 0; r < Math.min(rows.length, 30); r++) {
-          const headerRow = rows[r]
-          if (!headerRow) continue
-          for (let c = 0; c < headerRow.length; c++) {
-            const cellStr = String(headerRow[c] || '').trim().toLowerCase()
-
-            if (
-              pesoNotaVagaoColIndex === -1 &&
-              (cellStr.includes('peso_nota_vagao') ||
-                cellStr.includes('peso nota vagao') ||
-                cellStr.includes('peso_nota_vagão') ||
-                cellStr.includes('peso nota vagão') ||
-                cellStr.includes('peso_vagao') ||
-                cellStr.includes('peso vagao') ||
-                cellStr.includes('peso_rateado'))
-            ) {
-              pesoNotaVagaoColIndex = c
-            }
-
-            if (
-              taraColIndex === -1 &&
-              (cellStr === 'tara' ||
-                cellStr.includes('tara_vagao') ||
-                cellStr.includes('tara vagao') ||
-                cellStr.includes('tara_vagão') ||
-                cellStr.includes('tara(kg)') ||
-                cellStr.includes('tara (kg)') ||
-                cellStr.includes('tara (t)'))
-            ) {
-              taraColIndex = c
-            }
-
-            if (
-              vagaoColIndex === -1 &&
-              (cellStr === 'vagao' ||
-                cellStr === 'vagão' ||
-                cellStr.includes('num_vagao') ||
-                cellStr.includes('numero_vagao') ||
-                cellStr.includes('nº vagao') ||
-                cellStr.includes('cod_vagao') ||
-                cellStr.includes('serie_vag'))
-            ) {
-              vagaoColIndex = c
-            }
-
-            if (
-              brutoColIndex === -1 &&
-              (cellStr === 'bruto' ||
-                cellStr.includes('peso_bruto') ||
-                cellStr.includes('peso bruto') ||
-                cellStr.includes('bruto_vagao'))
-            ) {
-              brutoColIndex = c
-            }
-
-            if (
-              pesoColIndex === -1 &&
-              (cellStr.includes('peso selecionado') ||
-                cellStr.includes('peso_selecionado') ||
-                cellStr.includes('peso sel'))
-            ) {
-              pesoColIndex = c
-            }
-          }
-        }
-
-        if (pesoColIndex === -1) {
-          for (let r = 0; r < Math.min(rows.length, 30); r++) {
-            const headerRow = rows[r]
-            if (!headerRow) continue
-            for (let c = 0; c < headerRow.length; c++) {
-              const cellStr = String(headerRow[c] || '').trim().toLowerCase()
-              if (
-                cellStr.includes('peso liq') ||
-                cellStr.includes('peso líquido') ||
-                cellStr.includes('peso liquido') ||
-                cellStr === 'peso' ||
-                cellStr.includes('peso balança') ||
-                cellStr.includes('peso medido') ||
-                cellStr.includes('quant')
-              ) {
-                pesoColIndex = c
-                break
-              }
-            }
-            if (pesoColIndex !== -1) break
-          }
-        }
-
-        // Estrutura temporária para armazenar registros e agrupar por vagão
-        interface TempRowRecord {
-          rowIndex: number
-          sheetName: string
-          keys: string[]
-          rawValue: string
-          pesoSelecionado: number | null
-          pesoSelecionadoStr: string
-          pesoNotaVagao: number | null
-          pesoNotaVagaoStr: string
-          tara: number | null
-          taraStr: string
-          vagao: string
-          brutoRow: number | null
-        }
-
-        const tempRowRecords: TempRowRecord[] = []
-
-        rows.forEach((row, rowIndex) => {
-          let pesoSelecionado: number | null = null
-          let pesoSelecionadoStr = ''
-
-          if (
-            pesoColIndex !== -1 &&
-            row[pesoColIndex] !== undefined &&
-            row[pesoColIndex] !== null &&
-            String(row[pesoColIndex]).trim() !== ''
-          ) {
-            const rawVal = String(row[pesoColIndex]).trim()
-            const numVal = parseBRFloat(rawVal)
-            if (!isNaN(numVal) && numVal > 0) {
-              pesoSelecionado = numVal
-              pesoSelecionadoStr = rawVal
-            }
-          }
-
-          let pesoNotaVagao: number | null = null
-          let pesoNotaVagaoStr = ''
-          if (
-            pesoNotaVagaoColIndex !== -1 &&
-            row[pesoNotaVagaoColIndex] !== undefined &&
-            row[pesoNotaVagaoColIndex] !== null &&
-            String(row[pesoNotaVagaoColIndex]).trim() !== ''
-          ) {
-            const rawVal = String(row[pesoNotaVagaoColIndex]).trim()
-            const numVal = parseBRFloat(rawVal)
-            if (!isNaN(numVal) && numVal > 0) {
-              pesoNotaVagao = numVal
-              pesoNotaVagaoStr = rawVal
-            }
-          }
-
-          let tara: number | null = null
-          let taraStr = ''
-          if (
-            taraColIndex !== -1 &&
-            row[taraColIndex] !== undefined &&
-            row[taraColIndex] !== null &&
-            String(row[taraColIndex]).trim() !== ''
-          ) {
-            const rawVal = String(row[taraColIndex]).trim()
-            const numVal = parseBRFloat(rawVal)
-            if (!isNaN(numVal) && numVal > 0) {
-              tara = numVal
-              taraStr = rawVal
-            }
-          }
-
-          let vagao = ''
-          if (
-            vagaoColIndex !== -1 &&
-            row[vagaoColIndex] !== undefined &&
-            row[vagaoColIndex] !== null
-          ) {
-            vagao = String(row[vagaoColIndex]).trim()
-          }
-
-          let brutoRow: number | null = null
-          if (
-            brutoColIndex !== -1 &&
-            row[brutoColIndex] !== undefined &&
-            row[brutoColIndex] !== null &&
-            String(row[brutoColIndex]).trim() !== ''
-          ) {
-            const rawVal = String(row[brutoColIndex]).trim()
-            const numVal = parseBRFloat(rawVal)
-            if (!isNaN(numVal) && numVal > 0) {
-              brutoRow = numVal
-            }
-          }
-
-          // Extração de chaves de acesso
-          const rowKeys: string[] = []
-          let primaryRawValue = ''
-
-          row.forEach((cellVal) => {
-            if (!cellVal) return
-            const strVal = String(cellVal).trim()
-
-            const foundKeys = findKeysInText(strVal)
-            if (foundKeys.length > 0) {
-              foundKeys.forEach((k) => {
-                if (!rowKeys.includes(k)) rowKeys.push(k)
-              })
-              if (!primaryRawValue) primaryRawValue = strVal
-            } else {
-              const digitsOnly = strVal.replace(/\D/g, '')
-              if (digitsOnly.length === 44 && isValidNFeKey(digitsOnly)) {
-                if (!rowKeys.includes(digitsOnly)) rowKeys.push(digitsOnly)
-                if (!primaryRawValue) primaryRawValue = strVal
-              } else if (digitsOnly.length === 43 && isValidNFeKey('0' + digitsOnly)) {
-                const fixedKey = '0' + digitsOnly
-                if (!rowKeys.includes(fixedKey)) rowKeys.push(fixedKey)
-                if (!primaryRawValue) primaryRawValue = strVal
-              }
-            }
-          })
-
-          if (rowKeys.length > 0) {
-            tempRowRecords.push({
-              rowIndex: rowIndex + 1,
-              sheetName,
-              keys: rowKeys,
-              rawValue: primaryRawValue || rowKeys[0],
-              pesoSelecionado,
-              pesoSelecionadoStr,
-              pesoNotaVagao,
-              pesoNotaVagaoStr,
-              tara,
-              taraStr,
-              vagao,
-              brutoRow,
-            })
-          }
-        })
-
-        // Agrupar por Vagão para calcular somatório do peso da nota no vagão e tara
-        const wagonTotals = new Map<string, { sumPeso: number; tara: number; bruto: number; count: number }>()
-
-        tempRowRecords.forEach((rec) => {
-          if (!rec.vagao) return
-          const effPeso = rec.pesoNotaVagao ?? rec.pesoSelecionado ?? 0
-          const curr = wagonTotals.get(rec.vagao) || { sumPeso: 0, tara: 0, bruto: 0, count: 0 }
-          wagonTotals.set(rec.vagao, {
-            sumPeso: curr.sumPeso + effPeso,
-            tara: rec.tara && rec.tara > 0 ? rec.tara : curr.tara,
-            bruto: rec.brutoRow && rec.brutoRow > 0 ? rec.brutoRow : curr.bruto,
-            count: curr.count + 1,
-          })
-
-          const gCurr = globalWagonMap.get(rec.vagao) || { vagao: rec.vagao, sheetName, sumPeso: 0, tara: 0, count: 0, rows: [] }
-          globalWagonMap.set(rec.vagao, {
-            vagao: rec.vagao,
-            sheetName,
-            sumPeso: gCurr.sumPeso + effPeso,
-            tara: rec.tara && rec.tara > 0 ? rec.tara : gCurr.tara,
-            count: gCurr.count + 1,
-            rows: [...gCurr.rows, rec.rowIndex],
-          })
-        })
-
-        // Processar cada registro e alimentar o keysMap
-        tempRowRecords.forEach((rec) => {
-          const effPeso = rec.pesoNotaVagao ?? rec.pesoSelecionado ?? 0
-          let pesoBrutoCalc: number | null = null
-
-          if (rec.vagao && wagonTotals.has(rec.vagao)) {
-            const wInfo = wagonTotals.get(rec.vagao)!
-            if (wInfo.sumPeso > 0 && wInfo.tara > 0) {
-              // Rateia a tara do vagão proporcionalmente ao peso da nota no vagão
-              const taraRateada = wInfo.tara * (effPeso / wInfo.sumPeso)
-              pesoBrutoCalc = effPeso + taraRateada
-            } else if (wInfo.bruto > 0 && wInfo.sumPeso > 0) {
-              pesoBrutoCalc = wInfo.bruto * (effPeso / wInfo.sumPeso)
-            } else if (effPeso > 0) {
-              pesoBrutoCalc = effPeso + (rec.tara || 0)
-            }
-          } else if (effPeso > 0) {
-            pesoBrutoCalc = effPeso + (rec.tara || 0)
-          }
-
-          let pesoBrutoStr = ''
-          if (pesoBrutoCalc !== null && !isNaN(pesoBrutoCalc) && pesoBrutoCalc > 0) {
-            pesoBrutoStr = pesoBrutoCalc.toLocaleString('pt-BR', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 3,
-            })
-          }
-
-          rec.keys.forEach((k) => {
-            if (!keysMap.has(k)) {
-              let pVal = rec.pesoSelecionado
-              let pStr = rec.pesoSelecionadoStr
-
-              if (pVal === null && effPeso > 0) {
-                pVal = effPeso
-                pStr = String(effPeso)
-              }
-
-              keysMap.set(k, {
-                row: rec.rowIndex,
-                rawValue: rec.rawValue,
-                sheetName: rec.sheetName,
-                pesoSelecionado: pVal,
-                pesoSelecionadoStr: pStr,
-                pesoNotaVagao: rec.pesoNotaVagao,
-                pesoNotaVagaoStr: rec.pesoNotaVagaoStr,
-                tara: rec.tara,
-                taraStr: rec.taraStr,
-                vagao: rec.vagao,
-                pesoBruto: pesoBrutoCalc,
-                pesoBrutoStr,
-              })
-              allKeysList.push(k)
-            }
-          })
-        })
-      })
-
-      const wagonSummariesList: WagonSummary[] = Array.from(globalWagonMap.values()).map((w) => {
-        const pesoBrutoTotal = w.sumPeso + w.tara
-        const somaPesoNotaVagaoStr = w.sumPeso > 0
-          ? w.sumPeso.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
-          : '0,00'
-        const taraStr = w.tara > 0
-          ? w.tara.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
-          : '0,00'
-        const pesoBrutoTotalStr = pesoBrutoTotal > 0
-          ? pesoBrutoTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
-          : '0,00'
-        const linhas = w.rows.length <= 8
-          ? `Linhas ${w.rows.join(', ')}`
-          : `Linhas ${w.rows.slice(0, 8).join(', ')}... (+${w.rows.length - 8})`
-
-        return {
-          vagao: w.vagao,
-          sheetName: w.sheetName,
-          qtdNotas: w.count,
-          somaPesoNotaVagao: w.sumPeso,
-          somaPesoNotaVagaoStr,
-          tara: w.tara,
-          taraStr,
-          pesoBrutoTotal,
-          pesoBrutoTotalStr,
-          linhas,
-        }
-      })
-
-      setExcelData({
-        fileName: file.name,
-        totalRows,
-        keysMap,
-        allKeysList,
-        sheets: workbook.SheetNames,
-        wagonSummaries: wagonSummariesList,
-      })
+      setRawWorkbook(workbook)
+      setExcelFileName(file.name)
+      processExcelWorkbook(workbook, file.name, selectedExcelWeightCol)
     } catch (err) {
       console.error('Erro ao ler planilha Excel:', err)
       alert('Falha ao ler o arquivo Excel. Verifique se o arquivo está no formato correto (.xlsx, .xls ou .csv).')
     } finally {
       setIsExcelLoading(false)
+    }
+  }
+
+  const handleExcelWeightColChange = (newCol: string) => {
+    setSelectedExcelWeightCol(newCol)
+    if (rawWorkbook) {
+      processExcelWorkbook(rawWorkbook, excelFileName, newCol)
     }
   }
 
@@ -1384,6 +1409,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
   const handleRemoveExcel = () => {
     setExcelData(null)
+    setRawWorkbook(null)
+    setExcelFileName('')
+    setAvailableExcelColumns([])
+    setSelectedExcelWeightCol('auto')
     setExcelFilter('all')
     setExcelSearchQuery('')
     if (excelInputRef.current) {
@@ -2099,13 +2128,22 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                     </span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => excelInputRef.current?.click()}
-                  className="text-emerald-700 hover:text-emerald-900 dark:text-emerald-400 dark:hover:text-emerald-200 underline font-medium cursor-pointer self-start sm:self-auto"
-                >
-                  Trocar planilha
-                </button>
+                <div className="flex items-center gap-3 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => excelInputRef.current?.click()}
+                    className="text-emerald-700 hover:text-emerald-900 dark:text-emerald-400 dark:hover:text-emerald-200 underline font-medium cursor-pointer"
+                  >
+                    Trocar planilha
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRemoveExcel}
+                    className="text-rose-600 hover:text-rose-800 dark:text-rose-400 dark:hover:text-rose-300 font-medium cursor-pointer"
+                  >
+                    Remover
+                  </button>
+                </div>
                 <input
                   type="file"
                   ref={excelInputRef}
@@ -2113,6 +2151,42 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                   className="hidden"
                   onChange={handleExcelInputChange}
                 />
+              </div>
+
+              {/* Seletor da Coluna de Peso para Comparação (Regra Estrita Sem Fallback) */}
+              <div className="p-3 rounded-xl bg-zinc-50 border border-zinc-200 dark:bg-zinc-900/50 dark:border-zinc-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <Scale className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <div>
+                    <span className="font-bold text-zinc-800 dark:text-zinc-200">
+                      Coluna para Comparação de Peso no Excel:
+                    </span>
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">Regra Estrita Ativa:</span> Se o valor não for encontrado na coluna selecionada, o sistema <strong>NÃO</strong> busca em nenhuma outra coluna.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                  <select
+                    value={selectedExcelWeightCol}
+                    onChange={(e) => handleExcelWeightColChange(e.target.value)}
+                    aria-label="Coluna para comparação de peso no Excel"
+                    className="w-full md:w-72 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-semibold text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="auto">🎯 Automático: Procura &quot;Peso Selecionado&quot;</option>
+                    <option value="none">🚫 Não comparar peso (apenas chave)</option>
+                    {availableExcelColumns.length > 0 && (
+                      <optgroup label="Colunas detectadas no Excel">
+                        {availableExcelColumns.map((col) => (
+                          <option key={col} value={col}>
+                            Coluna: {col}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
               </div>
 
               {/* Grid de Métricas de Conferência */}
