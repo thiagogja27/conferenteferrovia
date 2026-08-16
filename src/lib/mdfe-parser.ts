@@ -320,12 +320,38 @@ export function parseMdfeFromText(rawText: string, fileName?: string): MdfeData 
     }
   }
 
-  // PASSO D: Se ainda não tiver extraído todos os vagões declarados, varre todo o documento
+  // PASSO D: Se o PDF organizou os textos em colunas separadas (todas as séries juntas, depois todos os números)
+  if (vagoes.length < 5) {
+    // Procura todos os números de vagões (5 a 8 dígitos) no texto
+    const allNums = Array.from(vagoesSection.matchAll(/\b(\d{5,8})\b/g)).map(m => m[1])
+    // Filtra para remover anos (ex: 2026), CNPJ parcial, números de protocolo
+    const cleanNums = allNums.filter(n => {
+      if (n.length === 8 && (n.startsWith('19') || n.startsWith('20'))) return false // provável data
+      if (n === '01417222' || n === '9352600989') return false
+      return true
+    })
+
+    if (cleanNums.length >= 5) {
+      cleanNums.forEach(num => {
+        registrarVagao('', num)
+      })
+    }
+  }
+
+  // PASSO E: Se ainda não tiver extraído todos os vagões declarados, varre todo o documento
   if (vagoes.length === 0) {
     const lineRegex = /\b([A-Z]{2,5})\s*[-_/\s]?\s*(\d{5,8})\b/g
     while ((wMatch = lineRegex.exec(text)) !== null) {
       registrarVagao(wMatch[1], wMatch[2])
     }
+  }
+
+  // PASSO F: Fallback final para números de 6 ou 7 dígitos
+  if (vagoes.length === 0) {
+    const fallbackDigits = Array.from(text.matchAll(/\b(\d{6,7})\b/g)).map(m => m[1])
+    fallbackDigits.forEach(num => {
+      registrarVagao('', num)
+    })
   }
 
   // 7. Chaves vinculadas (NF-e / CT-e em Observação)
