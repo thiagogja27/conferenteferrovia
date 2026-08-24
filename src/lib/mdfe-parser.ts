@@ -1,4 +1,5 @@
 import { arrayBufferToBase64, extractPdfTextClientPure } from './client-pdf-parser'
+import type { WeightAuditItemResult } from './weight-ai-auditor'
 
 export interface MdfeVagao {
   id: string
@@ -11,6 +12,7 @@ export interface MdfeVagao {
   tonUtil?: number // Em toneladas ou kg (ex: 91.04)
   tonUtilFormatado?: string // Ex: "91,040 t"
   origemArquivo?: string
+  trechoTexto?: string // Contexto do texto ao redor do vagão para auditoria de peso por IA
 }
 
 export interface TremInfo {
@@ -72,6 +74,9 @@ export interface ItemComparacao {
   pesoExcel?: number
   diferencaPeso?: number // pesoMDF - pesoExcel
   observacao?: string
+  trechoTexto?: string
+  auditoriaIA?: WeightAuditItemResult
+  isAuditando?: boolean
 }
 
 export interface ResumoComparacao {
@@ -247,7 +252,7 @@ export function parseMdfeFromText(rawText: string, fileName?: string): MdfeData 
   }
 
   // Função auxiliar para cadastrar um vagão identificado
-  const registrarVagao = (serieVag: string, numVag: string, seqNum?: number, tonUtil?: number) => {
+  const registrarVagao = (serieVag: string, numVag: string, seqNum?: number, tonUtil?: number, snippetText?: string) => {
     serieVag = (serieVag || '').toUpperCase().trim()
     numVag = (numVag || '').trim()
 
@@ -266,6 +271,18 @@ export function parseMdfeFromText(rawText: string, fileName?: string): MdfeData 
 
     if (!vagoesMap.has(key)) {
       const vagCompleto = serieVag ? `${serieVag} ${numVag}` : numVag
+      
+      // Se não veio trecho específico, busca no texto original uma janela ao redor do número do vagão
+      let trecho = snippetText
+      if (!trecho) {
+        const idx = text.indexOf(numVag)
+        if (idx !== -1) {
+          const start = Math.max(0, idx - 40)
+          const end = Math.min(text.length, idx + numVag.length + 80)
+          trecho = text.substring(start, end).replace(/\s+/g, ' ')
+        }
+      }
+
       const item: MdfeVagao = {
         id: `mdf-vag-${vagoes.length + 1}`,
         serie: serieVag,
@@ -277,6 +294,7 @@ export function parseMdfeFromText(rawText: string, fileName?: string): MdfeData 
         tonUtil,
         tonUtilFormatado: tonUtil !== undefined ? `${tonUtil.toLocaleString('pt-BR', { minimumFractionDigits: 3 })} t` : undefined,
         origemArquivo: fileName,
+        trechoTexto: trecho,
       }
       vagoesMap.set(key, item)
       vagoes.push(item)
@@ -295,8 +313,9 @@ export function parseMdfeFromText(rawText: string, fileName?: string): MdfeData 
     const tonStr = wMatch[4]
     const tonUtil = tonStr ? parseFloat(tonStr.replace(/\./g, '').replace(',', '.')) : undefined
     const seqNum = seqStr ? parseInt(seqStr, 10) : undefined
+    const rawMatchText = wMatch[0]
 
-    registrarVagao(serieVag, numVag, seqNum, tonUtil)
+    registrarVagao(serieVag, numVag, seqNum, tonUtil, rawMatchText)
   }
 
   // PASSO B: Caso haja linhas com Série e Número sem o peso na mesma linha ou formato compacto
@@ -612,6 +631,7 @@ export function executarComparacaoMdfeExcel(
         pesoMDF: pesoM,
         pesoExcel: pesoE,
         diferencaPeso: difPeso,
+        trechoTexto: vagMdf.trechoTexto,
         observacao: difPeso && Math.abs(difPeso) > 0.05 ? `Divergência de peso: ${difPeso > 0 ? '+' : ''}${difPeso} t` : 'OK (Conferido)',
       })
     } else {
@@ -624,6 +644,7 @@ export function executarComparacaoMdfeExcel(
         numeroApenas: vagMdf.numeroApenas,
         serie: vagMdf.serie,
         pesoMDF: vagMdf.tonUtil,
+        trechoTexto: vagMdf.trechoTexto,
         observacao: 'Consta no MDF-e, mas não foi encontrado no arquivo Excel.',
       })
     }

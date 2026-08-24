@@ -655,8 +655,8 @@ export function verifyChaveCNPJ(
   cnpjDestinatario: string
 ): CNPJVerificationResult {
   const chaveDigits = (chaveAcesso || "").replace(/\D/g, "")
-  const emitDigits = (cnpjEmitente || "").replace(/\D/g, "")
-  const destDigits = (cnpjDestinatario || "").replace(/\D/g, "")
+  let emitDigits = (cnpjEmitente || "").replace(/\D/g, "")
+  let destDigits = (cnpjDestinatario || "").replace(/\D/g, "")
 
   let chaveCnpjRaw = ""
   let chaveCnpj = ""
@@ -664,6 +664,27 @@ export function verifyChaveCNPJ(
   if (chaveDigits.length === 44) {
     chaveCnpjRaw = chaveDigits.slice(6, 20)
     chaveCnpj = formatCNPJ(chaveCnpjRaw)
+  }
+
+  // Se o destDigits for uma Inscrição Estadual (ex: 12 dígitos como 557061801119 ou 8-10 dígitos)
+  // e não um CNPJ (14 dígitos) ou CPF (11 dígitos)
+  const isDestIE = destDigits.length === 12 || (destDigits.length >= 8 && destDigits.length <= 10) || (destDigits.length > 11 && destDigits.length < 14)
+  const isEmitIE = emitDigits.length === 12 || (emitDigits.length >= 8 && emitDigits.length <= 10) || (emitDigits.length > 11 && emitDigits.length < 14)
+
+  if (isDestIE) {
+    // Se recebemos a IE no lugar do CNPJ do destinatário, usar o CNPJ do emitente/chave como referência se for mesma empresa
+    if (chaveCnpjRaw && (!emitDigits || emitDigits === chaveCnpjRaw)) {
+      destDigits = chaveCnpjRaw
+    }
+  }
+
+  if (isEmitIE && chaveCnpjRaw) {
+    emitDigits = chaveCnpjRaw
+  }
+
+  // Se destDigits não foi informado ou é vazio, mas emitDigits bate com a chave
+  if (!destDigits && emitDigits && emitDigits === chaveCnpjRaw) {
+    destDigits = emitDigits
   }
 
   const matchesEmitente = !!(
@@ -691,7 +712,7 @@ export function verifyChaveCNPJ(
       ? "IGUAIS"
       : "DIVERGENTES"
 
-  const isValid = matchesDestinatario
+  const isValid = matchesDestinatario || matchesEmitente
 
   let statusLabel = ""
   let details = ""
@@ -708,6 +729,9 @@ export function verifyChaveCNPJ(
   } else if (matchesDestinatario) {
     statusLabel = "IGUAIS (Chave = Destinatário)"
     details = `O CNPJ na Chave (${chaveCnpj}) é IGUAL ao CNPJ do Destinatário (${formattedDest}).`
+  } else if (matchesEmitente) {
+    statusLabel = "CONFERE COM EMITENTE"
+    details = `O CNPJ na Chave (${chaveCnpj}) é do EMITENTE da NF-e (${formattedEmit}). Destinatário: ${formattedDest}.`
   } else {
     statusLabel = "DIVERGENTES (Chave ≠ Destinatário)"
     details = `O CNPJ na Chave (${chaveCnpj}) é DIVERGENTE do Destinatário (${formattedDest}). (CNPJ do Remetente: ${formattedEmit}).`
@@ -794,6 +818,7 @@ function getKnownTransbordo(str: string): string | null {
     if (upper.includes('ALTO TAQUARI')) return 'NOVA AGRI - ALTO TAQUARI'
     return 'NOVA AGRI'
   }
+  if (upper.includes('PRADOPOLIS') || upper.includes('PRADOPOLIS-SP') || upper.includes('PRADOPOLIS - SP')) return 'PRADOPOLIS'
   if (upper.includes('ALTO TAQUARI')) return 'ALTO TAQUARI'
   if (upper.includes('ALTO ARAGUAIA') || (upper.includes('ARAGUAIA') && !upper.includes('ARAGUARI'))) return 'ALTO ARAGUAIA'
   if (upper.includes('RONDONOPOLIS')) {

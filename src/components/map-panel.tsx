@@ -48,6 +48,8 @@ const KNOWN_LOCATIONS: Record<string, { lat: number; lng: number; name: string }
   "UBERABA": { lat: -19.7476, lng: -47.9392, name: "Uberaba - MG" },
   "ARAGUARI": { lat: -18.6475, lng: -48.1873, name: "Araguari - MG" },
   "PEDERNEIRAS": { lat: -22.3524, lng: -48.7758, name: "Pederneiras - SP" },
+  "PRADOPOLIS": { lat: -21.3597, lng: -48.0644, name: "Pradópolis - SP" },
+  "PRADÓPOLIS": { lat: -21.3597, lng: -48.0644, name: "Pradópolis - SP" },
   "SANTOS": { lat: -23.9618, lng: -46.3322, name: "Santos - SP" },
   "GUARUJA": { lat: -23.9931, lng: -46.2564, name: "Guarujá - SP" },
   "PARANAGUA": { lat: -25.5204, lng: -48.5135, name: "Paranaguá - PR" },

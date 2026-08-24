@@ -28,6 +28,12 @@ import {
   type StatusComparacao,
 } from '@/lib/mdfe-parser'
 import {
+  auditarDivergenciasComIA,
+  type WeightAuditItemInput,
+  type WeightAuditItemResult,
+  type WeightAuditResponse,
+} from '@/lib/weight-ai-auditor'
+import {
   TrainTrack,
   FileSpreadsheet,
   FileText,
@@ -54,6 +60,14 @@ import {
   ClipboardPaste,
   ClipboardList,
   FileCode,
+  Bot,
+  BrainCircuit,
+  HelpCircle,
+  Zap,
+  Info,
+  CheckCheck,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
@@ -84,11 +98,18 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
 
   // Estados de Interface e Filtros
   const [searchTerm, setSearchTerm] = useState('')
-  const [activeFilter, setActiveFilter] = useState<'TODOS' | 'CONFERIDO' | 'FALTA_NO_EXCEL' | 'FALTA_NO_MDF'>('TODOS')
+  const [activeFilter, setActiveFilter] = useState<'TODOS' | 'CONFERIDO' | 'FALTA_NO_EXCEL' | 'FALTA_NO_MDF' | 'DIVERGENCIA_PESO'>('TODOS')
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [copiedWagons, setCopiedWagons] = useState(false)
   const [showMdfDetails, setShowMdfDetails] = useState(false)
   const [showNfeKeys, setShowNfeKeys] = useState(false)
+
+  // Estados da IA de Auditoria de Divergência de Peso (Econômica & Desacoplada)
+  const [auditResultsMap, setAuditResultsMap] = useState<Record<string, WeightAuditItemResult>>({})
+  const [isAuditingAllWeights, setIsAuditingAllWeights] = useState(false)
+  const [auditingItemId, setAuditingItemId] = useState<string | null>(null)
+  const [auditSummary, setAuditSummary] = useState<WeightAuditResponse | null>(null)
+  const [overrideWeightsMap, setOverrideWeightsMap] = useState<Record<string, number>>({})
 
   // Estado de Colar Texto do MDF-e (Entrada direta sem PDF)
   const [directPasteText, setDirectPasteText] = useState('')
@@ -323,9 +344,9 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   }, [mdfeList])
 
   // -------------------------------------------------------------
-  // 5. MOTOR DE CONCILIAÇÃO MDF-e x EXCEL
+  // 5. MOTOR DE CONCILIAÇÃO MDF-e x EXCEL COM AUDITORIA IA
   // -------------------------------------------------------------
-  const { itens: comparisonItems, resumo } = useMemo(() => {
+  const { itens: rawComparisonItems, resumo: rawResumo } = useMemo(() => {
     if (allMdfVagoes.length === 0 && excelVagoesList.length === 0) {
       return {
         itens: [],
@@ -346,6 +367,158 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
     return executarComparacaoMdfeExcel(allMdfVagoes, excelVagoesList)
   }, [allMdfVagoes, excelVagoesList])
 
+  // Aplica as correções de peso aceitas da IA e os dados de auditoria da IA
+  const comparisonItems = useMemo<ItemComparacao[]>(() => {
+    return rawComparisonItems.map((item) => {
+      const auditResult = auditResultsMap[item.id]
+      const overrideWeight = overrideWeightsMap[item.id]
+
+      let pesoMDF = item.pesoMDF
+      let diferencaPeso = item.diferencaPeso
+
+      if (overrideWeight !== undefined) {
+        pesoMDF = overrideWeight
+        if (item.pesoExcel !== undefined) {
+          diferencaPeso = Number((pesoMDF - item.pesoExcel).toFixed(3))
+        }
+      }
+
+      const isAuditando = auditingItemId === item.id || isAuditingAllWeights
+
+      return {
+        ...item,
+        pesoMDF,
+        diferencaPeso,
+        auditoriaIA: auditResult,
+        isAuditando,
+      }
+    })
+  }, [rawComparisonItems, auditResultsMap, overrideWeightsMap, auditingItemId, isAuditingAllWeights])
+
+  // Itens com divergência de peso
+  const itemsComDivergenciaPeso = useMemo(() => {
+    return comparisonItems.filter((item) => {
+      if (item.status !== 'CONFERIDO') return false
+      // Se a diferença de peso for perceptível (> 0.05 t) ou faltar peso em um dos lados
+      if (item.diferencaPeso !== undefined && Math.abs(item.diferencaPeso) > 0.05) return true
+      if (item.pesoMDF === undefined && item.pesoExcel !== undefined) return true
+      if (item.pesoMDF !== undefined && item.pesoExcel === undefined) return true
+      return false
+    })
+  }, [comparisonItems])
+
+  const totalDivergenciasPeso = itemsComDivergenciaPeso.length
+
+  // Recalcula o resumo com base nos itens finais ajustados
+  const resumo: ResumoComparacao = useMemo(() => {
+    const totalMDF = allMdfVagoes.length
+    const totalExcel = excelVagoesList.length
+    const totalConferidos = comparisonItems.filter((i) => i.status === 'CONFERIDO').length
+    const totalFaltamExcel = comparisonItems.filter((i) => i.status === 'FALTA_NO_EXCEL').length
+    const totalFaltamMDF = comparisonItems.filter((i) => i.status === 'FALTA_NO_MDF').length
+    const percentualConferencia = totalMDF > 0 ? Number(((totalConferidos / totalMDF) * 100).toFixed(1)) : 0
+    const pesoTotalMDF = Number(allMdfVagoes.reduce((acc, v) => acc + (v.tonUtil || 0), 0).toFixed(3))
+    const pesoTotalExcel = Number(excelVagoesList.reduce((acc, v) => acc + (v.peso || 0), 0).toFixed(3))
+    const diferencaPesoTotal = Number((pesoTotalMDF - pesoTotalExcel).toFixed(3))
+
+    return {
+      totalMDF,
+      totalExcel,
+      totalConferidos,
+      totalFaltamExcel,
+      totalFaltamMDF,
+      percentualConferencia,
+      pesoTotalMDF,
+      pesoTotalExcel,
+      diferencaPesoTotal,
+    }
+  }, [allMdfVagoes, excelVagoesList, comparisonItems])
+
+  // Handlers para a IA de Auditoria de Divergência de Peso
+  const handleAuditAllWeightDivergences = async () => {
+    if (itemsComDivergenciaPeso.length === 0) return
+    setIsAuditingAllWeights(true)
+
+    try {
+      const payload: WeightAuditItemInput[] = itemsComDivergenciaPeso.map((item) => ({
+        id: item.id,
+        identificador: item.identificadorExibicao,
+        numeroApenas: item.numeroApenas,
+        serie: item.serie,
+        pesoMDF: item.pesoMDF,
+        pesoExcel: item.pesoExcel,
+        diferencaPeso: item.diferencaPeso,
+        trechoTextoDocumento: item.trechoTexto || item.vagaoMDF?.trechoTexto || '',
+        linhaExcel: item.vagaoExcel?.rowIndex,
+        dadosExcelRaw: item.vagaoExcel?.dadosCompletos,
+      }))
+
+      const response = await auditarDivergenciasComIA(payload)
+      setAuditSummary(response)
+
+      setAuditResultsMap((prev) => {
+        const next = { ...prev }
+        response.resultados.forEach((r) => {
+          next[r.id] = r
+        })
+        return next
+      })
+    } catch (err) {
+      console.error('Erro ao auditar divergências de peso:', err)
+    } finally {
+      setIsAuditingAllWeights(false)
+    }
+  }
+
+  const handleAuditSingleItem = async (item: ItemComparacao) => {
+    setAuditingItemId(item.id)
+
+    try {
+      const payload: WeightAuditItemInput[] = [{
+        id: item.id,
+        identificador: item.identificadorExibicao,
+        numeroApenas: item.numeroApenas,
+        serie: item.serie,
+        pesoMDF: item.pesoMDF,
+        pesoExcel: item.pesoExcel,
+        diferencaPeso: item.diferencaPeso,
+        trechoTextoDocumento: item.trechoTexto || item.vagaoMDF?.trechoTexto || '',
+        linhaExcel: item.vagaoExcel?.rowIndex,
+        dadosExcelRaw: item.vagaoExcel?.dadosCompletos,
+      }]
+
+      const response = await auditarDivergenciasComIA(payload)
+      if (response.resultados.length > 0) {
+        const result = response.resultados[0]
+        setAuditResultsMap((prev) => ({
+          ...prev,
+          [item.id]: result,
+        }))
+      }
+    } catch (err) {
+      console.error('Erro ao auditar item individual:', err)
+    } finally {
+      setAuditingItemId(null)
+    }
+  }
+
+  const handleApplyAiWeightCorrection = (itemId: string, correctedWeight: number) => {
+    setOverrideWeightsMap((prev) => ({
+      ...prev,
+      [itemId]: correctedWeight,
+    }))
+  }
+
+  const handleApplyAllAiCorrections = () => {
+    const newOverrides: Record<string, number> = { ...overrideWeightsMap }
+    Object.entries(auditResultsMap).forEach(([id, result]) => {
+      if (result.status === 'ERRO_LEITURA_SISTEMA' && result.pesoCorrigidoDoc !== undefined && result.pesoCorrigidoDoc !== null) {
+        newOverrides[id] = result.pesoCorrigidoDoc
+      }
+    })
+    setOverrideWeightsMap(newOverrides)
+  }
+
   // -------------------------------------------------------------
   // 6. FILTRAGEM E BUSCA INTERATIVA
   // -------------------------------------------------------------
@@ -353,7 +526,15 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
     let result = comparisonItems
 
     // Filtro de status
-    if (activeFilter !== 'TODOS') {
+    if (activeFilter === 'DIVERGENCIA_PESO') {
+      result = result.filter((item) => {
+        if (item.status !== 'CONFERIDO') return false
+        if (item.diferencaPeso !== undefined && Math.abs(item.diferencaPeso) > 0.05) return true
+        if (item.pesoMDF === undefined && item.pesoExcel !== undefined) return true
+        if (item.pesoMDF !== undefined && item.pesoExcel === undefined) return true
+        return false
+      })
+    } else if (activeFilter !== 'TODOS') {
       result = result.filter((item) => item.status === activeFilter)
     }
 
@@ -366,8 +547,10 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
         const serieMatch = item.serie?.toLowerCase().includes(q)
         const obsMatch = item.observacao?.toLowerCase().includes(q)
         const rowMatch = item.vagaoExcel ? String(item.vagaoExcel.rowIndex).includes(q) : false
+        const aiVeredito = item.auditoriaIA?.veredito.toLowerCase().includes(q)
+        const aiExpl = item.auditoriaIA?.explicacao.toLowerCase().includes(q)
 
-        return idMatch || numMatch || serieMatch || obsMatch || rowMatch
+        return idMatch || numMatch || serieMatch || obsMatch || rowMatch || aiVeredito || aiExpl
       })
     }
 
@@ -410,19 +593,35 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
     XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo Geral')
 
     // Aba 2: Todos os Vagões (Consolidado)
-    const todosData = comparisonItems.map((item, idx) => ({
-      Item: idx + 1,
-      Status: item.status === 'CONFERIDO' ? 'CONFERIDO (OK)' : item.status === 'FALTA_NO_EXCEL' ? 'FALTA NO EXCEL' : 'FALTA NO MDF',
-      Vagão: item.identificadorExibicao,
-      Série: item.serie || '',
-      Número: item.numeroApenas,
-      'Seq MDF': item.vagaoMDF?.seq || '',
-      'Peso MDF (t)': item.pesoMDF ?? '',
-      'Linha Excel': item.vagaoExcel?.rowIndex || '',
-      'Peso Excel (t)': item.pesoExcel ?? '',
-      'Dif Peso (t)': item.diferencaPeso ?? '',
-      Observação: item.observacao || '',
-    }))
+    const todosData = comparisonItems.map((item, idx) => {
+      const itemAudit = auditResultsMap[item.id]
+      const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
+        ? itemAudit.pesoCorrigidoDoc
+        : (overrideWeightsMap[item.id] !== undefined ? overrideWeightsMap[item.id] : (item.diferencaPeso ? 'Pendente de Auditoria IA' : (item.pesoMDF ?? '')))
+
+      return {
+        Item: idx + 1,
+        Status: item.status === 'CONFERIDO' ? 'CONFERIDO (OK)' : item.status === 'FALTA_NO_EXCEL' ? 'FALTA NO EXCEL' : 'FALTA NO MDF',
+        Vagão: item.identificadorExibicao,
+        Série: item.serie || '',
+        Número: item.numeroApenas,
+        'Seq MDF': item.vagaoMDF?.seq || '',
+        'Peso MDF Lido (t)': item.pesoMDF ?? '',
+        'Linha Excel': item.vagaoExcel?.rowIndex || '',
+        'Peso Excel (t)': item.pesoExcel ?? '',
+        'Dif Peso (t)': item.diferencaPeso ?? '',
+        'Quantidade Encontrada pela IA (Valor Real t)': pesoIaEncontrado,
+        'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA'
+          ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)'
+          : itemAudit?.status === 'DIVERGENCIA_REAL'
+            ? 'DIVERGÊNCIA REAL DE PESAGEM'
+            : itemAudit?.status === 'CONFERIDO_CORRETO'
+              ? 'PESO CONFERIDO CORRETO'
+              : (item.diferencaPeso ? 'Divergência não auditada pela IA' : 'Peso correto'),
+        'Explicação IA': itemAudit?.explicacao || '',
+        Observação: item.observacao || '',
+      }
+    })
     const wsTodos = XLSX.utils.json_to_sheet(todosData)
     XLSX.utils.book_append_sheet(wb, wsTodos, 'Consolidado')
 
@@ -499,10 +698,16 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
     setRawExcelRows([])
     setExcelColumns([])
     setSelectedWagonColumn('')
+    setSelectedSecondaryWagonColumn('')
     setSelectedWeightColumn('')
     setSearchTerm('')
     setMdfError(null)
     setExcelError(null)
+    setAuditResultsMap({})
+    setAuditSummary(null)
+    setOverrideWeightsMap({})
+    setAuditingItemId(null)
+    setIsAuditingAllWeights(false)
   }
 
   return (
@@ -997,13 +1202,14 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
       {/* DASHBOARD DE MÉTRICAS / KPIS DA CONCILIAÇÃO */}
       {comparisonItems.length > 0 && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {/* DASHBOARD DE MÉTRICAS / KPIS DA CONCILIAÇÃO */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {/* Card 1: Total MDF */}
             <Card
               className={`cursor-pointer transition-all ${activeFilter === 'TODOS' ? 'ring-2 ring-indigo-500' : 'hover:border-indigo-300'}`}
               onClick={() => setActiveFilter('TODOS')}
             >
-              <CardContent className="p-4 space-y-1">
+              <CardContent className="p-3.5 space-y-1">
                 <div className="flex items-center justify-between text-zinc-500">
                   <span className="text-[11px] font-bold uppercase tracking-wider">No MDF-e</span>
                   <TrainTrack className="h-4 w-4 text-indigo-600" />
@@ -1020,7 +1226,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
               className={`cursor-pointer transition-all ${activeFilter === 'TODOS' ? 'ring-2 ring-emerald-500' : 'hover:border-emerald-300'}`}
               onClick={() => setActiveFilter('TODOS')}
             >
-              <CardContent className="p-4 space-y-1">
+              <CardContent className="p-3.5 space-y-1">
                 <div className="flex items-center justify-between text-zinc-500">
                   <span className="text-[11px] font-bold uppercase tracking-wider">No Excel</span>
                   <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
@@ -1037,14 +1243,14 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
               className={`cursor-pointer transition-all ${activeFilter === 'CONFERIDO' ? 'ring-2 ring-emerald-600 bg-emerald-50/50 dark:bg-emerald-950/40' : 'hover:border-emerald-400'}`}
               onClick={() => setActiveFilter('CONFERIDO')}
             >
-              <CardContent className="p-4 space-y-1">
+              <CardContent className="p-3.5 space-y-1">
                 <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300">
                   <span className="text-[11px] font-bold uppercase tracking-wider">Conferidos (OK)</span>
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                 </div>
                 <div className="text-2xl font-black text-emerald-700 dark:text-emerald-400">{resumo.totalConferidos}</div>
                 <p className="text-[10px] text-emerald-600 dark:text-emerald-300 font-bold">
-                  {resumo.percentualConferencia}% de conformidade
+                  {resumo.percentualConferencia}% de match
                 </p>
               </CardContent>
             </Card>
@@ -1054,7 +1260,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
               className={`cursor-pointer transition-all ${activeFilter === 'FALTA_NO_EXCEL' ? 'ring-2 ring-rose-600 bg-rose-50/50 dark:bg-rose-950/40' : 'hover:border-rose-300'}`}
               onClick={() => setActiveFilter('FALTA_NO_EXCEL')}
             >
-              <CardContent className="p-4 space-y-1">
+              <CardContent className="p-3.5 space-y-1">
                 <div className="flex items-center justify-between text-rose-700 dark:text-rose-300">
                   <span className="text-[11px] font-bold uppercase tracking-wider">Faltam no Excel</span>
                   <XCircle className="h-4 w-4 text-rose-600" />
@@ -1071,7 +1277,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
               className={`cursor-pointer transition-all ${activeFilter === 'FALTA_NO_MDF' ? 'ring-2 ring-amber-600 bg-amber-50/50 dark:bg-amber-950/40' : 'hover:border-amber-300'}`}
               onClick={() => setActiveFilter('FALTA_NO_MDF')}
             >
-              <CardContent className="p-4 space-y-1">
+              <CardContent className="p-3.5 space-y-1">
                 <div className="flex items-center justify-between text-amber-700 dark:text-amber-300">
                   <span className="text-[11px] font-bold uppercase tracking-wider">Faltam no MDF</span>
                   <AlertTriangle className="h-4 w-4 text-amber-600" />
@@ -1082,7 +1288,117 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                 </p>
               </CardContent>
             </Card>
+
+            {/* Card 6: Divergências de Peso com IA */}
+            <Card
+              className={`cursor-pointer transition-all ${
+                activeFilter === 'DIVERGENCIA_PESO'
+                  ? 'ring-2 ring-purple-600 bg-purple-50/50 dark:bg-purple-950/40'
+                  : totalDivergenciasPeso > 0
+                  ? 'border-purple-300 bg-purple-50/20 dark:bg-purple-950/20 hover:border-purple-400'
+                  : 'hover:border-zinc-300'
+              }`}
+              onClick={() => setActiveFilter('DIVERGENCIA_PESO')}
+            >
+              <CardContent className="p-3.5 space-y-1">
+                <div className="flex items-center justify-between text-purple-700 dark:text-purple-300">
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Dif. de Peso</span>
+                  <Scale className="h-4 w-4 text-purple-600" />
+                </div>
+                <div className={`text-2xl font-black ${totalDivergenciasPeso > 0 ? 'text-purple-700 dark:text-purple-400' : 'text-zinc-900 dark:text-zinc-50'}`}>
+                  {totalDivergenciasPeso}
+                </div>
+                <p className="text-[10px] text-purple-600 dark:text-purple-300 font-medium">
+                  {totalDivergenciasPeso > 0 ? `${Math.abs(resumo.diferencaPesoTotal).toFixed(3)} t dif total` : 'Pesos alinhados'}
+                </p>
+              </CardContent>
+            </Card>
           </div>
+
+          {/* BANNER DA IA AUDITORA DE PESO (ULTRA ECONÔMICA & INDEPENDENTE) */}
+          {totalDivergenciasPeso > 0 && (
+            <Card className="border border-purple-200 dark:border-purple-900/60 bg-gradient-to-r from-purple-50/80 via-indigo-50/40 to-purple-50/80 dark:from-purple-950/30 dark:via-indigo-950/20 dark:to-purple-950/30 shadow-xs">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-black bg-purple-600 text-white shadow-xs">
+                        <Bot className="h-3.5 w-3.5" />
+                        IA Auditora de Peso
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-800 dark:text-purple-300 bg-purple-100/80 dark:bg-purple-900/50 px-2 py-0.5 rounded-md">
+                        <Zap className="h-3 w-3 text-amber-500" />
+                        Ultra Econômica (&lt; 150 tokens/item)
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+                        • Atua exclusivamente nas {totalDivergenciasPeso} divergências detectadas
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-300">
+                      Descubra instantaneamente se a diferença é um <strong>erro de leitura do sistema</strong> (ex: recorte de decimais no PDF) ou se foi uma <strong>divergência física/comercial real</strong> entre o documento e a planilha.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      type="button"
+                      onClick={handleAuditAllWeightDivergences}
+                      disabled={isAuditingAllWeights}
+                      className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
+                    >
+                      {isAuditingAllWeights ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Auditando {totalDivergenciasPeso} itens...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-3.5 w-3.5" />
+                          Conferir Divergências com IA ({totalDivergenciasPeso})
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Resumo da Auditoria da IA se executada */}
+                {auditSummary && (
+                  <div className="pt-2 border-t border-purple-200/80 dark:border-purple-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1">
+                        <BrainCircuit className="h-3.5 w-3.5 text-purple-600" />
+                        Veredito IA:
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-semibold text-[11px]">
+                        {auditSummary.totalErrosLeitura} Erros de Leitura do Sistema
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-semibold text-[11px]">
+                        {auditSummary.totalDivergenciasReais} Divergências Reais
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold text-[11px]">
+                        {auditSummary.totalConferidos} Conferidos Corretos
+                      </span>
+                      <span className="text-[11px] text-zinc-400">
+                        Motor: {auditSummary.provedor} (~{auditSummary.tokensUtilizadosEstimados || 120} tokens)
+                      </span>
+                    </div>
+
+                    {auditSummary.totalErrosLeitura > 0 && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleApplyAllAiCorrections}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer h-7 px-3 flex items-center gap-1 self-start sm:self-auto"
+                      >
+                        <CheckCheck className="h-3.5 w-3.5" />
+                        Aplicar Correções da IA ({auditSummary.totalErrosLeitura})
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* BARRA DE AÇÕES E EXPORTAÇÃO */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-zinc-900 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xs">
@@ -1161,6 +1477,18 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                   </button>
                   <button
                     type="button"
+                    onClick={() => setActiveFilter('DIVERGENCIA_PESO')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      activeFilter === 'DIVERGENCIA_PESO'
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'bg-purple-50 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 hover:bg-purple-100'
+                    }`}
+                  >
+                    <Scale className="h-3.5 w-3.5" />
+                    Dif. de Peso ({totalDivergenciasPeso})
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setActiveFilter('FALTA_NO_EXCEL')}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
                       activeFilter === 'FALTA_NO_EXCEL'
@@ -1190,7 +1518,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
                   <Input
                     type="text"
-                    placeholder="Buscar por vagão, série, número ou linha..."
+                    placeholder="Buscar por vagão, série, peso, IA..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="pl-8 h-9 text-xs bg-white dark:bg-zinc-950"
@@ -1209,7 +1537,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                       <th className="py-2.5 px-3">Série / Nº</th>
                       <th className="py-2.5 px-3">MDF-e (Seq / Ton)</th>
                       <th className="py-2.5 px-3">Excel (Linha / Peso)</th>
-                      <th className="py-2.5 px-3">Divergência / Observações</th>
+                      <th className="py-2.5 px-3">Divergência & Auditoria IA</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200/80 dark:divide-zinc-800">
@@ -1224,6 +1552,9 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                         const isMatch = item.status === 'CONFERIDO'
                         const isFaltaExcel = item.status === 'FALTA_NO_EXCEL'
                         const isFaltaMdf = item.status === 'FALTA_NO_MDF'
+                        const hasWeightDivergence = isMatch && ((item.diferencaPeso !== undefined && Math.abs(item.diferencaPeso) > 0.05) || (item.pesoMDF === undefined && item.pesoExcel !== undefined))
+                        const isOverridden = overrideWeightsMap[item.id] !== undefined
+                        const isRowAuditing = auditingItemId === item.id || (isAuditingAllWeights && hasWeightDivergence)
 
                         return (
                           <tr
@@ -1233,6 +1564,8 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                                 ? 'bg-rose-50/20 dark:bg-rose-950/10'
                                 : isFaltaMdf
                                 ? 'bg-amber-50/20 dark:bg-amber-950/10'
+                                : hasWeightDivergence
+                                ? 'bg-purple-50/20 dark:bg-purple-950/10'
                                 : ''
                             }`}
                           >
@@ -1276,13 +1609,21 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                             {/* MDF-e (Seq / Ton) */}
                             <td className="py-2.5 px-3">
                               {item.vagaoMDF ? (
-                                <div>
-                                  <span className="text-zinc-500 font-mono text-[11px]">
-                                    Seq: #{item.vagaoMDF.seq || '-'}
-                                  </span>
-                                  {item.pesoMDF !== undefined && (
-                                    <span className="ml-2 font-bold text-zinc-900 dark:text-zinc-100">
-                                      {item.pesoMDF.toLocaleString('pt-BR', { minimumFractionDigits: 3 })} t
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-zinc-500 font-mono text-[11px]">
+                                      Seq: #{item.vagaoMDF.seq || '-'}
+                                    </span>
+                                    {item.pesoMDF !== undefined && (
+                                      <span className="font-bold text-zinc-900 dark:text-zinc-100">
+                                        {item.pesoMDF.toLocaleString('pt-BR', { minimumFractionDigits: 3 })} t
+                                      </span>
+                                    )}
+                                  </div>
+                                  {isOverridden && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 px-1.5 py-0.2 rounded">
+                                      <Sparkles className="h-2.5 w-2.5" />
+                                      Corrigido via IA
                                     </span>
                                   )}
                                 </div>
@@ -1309,21 +1650,96 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                               )}
                             </td>
 
-                            {/* Observações / Divergências */}
-                            <td className="py-2.5 px-3">
-                              <span
-                                className={`text-[11px] font-medium ${
-                                  isFaltaExcel
-                                    ? 'text-rose-700 dark:text-rose-300 font-semibold'
-                                    : isFaltaMdf
-                                    ? 'text-amber-700 dark:text-amber-300 font-semibold'
-                                    : item.diferencaPeso && Math.abs(item.diferencaPeso) > 0.05
-                                    ? 'text-amber-600 font-bold'
-                                    : 'text-zinc-500 dark:text-zinc-400'
-                                }`}
-                              >
-                                {item.observacao}
-                              </span>
+                            {/* Divergência & Auditoria IA */}
+                            <td className="py-2.5 px-3 max-w-xs">
+                              {/* Se tiver auditoria da IA realizada para esta linha */}
+                              {item.auditoriaIA ? (
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {item.auditoriaIA.status === 'ERRO_LEITURA_SISTEMA' && (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-900 dark:bg-purple-950/80 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                                        <Sparkles className="h-3 w-3 text-purple-600" />
+                                        Erro de Leitura do Sistema
+                                      </span>
+                                    )}
+                                    {item.auditoriaIA.status === 'DIVERGENCIA_REAL' && (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-900 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                                        <AlertTriangle className="h-3 w-3 text-rose-600" />
+                                        Divergência Real
+                                      </span>
+                                    )}
+                                    {item.auditoriaIA.status === 'PESO_AUSENTE_NO_DOC' && (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700">
+                                        <HelpCircle className="h-3 w-3 text-zinc-500" />
+                                        Peso Ausente no Doc
+                                      </span>
+                                    )}
+                                    {item.auditoriaIA.status === 'CONFERIDO_CORRETO' && (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                        <Check className="h-3 w-3" />
+                                        Peso Correto
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-tight">
+                                    {item.auditoriaIA.explicacao}
+                                  </p>
+
+                                  {/* Botão de Aplicar Correção se for Erro de Leitura */}
+                                  {item.auditoriaIA.status === 'ERRO_LEITURA_SISTEMA' && item.auditoriaIA.pesoCorrigidoDoc !== undefined && !isOverridden && (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      onClick={() => handleApplyAiWeightCorrection(item.id, item.auditoriaIA!.pesoCorrigidoDoc!)}
+                                      className="h-5 px-2 text-[10px] font-bold bg-purple-600 hover:bg-purple-700 text-white cursor-pointer mt-0.5 flex items-center gap-1"
+                                    >
+                                      <Check className="h-2.5 w-2.5" />
+                                      Aplicar Peso ({item.auditoriaIA.pesoCorrigidoDoc} t)
+                                    </Button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="space-y-1">
+                                  <span
+                                    className={`text-[11px] font-medium block ${
+                                      isFaltaExcel
+                                        ? 'text-rose-700 dark:text-rose-300 font-semibold'
+                                        : isFaltaMdf
+                                        ? 'text-amber-700 dark:text-amber-300 font-semibold'
+                                        : hasWeightDivergence
+                                        ? 'text-purple-700 dark:text-purple-400 font-bold'
+                                        : 'text-zinc-500 dark:text-zinc-400'
+                                    }`}
+                                  >
+                                    {item.observacao}
+                                  </span>
+
+                                  {/* Botão individual para conferir com IA sob demanda */}
+                                  {hasWeightDivergence && (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={isRowAuditing}
+                                      onClick={() => handleAuditSingleItem(item)}
+                                      className="h-6 px-2 text-[10px] font-semibold border-purple-300 text-purple-700 dark:border-purple-800 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/60 cursor-pointer flex items-center gap-1"
+                                    >
+                                      {isRowAuditing ? (
+                                        <>
+                                          <Loader2 className="h-3 w-3 animate-spin text-purple-600" />
+                                          Auditando...
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Bot className="h-3 w-3 text-purple-600" />
+                                          Conferir com IA
+                                        </>
+                                      )}
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
                             </td>
                           </tr>
                         )

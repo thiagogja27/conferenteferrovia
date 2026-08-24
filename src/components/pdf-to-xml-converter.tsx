@@ -33,7 +33,17 @@ import {
   AlertTriangle,
   Scale,
   BookOpen,
+  Bot,
+  BrainCircuit,
+  Zap,
+  CheckCheck,
 } from 'lucide-react'
+import {
+  auditarDivergenciasComIA,
+  type WeightAuditItemInput,
+  type WeightAuditItemResult,
+  type WeightAuditResponse,
+} from '@/lib/weight-ai-auditor'
 
 async function getAllFilesFromDataTransfer(dataTransfer: DataTransfer): Promise<File[]> {
   const files: File[] = []
@@ -269,6 +279,13 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
   const [excelFilter, setExcelFilter] = useState<'all' | 'matched' | 'unmatched' | 'excel_only' | 'weight_divergent'>('all')
   const [excelSearchQuery, setExcelSearchQuery] = useState<string>('')
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  // Estados da IA Auditora de Divergências de Peso (Conferência de Todas as Notas e Localização do Valor Real)
+  const [auditResultsMap, setAuditResultsMap] = useState<Record<string, WeightAuditItemResult>>({})
+  const [isAuditingAllWeights, setIsAuditingAllWeights] = useState(false)
+  const [auditingKey, setAuditingKey] = useState<string | null>(null)
+  const [auditSummary, setAuditSummary] = useState<WeightAuditResponse | null>(null)
+  const [overrideWeightsMap, setOverrideWeightsMap] = useState<Record<string, number>>({})
 
   // Estados e funções para Alerta de Voz (Web Speech API)
   const [voiceAlertEnabled, setVoiceAlertEnabled] = useState<boolean>(() => {
@@ -1639,6 +1656,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
       const qtdNota = getResultQuantidade(res)
       const vWeight = confrontWeights(matchInfo, qtdNota)
+      const itemAudit = auditResultsMap[key || res.fileName]
+      const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
+        ? itemAudit.pesoCorrigidoDoc
+        : (overrideWeightsMap[key || res.fileName] !== undefined ? overrideWeightsMap[key || res.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
 
       return {
         'Posição / Linha Excel': matchInfo ? `Linha ${matchInfo.row} (${matchInfo.sheetName})` : 'Fora da Planilha Excel',
@@ -1655,6 +1676,15 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         'Quantidade Extraída (Nota)': qtdNota,
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
+        'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
+        'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA' 
+          ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)' 
+          : itemAudit?.status === 'DIVERGENCIA_REAL' 
+            ? 'DIVERGÊNCIA REAL DE PESAGEM' 
+            : itemAudit?.status === 'CONFERIDO_CORRETO' 
+              ? 'PESO CONFERIDO CORRETO' 
+              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
+        'Explicação IA': itemAudit?.explicacao || '',
         'Valor Total (R$)': d?.vNF || 0,
         'Emitente': d?.emitNome || '',
         'CNPJ Emitente': d?.emitCNPJ || '',
@@ -1683,6 +1713,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
       const qtdNota = getResultQuantidade(res)
       const vWeight = confrontWeights(matchInfo, qtdNota)
+      const itemAudit = auditResultsMap[key || res.fileName]
+      const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
+        ? itemAudit.pesoCorrigidoDoc
+        : (overrideWeightsMap[key || res.fileName] !== undefined ? overrideWeightsMap[key || res.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
 
       return {
         'Linha no Excel': matchInfo ? `Linha ${matchInfo.row}` : 'N/A',
@@ -1700,6 +1734,15 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         'Quantidade Extraída (Nota)': qtdNota,
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
+        'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
+        'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA' 
+          ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)' 
+          : itemAudit?.status === 'DIVERGENCIA_REAL' 
+            ? 'DIVERGÊNCIA REAL DE PESAGEM' 
+            : itemAudit?.status === 'CONFERIDO_CORRETO' 
+              ? 'PESO CONFERIDO CORRETO' 
+              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
+        'Explicação IA': itemAudit?.explicacao || '',
         'Valor Total (R$)': d?.vNF || 0,
         'Emitente': d?.emitNome || '',
         'CNPJ Emitente': d?.emitCNPJ || '',
@@ -2314,6 +2357,146 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                 )
               })()}
 
+              {/* BANNER DA IA AUDITORA DE DIVERGÊNCIAS DE PESO (TODAS AS NOTAS) */}
+              {(() => {
+                const divergentItems = validConvertedResults.filter((res) => {
+                  const k = getNormalizedKey(res)
+                  const m = getExcelMatchInfo(k)
+                  return m && confrontWeights(m, getResultQuantidade(res)).status === 'DIVERGENTE'
+                })
+
+                if (divergentItems.length === 0) return null
+
+                const handleAuditAllNfeWeights = async () => {
+                  setIsAuditingAllWeights(true)
+                  try {
+                    const payload: WeightAuditItemInput[] = divergentItems.map((res) => {
+                      const k = getNormalizedKey(res)
+                      const m = getExcelMatchInfo(k)
+                      const d = res.parsedData
+                      const qtdNota = getResultQuantidade(res)
+                      const vWeight = confrontWeights(m, qtdNota)
+                      const prodInfo = `QUANT: ${d?.prodQCom || qtdNota} | UN: ${d?.prodUCom || 'KG'} | PesoLiq: ${d?.transpPesoL || ''} | PesoBruto: ${d?.transpPesoB || ''} | Vol: ${d?.transpQVol || ''}`
+                      const snippetFull = d?.rawSnippet ? `${prodInfo}\nTrecho DANFE:\n${d.rawSnippet}` : `${prodInfo}\nNF ${d?.nNF || ''} Emit: ${d?.emitNome || ''} Dest: ${d?.destNome || ''} Chave: ${k} DadosAdicionais: ${d?.infCpl || ''}`
+                      return {
+                        id: k || res.fileName,
+                        identificador: d?.nNF ? `NF ${d.nNF}` : res.fileName,
+                        numeroApenas: d?.nNF || '',
+                        serie: d?.serie || '',
+                        pesoMDF: overrideWeightsMap[k || res.fileName] !== undefined ? overrideWeightsMap[k || res.fileName] : qtdNota,
+                        pesoExcel: vWeight.pesoExcel || undefined,
+                        diferencaPeso: vWeight.diferenca || undefined,
+                        trechoTextoDocumento: snippetFull,
+                        linhaExcel: m?.row,
+                        dadosExcelRaw: m?.rawValue,
+                      }
+                    })
+
+                    const response = await auditarDivergenciasComIA(payload)
+                    setAuditSummary(response)
+                    setAuditResultsMap((prev) => {
+                      const next = { ...prev }
+                      response.resultados.forEach((r) => {
+                        next[r.id] = r
+                      })
+                      return next
+                    })
+                  } catch (err) {
+                    console.error('Erro na auditoria IA de NF-e:', err)
+                  } finally {
+                    setIsAuditingAllWeights(false)
+                  }
+                }
+
+                const handleApplyAllNfeCorrections = () => {
+                  const nextOverrides = { ...overrideWeightsMap }
+                  Object.entries(auditResultsMap).forEach(([id, r]) => {
+                    if (r.status === 'ERRO_LEITURA_SISTEMA' && r.pesoCorrigidoDoc !== undefined && r.pesoCorrigidoDoc !== null) {
+                      nextOverrides[id] = r.pesoCorrigidoDoc
+                    }
+                  })
+                  setOverrideWeightsMap(nextOverrides)
+                }
+
+                return (
+                  <div className="rounded-xl border border-purple-200 dark:border-purple-900/60 bg-gradient-to-r from-purple-50/80 via-indigo-50/40 to-purple-50/80 dark:from-purple-950/30 dark:via-indigo-950/20 dark:to-purple-950/30 p-4 space-y-3 shadow-xs">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-black bg-purple-600 text-white shadow-xs">
+                            <Bot className="h-3.5 w-3.5" />
+                            IA Auditora de Divergências de Peso
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-800 dark:text-purple-300 bg-purple-100/80 dark:bg-purple-900/50 px-2 py-0.5 rounded-md">
+                            <Sparkles className="h-3 w-3 text-purple-600" />
+                            Conferência Total de Todas as Notas
+                          </span>
+                          <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
+                            • {divergentItems.length} notas fiscais com divergência apontada
+                          </span>
+                        </div>
+                        <p className="text-xs text-zinc-600 dark:text-zinc-300">
+                          A IA confere todas as notas divergentes para achar o <strong>valor real da quantidade/peso</strong> e verificar se foi <strong>erro de leitura do sistema</strong> (ex: recorte de decimais no PDF) ou <strong>divergência comercial real</strong>.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button
+                          type="button"
+                          onClick={handleAuditAllNfeWeights}
+                          disabled={isAuditingAllWeights}
+                          className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
+                        >
+                          {isAuditingAllWeights ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Auditando todas as {divergentItems.length} notas...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-3.5 w-3.5" />
+                              Conferir Todas com IA ({divergentItems.length})
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {auditSummary && (
+                      <div className="pt-2 border-t border-purple-200/80 dark:border-purple-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <span className="font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1">
+                            <BrainCircuit className="h-3.5 w-3.5 text-purple-600" />
+                            Veredito IA:
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-semibold text-[11px]">
+                            {auditSummary.totalErrosLeitura} Erros de Leitura (Valor Real Encontrado)
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-semibold text-[11px]">
+                            {auditSummary.totalDivergenciasReais} Divergências Reais
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold text-[11px]">
+                            {auditSummary.totalConferidos} Pesos Corretos
+                          </span>
+                        </div>
+
+                        {auditSummary.totalErrosLeitura > 0 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleApplyAllNfeCorrections}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer h-7 px-3 flex items-center gap-1 self-start sm:self-auto"
+                          >
+                            <CheckCheck className="h-3.5 w-3.5" />
+                            Aplicar Valores Reais ({auditSummary.totalErrosLeitura})
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
               {/* Filtros e Busca */}
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
                 <div className="flex flex-wrap items-center gap-1.5 bg-zinc-100 dark:bg-zinc-900 p-1 rounded-lg">
@@ -2631,6 +2814,115 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                               )}
                               {d?.vNF && <span>Valor Total: <b>R$ {d.vNF}</b></span>}
                             </div>
+
+                            {/* Detalhes da Auditoria de IA para a Nota Individual */}
+                            {(() => {
+                              const itemAudit = auditResultsMap[key || res.fileName]
+                              const hasDivergence = isMatched && vWeight.status === 'DIVERGENTE'
+                              const isAuditingThis = auditingKey === (key || res.fileName) || (isAuditingAllWeights && hasDivergence)
+
+                              if (itemAudit) {
+                                return (
+                                  <div className="mt-2 p-2.5 rounded-lg border border-purple-200 dark:border-purple-800/60 bg-purple-50/50 dark:bg-purple-950/30 text-xs space-y-1.5">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1">
+                                        <Bot className="h-3.5 w-3.5 text-purple-600" />
+                                        Auditoria IA:
+                                      </span>
+                                      {itemAudit.status === 'ERRO_LEITURA_SISTEMA' && (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-200 text-purple-900 dark:bg-purple-900 dark:text-purple-200">
+                                          Erro de Leitura do Sistema
+                                        </span>
+                                      )}
+                                      {itemAudit.status === 'DIVERGENCIA_REAL' && (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-200 text-rose-900 dark:bg-rose-900 dark:text-rose-200">
+                                          Divergência Real
+                                        </span>
+                                      )}
+                                      {itemAudit.status === 'CONFERIDO_CORRETO' && (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-200 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-200">
+                                          Peso Correto
+                                        </span>
+                                      )}
+                                      {itemAudit.pesoCorrigidoDoc !== undefined && itemAudit.pesoCorrigidoDoc !== null && (
+                                        <span className="font-black text-purple-800 dark:text-purple-300">
+                                          Valor Real: {itemAudit.pesoCorrigidoDoc.toLocaleString('pt-BR')} t
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-[11px] text-zinc-700 dark:text-zinc-300">
+                                      {itemAudit.explicacao}
+                                    </p>
+                                    {itemAudit.status === 'ERRO_LEITURA_SISTEMA' && itemAudit.pesoCorrigidoDoc !== undefined && overrideWeightsMap[key || res.fileName] === undefined && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setOverrideWeightsMap(prev => ({ ...prev, [key || res.fileName]: itemAudit.pesoCorrigidoDoc! }))}
+                                        className="text-[10px] font-bold px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded cursor-pointer inline-flex items-center gap-1"
+                                      >
+                                        <Check className="h-3 w-3" />
+                                        Aplicar Valor Real ({itemAudit.pesoCorrigidoDoc} t)
+                                      </button>
+                                    )}
+                                  </div>
+                                )
+                              }
+
+                              if (hasDivergence) {
+                                return (
+                                  <div className="pt-1">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={isAuditingThis}
+                                      onClick={async () => {
+                                        const itemId = key || res.fileName
+                                        setAuditingKey(itemId)
+                                        try {
+                                          const prodInfo = `QUANT: ${d?.prodQCom || qtdNota} | UN: ${d?.prodUCom || 'KG'} | PesoLiq: ${d?.transpPesoL || ''} | PesoBruto: ${d?.transpPesoB || ''} | Vol: ${d?.transpQVol || ''}`
+                                          const snippetFull = d?.rawSnippet ? `${prodInfo}\nTrecho DANFE:\n${d.rawSnippet}` : `${prodInfo}\nNF ${d?.nNF || ''} Emit: ${d?.emitNome || ''} Dest: ${d?.destNome || ''} Chave: ${key} DadosAdicionais: ${d?.infCpl || ''}`
+                                          const singlePayload: WeightAuditItemInput[] = [{
+                                            id: itemId,
+                                            identificador: d?.nNF ? `NF ${d.nNF}` : res.fileName,
+                                            numeroApenas: d?.nNF || '',
+                                            serie: d?.serie || '',
+                                            pesoMDF: overrideWeightsMap[itemId] !== undefined ? overrideWeightsMap[itemId] : qtdNota,
+                                            pesoExcel: vWeight.pesoExcel || undefined,
+                                            diferencaPeso: vWeight.diferenca || undefined,
+                                            trechoTextoDocumento: snippetFull,
+                                            linhaExcel: matchInfo?.row,
+                                            dadosExcelRaw: matchInfo?.rawValue,
+                                          }]
+                                          const response = await auditarDivergenciasComIA(singlePayload)
+                                          if (response.resultados.length > 0) {
+                                            setAuditResultsMap(prev => ({ ...prev, [itemId]: response.resultados[0] }))
+                                          }
+                                        } catch (err) {
+                                          console.error('Erro ao auditar nota individual:', err)
+                                        } finally {
+                                          setAuditingKey(null)
+                                        }
+                                      }}
+                                      className="h-6 px-2 text-[10px] font-semibold border-purple-300 text-purple-700 dark:border-purple-800 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/60 cursor-pointer flex items-center gap-1"
+                                    >
+                                      {isAuditingThis ? (
+                                        <>
+                                          <Loader2 className="h-3 w-3 animate-spin text-purple-600" />
+                                          Conferindo com IA...
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Bot className="h-3 w-3 text-purple-600" />
+                                          Conferir Nota com IA
+                                        </>
+                                      )}
+                                    </Button>
+                                  </div>
+                                )
+                              }
+
+                              return null
+                            })()}
                           </div>
                         </div>
 

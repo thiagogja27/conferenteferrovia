@@ -64,6 +64,7 @@ export interface ParsedNFeData {
   terminalEntrega: string;
   transbordo: string;
   retirada: string;
+  rawSnippet?: string;
 }
 
 export interface PDFDanfeItem {
@@ -383,7 +384,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   }
 
   let emitIE = '';
-  const emitIEMatch = text.match(/(?:INSCRIÇÃO ESTADUAL|INSC.ESTADUAL|I\.E\.|IE)[^\d]{1,10}(\d{8,15})/i);
+  const emitIEMatch = text.match(/(?:INSCRIÇÃO\s*ESTADUAL|INSCRICAO\s*ESTADUAL|INSC\.?\s*ESTADUAL|I\.E\.|IE)[^\d]{1,15}(\d{8,15})/i);
   if (emitIEMatch) {
     emitIE = emitIEMatch[1].trim();
   }
@@ -391,22 +392,23 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   // 4. Destinatário
   let destCNPJ = '';
   let destNome = '';
+  let destIE = '';
 
-  const destBlockMatch = text.match(/(?:DESTINATÁRIO\/REMETENTE|DESTINATARIO\/REMETENTE|DESTINATÁRIO|DESTINATARIO)([\s\S]{1,800})/i);
+  const destBlockMatch = text.match(/(?:DESTINATÁRIO\/REMETENTE|DESTINATARIO\/REMETENTE|DESTINATÁRIO|DESTINATARIO)([\s\S]{1,900})/i);
   if (destBlockMatch) {
-    const block = destBlockMatch[1];
-    
-    // Buscar CNPJ/CPF específico no bloco do destinatário
-    const cnpjsInBlock = block.match(/(?:CNPJ\s*\/\s*CPF|CNPJ|CPF)[^\d]{1,50}(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}|\d{14}|\d{11})/i);
-    if (cnpjsInBlock) {
-      destCNPJ = cnpjsInBlock[1].replace(/\D/g, '');
-    } else {
-      const allCnpjs = block.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g) || block.match(/\b\d{14}\b/g);
-      if (allCnpjs && allCnpjs.length > 0) {
-        destCNPJ = allCnpjs[0].replace(/\D/g, '');
-      }
+    let block = destBlockMatch[1];
+    const endBlockIdx = block.search(/(?:CÁLCULO\s+DO\s+IMPOSTO|CALCULO\s+DO\s+IMPOSTO|BASE\s+DE\s+CÁLCULO|TRANSPORTADOR|DADOS\s+DOS\s+PRODUTOS)/i);
+    if (endBlockIdx > 0) {
+      block = block.substring(0, endBlockIdx);
     }
 
+    // Extrair Inscrição Estadual específica do destinatário no bloco
+    const destIEMatch = block.match(/(?:INSCRIÇÃO\s*ESTADUAL|INSCRICAO\s*ESTADUAL|INSC\.?\s*ESTADUAL|I\.E\.|IE)[^\d]{1,15}(\d{8,15})/i);
+    if (destIEMatch) {
+      destIE = destIEMatch[1].trim();
+    }
+
+    // Extrair Nome / Razão Social do Destinatário
     const nameMatch = block.match(/(?:NOME\s*\/\s*RAZÃO\s*SOCIAL|NOME\s*RAZAO\s*SOCIAL|RAZÃO\s*SOCIAL|RAZAO\s*SOCIAL|NOME)[\s\n\r:-]*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80})/i);
     if (nameMatch) {
       let raw = nameMatch[1].trim();
@@ -416,14 +418,46 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       }
       destNome = raw.replace(/[:=\-.,;]+$/, '').trim();
     }
+
+    // Buscar CNPJ/CPF formatado especificamente no bloco (com pontuação)
+    const formattedCnpjs = block.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g);
+    const formattedCpfs = block.match(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g);
+
+    if (formattedCnpjs && formattedCnpjs.length > 0) {
+      destCNPJ = formattedCnpjs[0].replace(/\D/g, '');
+    } else if (formattedCpfs && formattedCpfs.length > 0) {
+      destCNPJ = formattedCpfs[0].replace(/\D/g, '');
+    } else {
+      // Buscar após rótulo CNPJ / CPF garantindo não capturar Inscrição Estadual (IE)
+      const cnpjsInBlock = block.match(/(?:CNPJ\s*\/\s*CPF|CNPJ|CPF)[^\d]{1,50}(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}|\d{14}|\d{11})/i);
+      if (cnpjsInBlock) {
+        const candidate = cnpjsInBlock[1].replace(/\D/g, '');
+        // Garantir que não é a Inscrição Estadual
+        if (candidate !== destIE && candidate !== emitIE && candidate.length !== 12) {
+          destCNPJ = candidate;
+        }
+      }
+    }
   }
 
-  // Se o destCNPJ ainda não foi encontrado, busca no texto completo
-  if (!destCNPJ) {
-    const allCnpjsInText = text.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g) || text.match(/\b\d{14}\b/g);
+  // Se o destCNPJ ainda não foi encontrado ou pegou a IE por engano, buscar em todo o texto
+  if (!destCNPJ || destCNPJ === destIE || destCNPJ === emitIE || destCNPJ.length === 12) {
+    const allCnpjsInText = text.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g);
     if (allCnpjsInText && allCnpjsInText.length > 0) {
-      destCNPJ = allCnpjsInText[0].replace(/\D/g, '');
+      // Se tiver mais de um, e o primeiro for o emitente, pegar o segundo (destinatário) ou o primeiro se for a mesma empresa
+      destCNPJ = allCnpjsInText.length > 1 ? allCnpjsInText[1].replace(/\D/g, '') : allCnpjsInText[0].replace(/\D/g, '');
     }
+  }
+
+  // Se o destinatário for da mesma empresa do emitente (ex: São Martinho, remessa para exportação, transferência, etc)
+  if (!destCNPJ || destCNPJ === destIE || destCNPJ === emitIE || destCNPJ.length === 12) {
+    if (emitCNPJRaw && emitCNPJRaw.length === 14) {
+      destCNPJ = emitCNPJRaw;
+    }
+  }
+
+  if (!destIE && emitIE) {
+    destIE = emitIE;
   }
 
   // Se não foi encontrado nome de destinatário ou ficou genérico
@@ -488,8 +522,12 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   const emitCNPJFormatted = formatCNPJStr(emitCNPJRaw);
   const destCNPJFormatted = formatCNPJStr(destCNPJ);
 
-  // Pre-processar texto para corrigir possíveis quebras de números separadas por espaço (ex: 47.470,0 0 -> 47.470,00)
+  // Pre-processar texto para corrigir quebras de números separadas por quebra de linha ou espaço
+  // Ex: "47.420,0\n0" -> "47.420,00", "47.420,0 0" -> "47.420,00"
   const cleanedText = text
+    .replace(/(\d{1,3}(?:\.\d{3})+,\d{1,3})\s*[\r\n]+\s*(\d+)\b/g, '$1$2')
+    .replace(/(\b\d+,\d{1,3})\s*[\r\n]+\s*(\d+)\b/g, '$1$2')
+    .replace(/(\d{1,3}(?:\.\d{3})+)\s*,\s*[\r\n]+\s*(\d+)\b/g, '$1,$2')
     .replace(/(\d{1,3}(?:\.\d{3})+,\d)\s+(\d)\b/g, '$1$2')
     .replace(/(\b\d+,\d)\s+(\d)\b/g, '$1$2');
 
@@ -579,6 +617,15 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
 
   const prodSectionMatch = cleanedText.match(/(?:DADOS\s+DOS?\s+PRODUTOS?|CÓDIGO\s+PRODUTO|DESCRIÇÃO\s+DO\s+PRODUTO)[\s\S]+/i);
   const prodSectionText = prodSectionMatch ? prodSectionMatch[0] : cleanedText;
+
+  // Busca a coluna QUANT / QUANTIDADE na tabela de produtos
+  const directQuantMatch = prodSectionText.match(/(?:QUANT(?:IDADE|\.)?|QTD)\s*[:=-]?\s*(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d+,\d{1,4}\b|\b\d{1,3}(?:\.\d{3})+\b)/i);
+  if (directQuantMatch) {
+    const qVal = parseFloat(cleanNumeric(directQuantMatch[1]));
+    if (qVal > 0 && (prodQCom === 0 || Math.abs(prodQCom - qVal) > 0.01)) {
+      prodQCom = qVal;
+    }
+  }
 
   // Busca a unidade de medida na tabela de produtos
   const unitMatch = prodSectionText.match(/\b(TON|TONELADA|KG|KGS|SC|SAC|SACO|SACOS|UN|UND|UNID|UNIDADE|CX|CAIXA|M3|L|LITRO|LITROS|BAG|M2|PC|PCT|PACOTE|FD|FARDO)\b\s*[:=-]?\s*(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d+,\d{1,4}\b|\b\d{1,3}(?:\.\d{3})+\b|\b\d+\b)/i);
@@ -696,7 +743,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     destMun: '',
     destUF: 'SP',
     destCEP: '',
-    destIE: '',
+    destIE: destIE || emitIE || '',
     prodCodigo: '000000000020000011',
     prodNome,
     prodNCM,
@@ -726,7 +773,8 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     infCpl,
     terminalEntrega,
     transbordo,
-    retirada
+    retirada,
+    rawSnippet: cleanedText.length > 2500 ? cleanedText.substring(0, 2500) : cleanedText,
   };
 
   const xml = generateNFeXML(parserData);
@@ -1071,6 +1119,7 @@ function getKnownTransbordo(str: string): string | null {
     if (upper.includes('ALTO TAQUARI')) return 'NOVA AGRI - ALTO TAQUARI';
     return 'NOVA AGRI';
   }
+  if (upper.includes('PRADOPOLIS') || upper.includes('PRADOPOLIS-SP') || upper.includes('PRADOPOLIS - SP')) return 'PRADOPOLIS';
   if (upper.includes('ALTO TAQUARI')) return 'ALTO TAQUARI';
   if (upper.includes('ALTO ARAGUAIA') || (upper.includes('ARAGUAIA') && !upper.includes('ARAGUARI'))) return 'ALTO ARAGUAIA';
   if (upper.includes('RONDONOPOLIS')) {
