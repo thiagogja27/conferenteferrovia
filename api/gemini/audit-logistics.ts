@@ -1,5 +1,4 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { auditarLogisticaHeuristicaLocal, type LogisticsAuditInputItem } from "../../src/lib/logistics-ai-auditor";
 
 export const config = {
   api: {
@@ -9,6 +8,266 @@ export const config = {
   },
   maxDuration: 60,
 };
+
+// Interface autossuficiente (sem dependência externa de src/)
+export interface LogisticsAuditInputItem {
+  id: string;
+  numero?: string;
+  serie?: string;
+  chave?: string;
+  emitNome?: string;
+  destNome?: string;
+  destCNPJ?: string;
+  terminal?: string;
+  transbordo?: string;
+  produto?: string;
+  retirada?: string;
+  infCpl?: string;
+  rawSnippet?: string;
+  xmlContent?: string;
+}
+
+export type LogisticsStatusTipo =
+  | "AJUSTADO_IA"
+  | "PARCIALMENTE_AJUSTADO"
+  | "DADOS_JA_COMPLETOS"
+  | "NAO_CONSTA_NO_DOC";
+
+export interface LogisticsAuditResultItem {
+  id: string;
+  numero?: string;
+  terminalCorrigido?: string;
+  transbordoCorrigido?: string;
+  destinatarioCorrigido?: string;
+  retiradaCorrigida?: string;
+  produtoCorrigido?: string;
+  status: LogisticsStatusTipo;
+  veredito: string;
+  explicacao: string;
+  confianca: "ALTA" | "MEDIA" | "BAIXA";
+  modoUtilizado: "GEMINI_IA" | "HEURISTICA_LOCAL";
+  camposAjustados: Array<"terminal" | "transbordo" | "destinatario" | "retirada" | "produto">;
+}
+
+function isNaoInformado(val?: string | null): boolean {
+  if (!val) return true;
+  const norm = val.trim().toUpperCase();
+  return (
+    norm === "" ||
+    norm === "NÃO INFORMADO" ||
+    norm === "NAO INFORMADO" ||
+    norm === "NÃO INFORMADA" ||
+    norm === "NAO INFORMADA" ||
+    norm === "NÃO IDENTIFICADO" ||
+    norm === "NAO IDENTIFICADO" ||
+    norm === "DESTINATÁRIO NÃO IDENTIFICADO" ||
+    norm === "DESTINATARIO NAO IDENTIFICADO" ||
+    norm === "OUTRO" ||
+    norm === "OUTROS" ||
+    norm === "-"
+  );
+}
+
+export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): LogisticsAuditResultItem {
+  const fullText = `${item.infCpl || ""} ${item.rawSnippet || ""} ${item.xmlContent || ""} ${item.emitNome || ""} ${item.destNome || ""}`.toUpperCase();
+  const camposAjustados: Array<"terminal" | "transbordo" | "destinatario" | "retirada" | "produto"> = [];
+
+  let terminalCorrigido = item.terminal;
+  let transbordoCorrigido = item.transbordo;
+  let destinatarioCorrigido = item.destNome;
+  let retiradaCorrigida = item.retirada;
+  let produtoCorrigido = item.produto;
+
+  // 1. Auditoria e Identificação de Terminal de Entrega
+  if (isNaoInformado(item.terminal)) {
+    if (/\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|ACUCAR.*GUARUJ[AÁ]|TEAG/i.test(fullText)) {
+      terminalCorrigido = "TEAG - TERMINAL DE ACUCAR DO GUARUJA";
+      camposAjustados.push("terminal");
+    } else if (/\bTEG\b|TERMINAL.*EXPORTADOR.*GUARUJ[AÁ]|TERM.*EXP.*GUARUJA/i.test(fullText)) {
+      terminalCorrigido = "TEG - TERMINAL EXPORTADOR DO GUARUJA";
+      camposAjustados.push("terminal");
+    } else if (/\bCLI\b|CORREDOR.*LOG[IÍ]STIC.*INTEGRAD/i.test(fullText)) {
+      terminalCorrigido = "CLI - CORREDOR LOGÍSTICA INTEGRADA";
+      camposAjustados.push("terminal");
+    } else if (/\bTGG\b|TERMINAL.*GR[AÃ]OS.*GUARUJ[AÁ]/i.test(fullText)) {
+      terminalCorrigido = "TGG - TERMINAL DE GRAOS DO GUARUJA";
+      camposAjustados.push("terminal");
+    } else if (/\bT-124\b|\bT124\b|TERMINAL.*124/i.test(fullText)) {
+      terminalCorrigido = "TERMINAL 124";
+      camposAjustados.push("terminal");
+    } else if (/SANTOS BRASIL/i.test(fullText)) {
+      terminalCorrigido = "SANTOS BRASIL";
+      camposAjustados.push("terminal");
+    } else if (/DP WORLD/i.test(fullText)) {
+      terminalCorrigido = "DP WORLD SANTOS";
+      camposAjustados.push("terminal");
+    } else if (/ECOPORTO/i.test(fullText)) {
+      terminalCorrigido = "ECOPORTO SANTOS";
+      camposAjustados.push("terminal");
+    } else if (/BTP|BRASIL TERMINAL PORTU/i.test(fullText)) {
+      terminalCorrigido = "BTP - BRASIL TERMINAL PORTUARIO";
+      camposAjustados.push("terminal");
+    } else if (/TIPLAM/i.test(fullText)) {
+      terminalCorrigido = "TIPLAM - TERMINAL INTEGRADO";
+      camposAjustados.push("terminal");
+    } else if (/TERMINAL RUMO|RUMO MALHA/i.test(fullText)) {
+      terminalCorrigido = "TERMINAL RUMO";
+      camposAjustados.push("terminal");
+    } else if (/TERMINAL VLI|VLI/i.test(fullText)) {
+      terminalCorrigido = "TERMINAL VLI";
+      camposAjustados.push("terminal");
+    } else if (/GUARUJ[AÁ]/i.test(fullText)) {
+      terminalCorrigido = "TEG - TERMINAL EXPORTADOR DO GUARUJA";
+      camposAjustados.push("terminal");
+    }
+  }
+
+  // 2. Auditoria e Identificação de Transbordo
+  if (isNaoInformado(item.transbordo)) {
+    if (/ITURAMA/i.test(fullText)) {
+      transbordoCorrigido = "ITURAMA";
+      camposAjustados.push("transbordo");
+    } else if (/PRAD[OÓ]POLIS|PRADOPOLIS/i.test(fullText)) {
+      transbordoCorrigido = "PRADOPOLIS";
+      camposAjustados.push("transbordo");
+    } else if (/ALTO TAQUARI|NOVA AGRI/i.test(fullText)) {
+      transbordoCorrigido = "ALTO TAQUARI";
+      camposAjustados.push("transbordo");
+    } else if (/RONDON[OÓ]POLIS/i.test(fullText)) {
+      transbordoCorrigido = "RONDONOPOLIS (RUMO)";
+      camposAjustados.push("transbordo");
+    } else if (/RIO VERDE/i.test(fullText)) {
+      transbordoCorrigido = "RIO VERDE";
+      camposAjustados.push("transbordo");
+    } else if (/ARAGUARI/i.test(fullText)) {
+      transbordoCorrigido = "ARAGUARI (VLI)";
+      camposAjustados.push("transbordo");
+    } else if (/UBERABA|TIUB/i.test(fullText)) {
+      transbordoCorrigido = "UBERABA";
+      camposAjustados.push("transbordo");
+    } else if (/PEDERNEIRAS/i.test(fullText)) {
+      transbordoCorrigido = "PEDERNEIRAS (RUMO)";
+      camposAjustados.push("transbordo");
+    } else if (/GUARA|GUARÁ/i.test(fullText)) {
+      transbordoCorrigido = "GUARA";
+      camposAjustados.push("transbordo");
+    } else if (/UBERL[AÂ]NDIA/i.test(fullText)) {
+      transbordoCorrigido = "UBERLANDIA";
+      camposAjustados.push("transbordo");
+    } else if (/S[AÃ]O SIM[AÃ]O/i.test(fullText)) {
+      transbordoCorrigido = "SAO SIMAO";
+      camposAjustados.push("transbordo");
+    } else if (/CHAPAD[AÃ]O DO SUL/i.test(fullText)) {
+      transbordoCorrigido = "CHAPADAO DO SUL";
+      camposAjustados.push("transbordo");
+    } else if (/INOC[EÊ]NCIA/i.test(fullText)) {
+      transbordoCorrigido = "INOCENCIA";
+      camposAjustados.push("transbordo");
+    } else if (/ITIQUIRA/i.test(fullText)) {
+      transbordoCorrigido = "ITIQUIRA";
+      camposAjustados.push("transbordo");
+    }
+  }
+
+  // 3. Auditoria e Identificação de Destinatário
+  if (isNaoInformado(item.destNome)) {
+    if (/USINA.*CORURIPE|CORURIPE/i.test(fullText)) {
+      destinatarioCorrigido = "S/A USINA CORURIPE ACUCAR E ALCOOL";
+      camposAjustados.push("destinatario");
+    } else if (/CARGILL/i.test(fullText)) {
+      destinatarioCorrigido = "CARGILL AGRICOLA SA";
+      camposAjustados.push("destinatario");
+    } else if (/COPERSUCAR/i.test(fullText)) {
+      destinatarioCorrigido = "COPERSUCAR S.A.";
+      camposAjustados.push("destinatario");
+    } else if (/RAIZEN|RAÍZEN/i.test(fullText)) {
+      destinatarioCorrigido = "RAIZEN ENERGIA S.A.";
+      camposAjustados.push("destinatario");
+    } else if (/SAO MARTINHO|SÃO MARTINHO/i.test(fullText)) {
+      destinatarioCorrigido = "USINA SAO MARTINHO S/A";
+      camposAjustados.push("destinatario");
+    } else if (/ADECOAGRO/i.test(fullText)) {
+      destinatarioCorrigido = "ADECOAGRO VALE DO IVINHEMA S.A.";
+      camposAjustados.push("destinatario");
+    } else if (/ALTA MOGIANA/i.test(fullText)) {
+      destinatarioCorrigido = "USINA ALTA MOGIANA S/A - ACUCAR E ALCOOL";
+      camposAjustados.push("destinatario");
+    } else if (/SANTA TEREZINHA/i.test(fullText)) {
+      destinatarioCorrigido = "USINA SANTA TEREZINHA LTDA";
+      camposAjustados.push("destinatario");
+    } else if (/BATATAIS/i.test(fullText)) {
+      destinatarioCorrigido = "USINA BATATAIS S/A ACUCAR E ALCOOL";
+      camposAjustados.push("destinatario");
+    } else if (/TEREOS/i.test(fullText)) {
+      destinatarioCorrigido = "TEREOS ACUCAR E ENERGIA BRASIL S.A.";
+      camposAjustados.push("destinatario");
+    } else if (/BP BUNGE|BUNGE/i.test(fullText)) {
+      destinatarioCorrigido = "BP BUNGE BIOENERGIA S.A.";
+      camposAjustados.push("destinatario");
+    } else if (/COFCO/i.test(fullText)) {
+      destinatarioCorrigido = "COFCO INTERNATIONAL BRASIL S.A.";
+      camposAjustados.push("destinatario");
+    } else if (/DREYFUS|LDC/i.test(fullText)) {
+      destinatarioCorrigido = "LOUIS DREYFUS COMPANY BRASIL S.A.";
+      camposAjustados.push("destinatario");
+    } else if (/AMAGGI/i.test(fullText)) {
+      destinatarioCorrigido = "AMAGGI EXPORTACAO E IMPORTACAO LTDA";
+      camposAjustados.push("destinatario");
+    } else if (/ADM DO BRASIL|\bADM\b/i.test(fullText)) {
+      destinatarioCorrigido = "ADM DO BRASIL LTDA";
+      camposAjustados.push("destinatario");
+    }
+  }
+
+  // 4. Auditoria de Produto
+  if (isNaoInformado(item.produto)) {
+    if (/A[CÇ][UÚ]CAR/i.test(fullText)) {
+      produtoCorrigido = "AÇÚCAR";
+      camposAjustados.push("produto");
+    } else if (/SOJA/i.test(fullText)) {
+      produtoCorrigido = "SOJA";
+      camposAjustados.push("produto");
+    } else if (/MILHO/i.test(fullText)) {
+      produtoCorrigido = "MILHO";
+      camposAjustados.push("produto");
+    } else if (/FARELO/i.test(fullText)) {
+      produtoCorrigido = "FARELO DE SOJA";
+      camposAjustados.push("produto");
+    }
+  }
+
+  const isAjustado = camposAjustados.length > 0;
+  const status: LogisticsStatusTipo = isAjustado ? "AJUSTADO_IA" : "NAO_CONSTA_NO_DOC";
+  const veredito = isAjustado
+    ? `Dados recuperados via heurística fiscal: ${camposAjustados.join(", ")}`
+    : "Campos mantidos conforme documento";
+
+  const explicacao = isAjustado
+    ? `Identificado automaticamente no texto do documento: ${camposAjustados.map((c) => {
+        if (c === "terminal") return `Terminal '${terminalCorrigido}'`;
+        if (c === "transbordo") return `Transbordo '${transbordoCorrigido}'`;
+        if (c === "destinatario") return `Destinatário '${destinatarioCorrigido}'`;
+        if (c === "produto") return `Produto '${produtoCorrigido}'`;
+        return c;
+      }).join("; ")}.`
+    : "Não foram encontrados novos dados logísticos conclusivos no texto bruto.";
+
+  return {
+    id: item.id,
+    numero: item.numero,
+    terminalCorrigido,
+    transbordoCorrigido,
+    destinatarioCorrigido,
+    retiradaCorrigida,
+    produtoCorrigido,
+    status,
+    veredito,
+    explicacao,
+    confianca: isAjustado ? "ALTA" : "BAIXA",
+    modoUtilizado: "HEURISTICA_LOCAL",
+    camposAjustados,
+  };
+}
 
 let genAiClient: GoogleGenAI | null = null;
 function getGenAI() {

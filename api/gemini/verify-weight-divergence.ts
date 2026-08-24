@@ -1,5 +1,4 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { auditarHeuristicaLocal, type WeightAuditItemInput } from "../../src/lib/weight-ai-auditor";
 
 export const config = {
   api: {
@@ -9,6 +8,154 @@ export const config = {
   },
   maxDuration: 60,
 };
+
+// Interface autossuficiente (sem dependência externa de src/)
+export interface WeightAuditItemInput {
+  id: string;
+  identificador: string;
+  numeroApenas: string;
+  serie?: string;
+  pesoMDF?: number;
+  pesoExcel?: number;
+  diferencaPeso?: number;
+  trechoTextoDocumento?: string;
+  linhaExcel?: number;
+  dadosExcelRaw?: Record<string, any> | string;
+}
+
+export type VereditoTipo = "ERRO_LEITURA_SISTEMA" | "DIVERGENCIA_REAL" | "PESO_AUSENTE_NO_DOC" | "CONFERIDO_CORRETO";
+
+export interface WeightAuditItemResult {
+  id: string;
+  identificador: string;
+  status: VereditoTipo;
+  veredito: string;
+  pesoCorrigidoDoc?: number | null;
+  pesoExcel?: number | null;
+  diferencaReal?: number | null;
+  explicacao: string;
+  confianca: "ALTA" | "MEDIA" | "BAIXA";
+  modoUtilizado: "GEMINI_IA" | "HEURISTICA_LOCAL";
+}
+
+export function auditarHeuristicaLocal(item: WeightAuditItemInput): WeightAuditItemResult {
+  const { identificador, pesoMDF, pesoExcel, trechoTextoDocumento = "" } = item;
+  const cleanSnippet = trechoTextoDocumento.replace(/\s+/g, " ");
+
+  let pesoCorrigidoDoc: number | null = pesoMDF ?? null;
+  let status: VereditoTipo = "DIVERGENCIA_REAL";
+  let explicacao = "";
+  let veredito = "";
+  let confianca: "ALTA" | "MEDIA" | "BAIXA" = "MEDIA";
+
+  // Caso 1: Ambos os pesos coincidem
+  if (pesoMDF !== undefined && pesoExcel !== undefined && Math.abs(pesoMDF - pesoExcel) <= 0.005) {
+    return {
+      id: item.id,
+      identificador,
+      status: "CONFERIDO_CORRETO",
+      veredito: "Pesos Conferidos e Alinhados",
+      pesoCorrigidoDoc: pesoMDF,
+      pesoExcel,
+      diferencaReal: 0,
+      explicacao: "O peso lido no documento coincide com o peso informado no Excel.",
+      confianca: "ALTA",
+      modoUtilizado: "HEURISTICA_LOCAL",
+    };
+  }
+
+  // Caso Especial Prioritário: Campo QUANT / QUANTIDADE da DANFE
+  const quantRegex = /(?:QUANT(?:IDADE|\.)?|QTD)\s*[:=-]?\s*(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d+,\d{1,4}\b|\b\d{1,3}(?:\.\d{3})+\b|\b\d+\b)/i;
+  const quantMatch = trechoTextoDocumento.match(quantRegex);
+  if (quantMatch) {
+    const rawQuantStr = quantMatch[1];
+    const quantNum = parseFloat(rawQuantStr.replace(/\./g, "").replace(",", "."));
+    if (quantNum > 0) {
+      const quantInTons = quantNum >= 1000 ? Number((quantNum / 1000).toFixed(3)) : Number(quantNum.toFixed(3));
+      if (pesoExcel !== undefined && Math.abs(quantInTons - pesoExcel) <= 0.01) {
+        return {
+          id: item.id,
+          identificador,
+          status: "ERRO_LEITURA_SISTEMA",
+          veredito: `Valor Real no Campo QUANT: ${quantInTons.toFixed(3)} t`,
+          pesoCorrigidoDoc: quantInTons,
+          pesoExcel,
+          diferencaReal: 0,
+          explicacao: `Localizado exatamente no campo QUANT da DANFE: ${rawQuantStr} (${quantInTons.toFixed(3)} t), batendo com a planilha Excel.`,
+          confianca: "ALTA",
+          modoUtilizado: "HEURISTICA_LOCAL",
+        };
+      }
+    }
+  }
+
+  if (pesoExcel !== undefined) {
+    const excelFormattedBr = pesoExcel.toFixed(3).replace(".", ",");
+    const excelFormattedBr2 = pesoExcel.toFixed(2).replace(".", ",");
+    const excelFormattedUs = pesoExcel.toFixed(3);
+    const excelKg = Math.round(pesoExcel * 1000).toString();
+
+    if (cleanSnippet.includes(excelFormattedBr) || cleanSnippet.includes(excelFormattedBr2) || cleanSnippet.includes(excelFormattedUs)) {
+      status = "ERRO_LEITURA_SISTEMA";
+      pesoCorrigidoDoc = pesoExcel;
+      veredito = `Erro de Leitura do Sistema: O documento original contém exatamente ${excelFormattedBr} t`;
+      explicacao = `O valor da planilha (${excelFormattedBr} t) foi localizado no texto bruto da nota/MDF, confirmando que o sistema cometeu um corte ou falha de leitura.`;
+      confianca = "ALTA";
+      return {
+        id: item.id,
+        identificador,
+        status,
+        veredito,
+        pesoCorrigidoDoc,
+        pesoExcel,
+        diferencaReal: 0,
+        explicacao,
+        confianca,
+        modoUtilizado: "HEURISTICA_LOCAL",
+      };
+    }
+
+    if (cleanSnippet.includes(excelKg)) {
+      status = "ERRO_LEITURA_SISTEMA";
+      pesoCorrigidoDoc = pesoExcel;
+      veredito = `Erro de Unidade (kg vs t): O documento traz ${excelKg} kg (${excelFormattedBr} t)`;
+      explicacao = `O documento declarou o peso em quilogramas (${excelKg} kg) enquanto a planilha estava em toneladas.`;
+      confianca = "ALTA";
+      return {
+        id: item.id,
+        identificador,
+        status,
+        veredito,
+        pesoCorrigidoDoc,
+        pesoExcel,
+        diferencaReal: 0,
+        explicacao,
+        confianca,
+        modoUtilizado: "HEURISTICA_LOCAL",
+      };
+    }
+  }
+
+  const dif = pesoMDF !== undefined && pesoExcel !== undefined ? Number((pesoMDF - pesoExcel).toFixed(3)) : null;
+  return {
+    id: item.id,
+    identificador,
+    status: pesoMDF === undefined ? "PESO_AUSENTE_NO_DOC" : "DIVERGENCIA_REAL",
+    veredito:
+      pesoMDF === undefined
+        ? "Peso não localizado no documento"
+        : `Divergência Real de Pesagem: Doc = ${pesoMDF} t | Excel = ${pesoExcel ?? "N/A"} t`,
+    pesoCorrigidoDoc: pesoMDF,
+    pesoExcel,
+    diferencaReal: dif,
+    explicacao:
+      pesoMDF === undefined
+        ? "O trecho do documento fiscal não apresenta peso legível para este item."
+        : `O documento fiscal declara expressamente ${pesoMDF} t enquanto o Excel informa ${pesoExcel ?? "N/A"} t (diferença de ${dif ?? "N/A"} t).`,
+    confianca: "MEDIA",
+    modoUtilizado: "HEURISTICA_LOCAL",
+  };
+}
 
 let genAiClient: GoogleGenAI | null = null;
 function getGenAI() {

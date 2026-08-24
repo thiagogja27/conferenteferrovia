@@ -1,6 +1,4 @@
-import type { IncomingMessage, ServerResponse } from "http";
 import { PDFParse } from "pdf-parse";
-import { parseMultiDanfePdf } from "../src/lib/pdf-text-parser";
 
 function cleanControlChars(val: any): any {
   if (typeof val === "string") {
@@ -72,17 +70,15 @@ export default async function handler(req: any, res: any) {
       await parser.destroy();
     }
 
-    const { items, xml, data } = parseMultiDanfePdf(text, fileName, pages);
-    const responseData = cleanControlChars({
-      xml: xml,
-      fileName: fileName ? fileName.replace(/\.pdf$/i, ".xml") : "convertido.xml",
-      parsedData: data,
-      items: items,
-    });
-
-    return res.status(200).json(responseData);
+    return res.status(200).json(
+      cleanControlChars({
+        text,
+        pages,
+        fileName: fileName || "documento.pdf",
+      })
+    );
   } catch (err: any) {
-    console.error("Erro na conversão PDF->XML (Vercel Serverless):", err);
-    return res.status(500).json({ error: err.message || "Erro ao processar conversão do PDF." });
+    console.error("Erro na extração PDF (Vercel Serverless):", err);
+    return res.status(500).json({ error: err.message || "Erro ao processar PDF." });
   }
 }
