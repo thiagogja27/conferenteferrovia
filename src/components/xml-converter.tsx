@@ -4,13 +4,21 @@ import React, { useState, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import { parseNFE, verifyChaveCNPJ, type NFEData } from '@/lib/nfe-parser'
 import { parsePdfClientSide } from '@/lib/client-pdf-parser'
 import { generatePDF } from '@/lib/pdf-generator'
 import { Dashboard } from '@/components/dashboard'
 import { SearchPanel } from '@/components/search-panel'
-import { MapPanel } from '@/components/map-panel' // Importar o novo painel do mapa
-import { PDFToXMLConverter } from '@/components/pdf-to-xml-converter'
+import { MapPanel } from '@/components/map-panel'
+import { ExcelReconciliationTab } from '@/components/excel-reconciliation-tab'
 import { MDFExcelComparator } from '@/components/mdf-excel-comparator'
 import { DocumentationPanel } from '@/components/documentation-panel'
 import {
@@ -31,7 +39,7 @@ import {
   Truck,
   Package,
   FileSpreadsheet,
-  Map, // Ícone para a aba do mapa
+  Map,
   Sparkles,
   FileCode,
   Folder,
@@ -43,6 +51,11 @@ import {
   Filter,
   Layers,
   TrainTrack,
+  Scale,
+  Copy,
+  Check,
+  CheckCheck,
+  Eye,
 } from 'lucide-react'
 import JSZip from 'jszip'
 import * as XLSX from 'xlsx'
@@ -160,6 +173,62 @@ export function XMLConverter() {
   const [activeTab, setActiveTab] = useState<string>('list')
   const [converterMode, setConverterMode] = useState<'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'documentation'>('xml-to-pdf')
   const [processFileType, setProcessFileType] = useState<'all' | 'xml' | 'pdf'>('all')
+
+  const [listFilterTerm, setListFilterTerm] = useState('')
+  const [showWorkflowGuide, setShowWorkflowGuide] = useState(true)
+  const [selectedXmlModal, setSelectedXmlModal] = useState<{ fileName: string; content: string } | null>(null)
+  const [copiedXml, setCopiedXml] = useState(false)
+
+  const handleCopyXml = (content: string) => {
+    navigator.clipboard.writeText(content)
+    setCopiedXml(true)
+    setTimeout(() => setCopiedXml(false), 2000)
+  }
+
+  const handleDownloadXML = (file: ProcessedFile) => {
+    if (!file.xmlContent) {
+      alert('Conteúdo XML não disponível para este arquivo.')
+      return
+    }
+    const blob = new Blob([file.xmlContent], { type: 'application/xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const baseName = file.fileName.replace(/\.(pdf|xml)$/i, '')
+    a.download = `${baseName}.xml`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleDownloadAllXMLs = async () => {
+    const successfulFiles = files.filter((f) => f.xmlContent && f.xmlContent.trim().length > 0)
+    if (successfulFiles.length === 0) {
+      alert('Nenhum conteúdo XML válido disponível para download.')
+      return
+    }
+
+    try {
+      setIsDownloading(true)
+      const zip = new JSZip()
+      successfulFiles.forEach((file) => {
+        const baseName = file.fileName.replace(/\.(pdf|xml)$/i, '')
+        zip.file(`${baseName}.xml`, file.xmlContent)
+      })
+
+      const content = await zip.generateAsync({ type: 'blob' })
+      const url = URL.createObjectURL(content)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `notas_fiscais_xmls_${Date.now()}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Erro ao gerar ZIP de XMLs:', err)
+      alert('Erro ao gerar arquivo ZIP com os XMLs.')
+    } finally {
+      setIsDownloading(false)
+    }
+  }
 
   // Estados e funções para Alerta por Voz (Web Speech API)
   const [voiceAlertEnabled, setVoiceAlertEnabled] = useState<boolean>(() => {
@@ -761,94 +830,178 @@ export function XMLConverter() {
   const successCount = files.filter((f) => f.nfeData !== null).length
   const errorCount = files.filter((f) => f.error !== null).length
 
+  const totalValor = files.reduce((acc, f) => acc + (f.nfeData?.impostos?.valorTotal || 0), 0)
+  const totalPesoLiquido = files.reduce((acc, f) => {
+    const raw = f.nfeData?.transportador?.pesoLiquido || '0'
+    const num = parseFloat(String(raw).replace(/\./g, '').replace(',', '.'))
+    return acc + (isNaN(num) ? 0 : num)
+  }, 0)
+  const totalPesoBruto = files.reduce((acc, f) => {
+    const raw = f.nfeData?.transportador?.pesoBruto || '0'
+    const num = parseFloat(String(raw).replace(/\./g, '').replace(',', '.'))
+    return acc + (isNaN(num) ? 0 : num)
+  }, 0)
+  const divergentCount = files.filter((f) => {
+    if (!f.nfeData) return false
+    const v = f.nfeData.verificacaoCNPJ || verifyChaveCNPJ(
+      f.nfeData.chaveAcesso,
+      f.nfeData.emitente.cnpj,
+      f.nfeData.destinatario.cpfCnpj
+    )
+    return v.confrontoChaveXDest === 'DIVERGENTES'
+  }).length
+
+  const filteredFiles = files.filter((f) => {
+    if (!listFilterTerm.trim()) return true
+    const term = listFilterTerm.toLowerCase()
+    const n = f.nfeData
+    const fileName = f.fileName.toLowerCase()
+    if (fileName.includes(term)) return true
+    if (!n) return false
+    return (
+      (n.numero && n.numero.toLowerCase().includes(term)) ||
+      (n.chaveAcesso && n.chaveAcesso.toLowerCase().includes(term)) ||
+      (n.emitente?.nome && n.emitente.nome.toLowerCase().includes(term)) ||
+      (n.emitente?.cnpj && n.emitente.cnpj.includes(term)) ||
+      (n.destinatario?.nome && n.destinatario.nome.toLowerCase().includes(term)) ||
+      (n.destinatario?.cpfCnpj && n.destinatario.cpfCnpj.includes(term)) ||
+      (n.terminalEntrega && n.terminalEntrega.toLowerCase().includes(term)) ||
+      (n.transbordo && n.transbordo.toLowerCase().includes(term)) ||
+      (n.retirada && n.retirada.toLowerCase().includes(term)) ||
+      n.itens.some((it) => it.descricao && it.descricao.toLowerCase().includes(term))
+    )
+  })
+
   return (
     <div className='min-h-screen bg-background p-4 md:p-8'>
-      <div className={`mx-auto transition-all ${converterMode === 'mdf-x-excel' ? 'max-w-6xl xl:max-w-7xl' : 'max-w-4xl lg:max-w-5xl'}`}>
-        <div className='mb-8 text-center'>
-          <div className='mb-4 inline-flex items-center justify-center rounded-full bg-primary/10 p-3'>
-            <FileText className='h-8 w-8 text-primary' />
+      <div className={`mx-auto transition-all ${converterMode === 'mdf-x-excel' ? 'max-w-6xl xl:max-w-7xl' : 'max-w-5xl lg:max-w-6xl'}`}>
+        {/* Header Principal */}
+        <div className='mb-6 text-center'>
+          <div className='inline-flex items-center justify-center rounded-2xl bg-indigo-600/10 dark:bg-indigo-500/20 p-3 mb-3 text-indigo-600 dark:text-indigo-400 shadow-xs'>
+            <FileText className='h-8 w-8' />
           </div>
-          <div className='flex items-center justify-center gap-2'>
-            <h1 className='text-3xl font-bold tracking-tight text-foreground'>
-              Conversor de Notas Fiscais & MDF-e
+          <div className='flex items-center justify-center gap-2 flex-wrap'>
+            <h1 className='text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground'>
+              Sistema de Conferência Fiscal & Logística
             </h1>
-            <span className="inline-flex items-center rounded-full bg-indigo-100 dark:bg-indigo-950/80 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-              v1.2.2
+            <span className="inline-flex items-center rounded-full bg-indigo-100 dark:bg-indigo-950/80 px-2.5 py-0.5 text-xs font-bold text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+              v1.2.3 • NF-e & MDF-e
             </span>
           </div>
-          <p className='mt-2 text-muted-foreground'>
-            Converta, analise e concilie notas fiscais, manifestos ferroviários e planilhas de forma inteligente
+          <p className='mt-1 text-sm text-muted-foreground max-w-2xl mx-auto'>
+            Conferência automatizada de Chaves vs Destinatários, auditoria de transbordos e terminais, conciliação de vagões e conversão em lote
           </p>
         </div>
 
-        {/* Mode Selector */}
-        <div className="mb-8 flex justify-center">
-          <div className="inline-flex rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800 flex-wrap justify-center gap-1">
+        {/* Seletor de Módulos (Menu Principal Intuitivo e Unificado) */}
+        <div className="mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-zinc-100/80 dark:bg-zinc-900 p-1.5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800">
             <button
               onClick={() => setConverterMode('xml-to-pdf')}
-              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all cursor-pointer ${
+              className={`flex flex-col items-start p-3.5 rounded-xl transition-all text-left cursor-pointer border ${
                 converterMode === 'xml-to-pdf'
-                  ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-900 dark:text-zinc-50 font-bold'
-                  : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-indigo-300 dark:border-indigo-600 shadow-xs'
+                  : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
               }`}
             >
-              <FileCode className="h-4 w-4" />
-              Painel de Conferência de Notas
+              <div className="flex items-center gap-2 mb-1 w-full">
+                <div className={`p-1.5 rounded-lg ${converterMode === 'xml-to-pdf' ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
+                  <FileCode className="h-4 w-4" />
+                </div>
+                <span className="text-xs font-bold truncate">Painel de Conferência (NF-e XML / PDF)</span>
+              </div>
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+                Conferência, DANFE, Chaves x Dest, Pesos e Conversão
+              </span>
             </button>
-            <button
-              onClick={() => setConverterMode('pdf-to-xml')}
-              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all cursor-pointer ${
-                converterMode === 'pdf-to-xml'
-                  ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-900 dark:text-zinc-50 font-bold'
-                  : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50'
-              }`}
-            >
-              <Sparkles className="h-4 w-4 text-indigo-500" />
-              PDF para XML & Conferência
-            </button>
+
             <button
               onClick={() => setConverterMode('mdf-x-excel')}
-              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all cursor-pointer ${
+              className={`flex flex-col items-start p-3.5 rounded-xl transition-all text-left cursor-pointer border ${
                 converterMode === 'mdf-x-excel'
-                  ? 'bg-indigo-600 text-white shadow-sm font-bold'
-                  : 'text-zinc-700 hover:text-zinc-950 dark:text-zinc-300 dark:hover:text-zinc-50'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-amber-300 dark:border-amber-600 shadow-xs'
+                  : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
               }`}
             >
-              <TrainTrack className="h-4 w-4 text-amber-400" />
-              MDF x EXCEL (Vagões)
+              <div className="flex items-center gap-2 mb-1 w-full">
+                <div className={`p-1.5 rounded-lg ${converterMode === 'mdf-x-excel' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
+                  <TrainTrack className="h-4 w-4" />
+                </div>
+                <span className="text-xs font-bold truncate">MDF x EXCEL (Vagões)</span>
+              </div>
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+                Conciliação Manifesto x Excel de Vagões
+              </span>
             </button>
+
             <button
               onClick={() => setConverterMode('documentation')}
-              className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all cursor-pointer ${
+              className={`flex flex-col items-start p-3.5 rounded-xl transition-all text-left cursor-pointer border ${
                 converterMode === 'documentation'
-                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-zinc-900 font-bold'
-                  : 'text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-emerald-300 dark:border-emerald-600 shadow-xs'
+                  : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
               }`}
             >
-              <BookOpen className="h-4 w-4" />
-              Guia de Uso & Documentação
+              <div className="flex items-center gap-2 mb-1 w-full">
+                <div className={`p-1.5 rounded-lg ${converterMode === 'documentation' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
+                  <BookOpen className="h-4 w-4" />
+                </div>
+                <span className="text-xs font-bold truncate">Guia de Uso & Regras</span>
+              </div>
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+                Manual, Transbordos (Pradópolis) e Dicas
+              </span>
             </button>
           </div>
         </div>
 
-        {converterMode === 'documentation' ? (
-          <DocumentationPanel />
-        ) : converterMode === 'mdf-x-excel' ? (
-          <MDFExcelComparator onOpenDoc={() => setConverterMode('documentation')} />
-        ) : converterMode === 'pdf-to-xml' ? (
-          <PDFToXMLConverter
-            onAnalyzeXML={handleAnalyzeGeneratedXML}
-            onOpenDocumentation={() => setConverterMode('documentation')}
-          />
-        ) : (
-          <>
-            {/* Upload Area */}
-            <Card className='mb-6'>
-              <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        {/* Guia de Fluxo Rápido em 3 Passos */}
+        {showWorkflowGuide && converterMode === 'xml-to-pdf' && (
+          <div className="mb-6 p-4 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 text-indigo-950 dark:text-indigo-200">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-900 dark:text-indigo-200">
+                  Como Utilizar o Painel Unificado (3 Passos Simples)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWorkflowGuide(false)}
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer flex items-center gap-1"
+              >
+                Ocultar Guia
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <div className="p-2.5 rounded-xl bg-white/80 dark:bg-zinc-900/70 border border-indigo-100/80 dark:border-zinc-800">
+                <strong className="block text-indigo-700 dark:text-indigo-300 mb-0.5">1. Carregar Arquivos (XML, PDF ou ZIP)</strong>
+                <span>Arraste ou selecione arquivos XML, PDFs de DANFE, pacotes ZIP ou pastas inteiras de notas fiscais.</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white/80 dark:bg-zinc-900/70 border border-indigo-100/80 dark:border-zinc-800">
+                <strong className="block text-indigo-700 dark:text-indigo-300 mb-0.5">2. Conferência & Confronto Automático</strong>
+                <span>O sistema extrai os dados fiscais, valida a Chave vs Destinatário, confere transbordos (ex: Pradópolis) e confronta com a planilha Excel.</span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white/80 dark:bg-zinc-900/70 border border-indigo-100/80 dark:border-zinc-800">
+                <strong className="block text-indigo-700 dark:text-indigo-300 mb-0.5">3. Exportar & Baixar em Lote</strong>
+                <span>Baixe o relatório Excel completo (.xlsx), exporte todos os PDFs de DANFE ou baixe o pacote ZIP com todos os arquivos XML gerados.</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Módulos do Sistema Preservados em Memória */}
+        <div className={converterMode === 'xml-to-pdf' ? 'block' : 'hidden'}>
+          {/* Upload Area */}
+          <Card className='mb-6 shadow-xs border-zinc-200 dark:border-zinc-800'>
+              <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3">
                 <div>
-                  <CardTitle className='text-lg'>Upload de Arquivos</CardTitle>
+                  <CardTitle className='text-lg font-bold flex items-center gap-2'>
+                    <Upload className="h-5 w-5 text-indigo-500" />
+                    Carregar Notas Fiscais
+                  </CardTitle>
                   <CardDescription>
-                    Arraste arquivos XML, PDF, arquivos ZIP ou pastas contendo notas fiscais
+                    Arraste arquivos XML, PDFs de DANFE, arquivos ZIP ou pastas inteiras contendo notas fiscais
                   </CardDescription>
                 </div>
 
@@ -882,7 +1035,7 @@ export function XMLConverter() {
                     variant="outline"
                     size="sm"
                     onClick={() => speakText('Teste da função de áudio e voz no Painel de Conferência. O sistema emitirá este aviso sonoro sempre que o CNPJ da Chave for divergente do Destinatário.')}
-                    className="text-xs h-7 px-2.5 gap-1 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    className="text-xs h-7 px-2.5 gap-1 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
                     title="Testar sintetizador de voz"
                   >
                     <Volume1 className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
@@ -902,6 +1055,7 @@ export function XMLConverter() {
                   </Button>
                 </div>
               </CardHeader>
+
           <CardContent className="space-y-4">
             {/* Opções de Seleção de Tipo de Arquivo a Processar */}
             <div className="p-3.5 bg-zinc-50 dark:bg-zinc-900/70 border border-zinc-200/80 dark:border-zinc-800 rounded-xl">
@@ -910,7 +1064,7 @@ export function XMLConverter() {
                   <Filter className="h-4 w-4 text-indigo-500 shrink-0" />
                   <div>
                     <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 uppercase tracking-wide block">
-                      Tipo de Arquivo a Processar
+                      Filtro de Leitura de Arquivos
                     </span>
                     <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                       Selecione qual formato o sistema deve ler para otimizar o tempo de conferência
@@ -965,10 +1119,10 @@ export function XMLConverter() {
               onDrop={handleDrop}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
-              className={`relative flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed transition-colors ${
+              className={`relative flex min-h-[190px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed transition-all p-6 text-center ${
                 isDragOver
-                  ? 'border-primary bg-primary/5'
-                  : 'border-muted-foreground/25 hover:border-primary/50'
+                  ? 'border-indigo-500 bg-indigo-500/10 scale-[1.01]'
+                  : 'border-zinc-300 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-900/30 hover:border-indigo-400 hover:bg-zinc-50 dark:hover:bg-zinc-900/60'
               }`}
             >
               <input
@@ -986,82 +1140,102 @@ export function XMLConverter() {
               />
               {isProcessing ? (
                 <>
-                  <Loader2 className='mb-4 h-12 w-12 animate-spin text-primary' />
-                  <p className='text-sm font-medium text-foreground'>Processando arquivos...</p>
+                  <Loader2 className='mb-3 h-10 w-10 animate-spin text-indigo-600 dark:text-indigo-400' />
+                  <p className='text-sm font-bold text-foreground'>Processando e conferindo arquivos...</p>
+                  <p className='text-xs text-muted-foreground mt-1'>Auditando Chaves de Acesso, Terminais e Transbordos</p>
                 </>
               ) : (
                 <>
-                  <div className='mb-4 flex items-center gap-3'>
-                    <Upload
-                      className={`h-10 w-10 ${isDragOver ? 'text-primary' : 'text-muted-foreground'}`}
-                    />
-                    <FileArchive
-                      className={`h-10 w-10 ${isDragOver ? 'text-primary' : 'text-muted-foreground'}`}
-                    />
-                    <Folder
-                      className={`h-10 w-10 ${isDragOver ? 'text-primary' : 'text-muted-foreground'}`}
-                    />
+                  <div className='mb-3 flex items-center gap-2'>
+                    <div className="p-2.5 rounded-xl bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400">
+                      <Upload className="h-6 w-6" />
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400">
+                      <FileCode className="h-6 w-6" />
+                    </div>
+                    <div className="p-2.5 rounded-xl bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400">
+                      <Folder className="h-6 w-6" />
+                    </div>
                   </div>
-                  <p className='mb-1 text-sm font-medium text-foreground'>
+                  <p className='text-sm font-bold text-foreground'>
                     {isDragOver
-                      ? 'Solte os arquivos ou pastas aqui'
-                      : processFileType === 'xml'
-                      ? 'Arraste arquivos XML ou pacotes ZIP aqui (Filtro XML ativo)'
-                      : processFileType === 'pdf'
-                      ? 'Arraste arquivos PDF ou pacotes ZIP aqui (Filtro PDF ativo)'
-                      : 'Arraste arquivos XML, PDF, ZIP ou várias pastas aqui'}
+                      ? 'Solte os arquivos ou pastas aqui!'
+                      : 'Arraste seus arquivos XML, PDFs, pacotes ZIP ou pastas aqui'}
                   </p>
-                  <p className='text-xs text-muted-foreground'>
-                    {processFileType === 'xml'
-                      ? 'Filtro ativo: apenas arquivos .XML (ou ZIPs contendo XML) serão processados.'
-                      : processFileType === 'pdf'
-                      ? 'Filtro ativo: apenas arquivos .PDF (ou ZIPs contendo PDF) serão processados.'
-                      : 'ou clique para selecionar (suporta múltiplos arquivos, PDFs e pastas)'}
+                  <p className='text-xs text-muted-foreground mt-1 max-w-md'>
+                    Ou clique em qualquer ponto desta caixa para selecionar arquivos do seu computador
                   </p>
+                  <div className="mt-3 flex items-center gap-2 flex-wrap justify-center">
+                    <span className="text-[11px] px-2 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium">
+                      .XML (NF-e)
+                    </span>
+                    <span className="text-[11px] px-2 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium">
+                      .PDF (DANFE)
+                    </span>
+                    <span className="text-[11px] px-2 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium">
+                      .ZIP
+                    </span>
+                    <span className="text-[11px] px-2 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium">
+                      Pastas Completas
+                    </span>
+                  </div>
                 </>
               )}
             </div>
 
+            {/* Barra de Ações Rápidas quando há arquivos */}
             {files.length > 0 && (
-              <div className='mt-4 flex items-center justify-between'>
-                <div className='flex items-center gap-4 text-sm'>
+              <div className='mt-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-xl bg-zinc-100/70 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800'>
+                <div className='flex items-center gap-3 text-xs font-semibold flex-wrap'>
                   {successCount > 0 && (
-                    <span className='flex items-center gap-1 text-green-600'>
-                      <CheckCircle2 className='h-4 w-4' />
-                      {successCount} processado{successCount > 1 ? 's' : ''}
+                    <span className='flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800'>
+                      <CheckCircle2 className='h-3.5 w-3.5' />
+                      {successCount} nota{successCount > 1 ? 's' : ''} carregada{successCount > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {divergentCount > 0 && (
+                    <span className='flex items-center gap-1.5 text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 px-2.5 py-1 rounded-lg border border-rose-200 dark:border-rose-800'>
+                      <AlertTriangle className='h-3.5 w-3.5 animate-pulse' />
+                      {divergentCount} divergência{divergentCount > 1 ? 's' : ''} de CNPJ
                     </span>
                   )}
                   {errorCount > 0 && (
-                    <span className='flex items-center gap-1 text-destructive'>
-                      <AlertCircle className='h-4 w-4' />
+                    <span className='flex items-center gap-1.5 text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 px-2.5 py-1 rounded-lg border border-rose-200 dark:border-rose-800'>
+                      <AlertCircle className='h-3.5 w-3.5' />
                       {errorCount} erro{errorCount > 1 ? 's' : ''}
                     </span>
                   )}
                 </div>
-                <div className='flex items-center gap-2'>
-                {successCount > 0 && (
+
+                <div className='flex items-center gap-2 flex-wrap'>
+                  {successCount > 0 && (
                     <>
-                        <Button onClick={handleDownloadExcel} size='sm' className='gap-2'>
-                            <FileSpreadsheet className='h-4 w-4' />
-                            Excel
-                        </Button>
-                        <Button onClick={handleDownloadAllPDFs} size='sm' className='gap-2' disabled={isDownloading}>
+                      <Button onClick={handleDownloadExcel} size='sm' className='gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer'>
+                        <FileSpreadsheet className='h-4 w-4' />
+                        Exportar Excel (.xlsx)
+                      </Button>
+                      <Button onClick={handleDownloadAllPDFs} size='sm' variant="outline" className='gap-1.5 cursor-pointer' disabled={isDownloading}>
                         {isDownloading ? (
-                            <>
+                          <>
                             <Loader2 className='h-4 w-4 animate-spin' />
-                            Gerando...
-                            </>
+                            Gerando PDFs...
+                          </>
                         ) : (
-                            <>
-                            <Download className='h-4 w-4' />
-                            {successCount > 1 ? `PDFs (${successCount})` : 'PDF'}
-                            </>
+                          <>
+                            <Download className='h-4 w-4 text-indigo-500' />
+                            {successCount > 1 ? `Baixar PDFs (${successCount})` : 'Baixar PDF'}
+                          </>
                         )}
-                        </Button>
+                      </Button>
+                      <Button onClick={handleDownloadAllXMLs} size='sm' variant="outline" className='gap-1.5 font-semibold cursor-pointer' disabled={isDownloading}>
+                        <FileCode className='h-4 w-4 text-indigo-600' />
+                        Baixar XMLs (.zip)
+                      </Button>
                     </>
                   )}
-                  <Button onClick={handleClear} variant='outline' size='sm'>
-                    <X className='h-4 w-4' />
+                  <Button onClick={handleClear} variant='outline' size='sm' className="text-zinc-600 dark:text-zinc-400 hover:text-destructive cursor-pointer" title="Limpar todos os arquivos carregados">
+                    <X className='h-4 w-4 mr-1' />
+                    Limpar
                   </Button>
                 </div>
               </div>
@@ -1069,30 +1243,128 @@ export function XMLConverter() {
           </CardContent>
         </Card>
 
+        {/* Painel de Indicadores Gerais (KPIs) quando há arquivos carregados */}
+        {files.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            <div className="p-3.5 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xs">
+              <span className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 uppercase block mb-1">
+                Total de Notas
+              </span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-extrabold text-foreground">{files.length}</span>
+                <span className="text-xs text-zinc-500">docs</span>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xs">
+              <span className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 uppercase block mb-1">
+                Valor Total das Notas
+              </span>
+              <div className="text-lg sm:text-xl font-extrabold text-indigo-600 dark:text-indigo-400 truncate">
+                {formatCurrency(totalValor)}
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xs">
+              <span className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 uppercase block mb-1">
+                Peso Líquido Total
+              </span>
+              <div className="text-lg sm:text-xl font-extrabold text-emerald-600 dark:text-emerald-400 truncate">
+                {totalPesoLiquido > 0
+                  ? `${totalPesoLiquido.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} kg`
+                  : totalPesoBruto > 0
+                  ? `${totalPesoBruto.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} kg (Bruto)`
+                  : 'N/A'}
+              </div>
+            </div>
+
+            <div className={`p-3.5 rounded-2xl border shadow-xs ${
+              divergentCount > 0
+                ? 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800'
+                : 'bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800'
+            }`}>
+              <span className="text-[11px] font-bold uppercase block mb-1 text-zinc-600 dark:text-zinc-400">
+                Chave vs Destinatário
+              </span>
+              <div className="flex items-center gap-1.5">
+                {divergentCount > 0 ? (
+                  <>
+                    <AlertTriangle className="h-5 w-5 text-rose-600 dark:text-rose-400 shrink-0 animate-pulse" />
+                    <span className="text-sm font-extrabold text-rose-700 dark:text-rose-300">
+                      {divergentCount} divergente{divergentCount > 1 ? 's' : ''}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <span className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300">
+                      100% Conforme
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Results Area */}
         {files.length > 0 && (
           <Tabs value={activeTab} onValueChange={setActiveTab} className='w-full'>
-            <TabsList className='mb-4 grid w-full grid-cols-4'>
-              <TabsTrigger value='list' className='gap-2'>
+            <TabsList className='mb-4 grid w-full grid-cols-2 sm:grid-cols-5 bg-zinc-100 dark:bg-zinc-900 p-1 rounded-xl gap-1'>
+              <TabsTrigger value='list' className='gap-1.5 font-bold text-xs cursor-pointer'>
                 <List className='h-4 w-4' />
-                Lista
+                <span>Lista ({files.length})</span>
               </TabsTrigger>
-              <TabsTrigger value='dashboard' className='gap-2'>
+              <TabsTrigger value='reconciliation' className='gap-1.5 font-bold text-xs cursor-pointer'>
+                <Scale className='h-4 w-4 text-emerald-600' />
+                <span>Conferência c/ Excel</span>
+              </TabsTrigger>
+              <TabsTrigger value='dashboard' className='gap-1.5 font-bold text-xs cursor-pointer'>
                 <BarChart3 className='h-4 w-4' />
-                Dashboard
+                <span>Dashboard</span>
               </TabsTrigger>
-              <TabsTrigger value='search' className='gap-2'>
+              <TabsTrigger value='search' className='gap-1.5 font-bold text-xs cursor-pointer'>
                 <Search className='h-4 w-4' />
-                Pesquisa
+                <span>Busca Avançada</span>
               </TabsTrigger>
-               <TabsTrigger value='map' className='gap-2'>
+              <TabsTrigger value='map' className='gap-1.5 font-bold text-xs cursor-pointer'>
                 <Map className='h-4 w-4' />
-                Mapa
+                <span>Mapa Logístico</span>
               </TabsTrigger>
             </TabsList>
 
             <TabsContent value='list' className='space-y-4'>
-          {files.map((processedFile, index) => {
+              {/* Barra de Filtro Rápido em Tempo Real */}
+              <div className="flex items-center gap-2 p-2.5 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
+                <Search className="h-4 w-4 text-zinc-400 shrink-0 ml-1" />
+                <input
+                  type="text"
+                  value={listFilterTerm}
+                  onChange={(e) => setListFilterTerm(e.target.value)}
+                  placeholder="Filtrar notas por número, chave, emitente, destinatário, transbordo (ex: Pradópolis), terminal..."
+                  className="w-full bg-transparent text-xs text-foreground placeholder:text-zinc-400 focus:outline-none"
+                />
+                {listFilterTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setListFilterTerm('')}
+                    className="text-xs text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 px-2 py-0.5 rounded cursor-pointer"
+                  >
+                    Limpar
+                  </button>
+                )}
+                <span className="text-[11px] text-zinc-500 shrink-0 font-medium border-l pl-2 border-zinc-200 dark:border-zinc-700">
+                  {filteredFiles.length} de {files.length} notas
+                </span>
+              </div>
+
+          {filteredFiles.length === 0 && listFilterTerm && (
+            <div className="p-8 text-center rounded-2xl bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800 text-zinc-500 text-sm">
+              Nenhuma nota fiscal encontrada para o filtro "{listFilterTerm}".
+            </div>
+          )}
+
+          {filteredFiles.map((processedFile, index) => {
             const vCNPJ = processedFile.nfeData
               ? processedFile.nfeData.verificacaoCNPJ ||
                 verifyChaveCNPJ(
@@ -1106,6 +1378,7 @@ export function XMLConverter() {
             return (
               <Card
                 key={index}
+                data-file-index={index}
                 className={
                   processedFile.error
                     ? 'border-destructive/50'
@@ -1121,8 +1394,8 @@ export function XMLConverter() {
                     setExpandedIndex(expandedIndex === index ? null : index)
                   }
                 >
-                  <div className='flex items-center justify-between'>
-                    <div className='flex items-center gap-3'>
+                  <div className='flex items-center justify-between gap-3'>
+                    <div className='flex items-center gap-3 min-w-0 flex-1'>
                       {processedFile.error ? (
                         <AlertCircle className='h-5 w-5 flex-shrink-0 text-destructive' />
                       ) : isDivergent ? (
@@ -1132,9 +1405,9 @@ export function XMLConverter() {
                       ) : (
                         <CheckCircle2 className='h-5 w-5 flex-shrink-0 text-green-600' />
                       )}
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <CardTitle className='text-base'>
+                          <CardTitle className='text-base truncate'>
                             {processedFile.fileName}
                           </CardTitle>
                           {isDivergent && (
@@ -1175,7 +1448,7 @@ export function XMLConverter() {
                         ) : null}
                       </div>
                     </div>
-                    <div className='flex items-center gap-2'>
+                    <div className='flex items-center gap-1.5 shrink-0 flex-wrap'>
                       {processedFile.nfeData && (
                         <>
                           <Button
@@ -1185,16 +1458,52 @@ export function XMLConverter() {
                             }}
                             size='sm'
                             variant='outline'
-                            className='gap-2'
+                            className='gap-1 text-xs font-semibold h-8 px-2.5 cursor-pointer'
+                            title="Baixar DANFE em formato PDF"
                           >
-                            <Download className='h-4 w-4' />
+                            <Download className='h-3.5 w-3.5 text-indigo-500' />
                             PDF
                           </Button>
-                          {expandedIndex === index ? (
-                            <ChevronUp className='h-5 w-5 text-muted-foreground' />
-                          ) : (
-                            <ChevronDown className='h-5 w-5 text-muted-foreground' />
+                          {processedFile.xmlContent && (
+                            <>
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleDownloadXML(processedFile)
+                                }}
+                                size='sm'
+                                variant='outline'
+                                className='gap-1 text-xs font-semibold h-8 px-2.5 cursor-pointer'
+                                title="Baixar arquivo XML original/gerado"
+                              >
+                                <FileCode className='h-3.5 w-3.5 text-emerald-600' />
+                                XML
+                              </Button>
+                              <Button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSelectedXmlModal({
+                                    fileName: processedFile.fileName,
+                                    content: processedFile.xmlContent,
+                                  })
+                                }}
+                                size='sm'
+                                variant='ghost'
+                                className='gap-1 text-xs text-zinc-600 dark:text-zinc-400 hover:text-indigo-600 h-8 px-2 cursor-pointer'
+                                title="Visualizar código XML formatado"
+                              >
+                                <Eye className='h-3.5 w-3.5' />
+                                Ver
+                              </Button>
+                            </>
                           )}
+                          <div className="p-1 text-zinc-400 hover:text-zinc-600">
+                            {expandedIndex === index ? (
+                              <ChevronUp className='h-5 w-5 text-muted-foreground' />
+                            ) : (
+                              <ChevronDown className='h-5 w-5 text-muted-foreground' />
+                            )}
+                          </div>
                         </>
                       )}
                     </div>
@@ -1537,6 +1846,21 @@ export function XMLConverter() {
           })}
             </TabsContent>
 
+            <TabsContent value='reconciliation'>
+              <ExcelReconciliationTab
+                files={files}
+                speakText={speakText}
+                onSelectFile={(index) => {
+                  setActiveTab('list')
+                  setExpandedIndex(index)
+                  setTimeout(() => {
+                    const card = document.querySelector(`[data-file-index="${index}"]`)
+                    card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  }, 100)
+                }}
+              />
+            </TabsContent>
+
             <TabsContent value='dashboard'>
               <Dashboard files={files} />
             </TabsContent>
@@ -1549,8 +1873,8 @@ export function XMLConverter() {
                   setExpandedIndex(index)
                   // Scroll to the selected card
                   setTimeout(() => {
-                    const card = document.querySelector(`[data-file-index="${index}"]`);
-                    card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    const card = document.querySelector(`[data-file-index="${index}"]`)
+                    card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
                   }, 100)
                 }}
               />
@@ -1562,9 +1886,81 @@ export function XMLConverter() {
 
           </Tabs>
         )}
-          </>
-        )}
+        </div>
+
+        {/* Módulo MDF-e x EXCEL (Vagões) Preservado */}
+        <div className={converterMode === 'mdf-x-excel' ? 'block' : 'hidden'}>
+          <MDFExcelComparator onOpenDoc={() => setConverterMode('documentation')} />
+        </div>
+
+        {/* Módulo Guia & Regras Preservado */}
+        <div className={converterMode === 'documentation' ? 'block' : 'hidden'}>
+          <DocumentationPanel />
+        </div>
       </div>
+
+      {/* Modal de Visualização de XML */}
+      {selectedXmlModal && (
+        <Dialog open={!!selectedXmlModal} onOpenChange={(open) => { if (!open) setSelectedXmlModal(null) }}>
+          <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col p-6">
+            <DialogHeader className="pb-3 border-b border-zinc-200 dark:border-zinc-800">
+              <div className="flex items-center justify-between gap-3 pr-6">
+                <div>
+                  <DialogTitle className="text-base font-bold flex items-center gap-2 text-zinc-900 dark:text-zinc-100">
+                    <FileCode className="h-5 w-5 text-emerald-600" />
+                    Código XML - {selectedXmlModal.fileName}
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-zinc-500 mt-0.5">
+                    Estrutura original/gerada da NF-e no padrão nacional SEFAZ.
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+
+            <div className="my-4 flex-1 overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-zinc-100">
+              <pre className="whitespace-pre-wrap break-all leading-relaxed">
+                {selectedXmlModal.content}
+              </pre>
+            </div>
+
+            <DialogFooter className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+              <span className="text-xs text-zinc-500">
+                {selectedXmlModal.content.length.toLocaleString('pt-BR')} caracteres
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCopyXml(selectedXmlModal.content)}
+                  className="gap-1.5 text-xs font-semibold cursor-pointer"
+                >
+                  {copiedXml ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                  {copiedXml ? 'Copiado!' : 'Copiar XML'}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => {
+                    const blob = new Blob([selectedXmlModal.content], { type: 'application/xml;charset=utf-8' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    const baseName = selectedXmlModal.fileName.replace(/\.(pdf|xml)$/i, '')
+                    a.download = `${baseName}.xml`
+                    a.click()
+                    URL.revokeObjectURL(url)
+                  }}
+                  className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer"
+                >
+                  <Download className="h-4 w-4" />
+                  Baixar XML
+                </Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }

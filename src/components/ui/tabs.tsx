@@ -62,17 +62,24 @@ export function TabsTrigger({ children, value, className, ...props }: { value: s
   )
 }
 
-export function TabsContent({ children, value, className, ...props }: { value: string } & React.HTMLAttributes<HTMLDivElement>) {
+export function TabsContent({
+  children,
+  value,
+  className,
+  style,
+  ...props
+}: { value: string } & React.HTMLAttributes<HTMLDivElement>) {
   const { value: activeValue } = React.useContext(TabsContext)
   const isActive = activeValue === value
-
-  if (!isActive) return null
 
   return (
     <div
       role="tabpanel"
+      hidden={!isActive}
+      style={{ display: isActive ? undefined : 'none', ...style }}
       className={cn(
         "mt-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        !isActive && "hidden",
         className
       )}
       {...props}
