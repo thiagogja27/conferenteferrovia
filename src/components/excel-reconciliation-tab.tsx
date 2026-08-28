@@ -653,6 +653,271 @@ export function ExcelReconciliationTab({
     return ws
   }
 
+  // Helper para converter/normalizar valores de peso para KG (multiplica por 1000 se o valor estiver em Toneladas, ex: < 1000)
+  const normalizeWeightKg = (rawVal: any): number | string => {
+    if (rawVal === undefined || rawVal === null || String(rawVal).trim() === '') return ''
+    const num = parseBRFloat(rawVal)
+    if (isNaN(num) || num === 0) return rawVal
+
+    // Se o valor for menor que 1000 (ex: 45.5, 78.12, 120.5 T), significa que está em toneladas e deve ser multiplicado por 1000
+    // Se o valor já for >= 1000 (ex: 45500, 78120, 120500 KG), já está multiplicado por 1000 e não deve multiplicar novamente
+    if (Math.abs(num) < 1000) {
+      return Math.round(num * 1000 * 1000) / 1000
+    }
+    return Math.round(num * 1000) / 1000
+  }
+
+  // Helper para extrair as linhas da "Planilha de Digitação" exatamente na sequência original
+  const extractDigitacaoRows = (): any[] => {
+    if (!rawWorkbook) return []
+
+    // Mapa auxiliar com os dados das NF-es carregadas indexadas por chave e número
+    const nfeMap = new Map<string, ProcessedFile>()
+    validFiles.forEach((f) => {
+      const key = getNormalizedKey(f)
+      if (key) {
+        nfeMap.set(key, f)
+        if (key.length === 44 && key.startsWith('0')) {
+          nfeMap.set(key.substring(1), f)
+        }
+      }
+      if (f.nfeData?.numero) {
+        nfeMap.set(`NUM_${f.nfeData.numero}`, f)
+      }
+    })
+
+    const digitacaoRows: any[] = []
+
+    rawWorkbook.SheetNames.forEach((sheetName) => {
+      const worksheet = rawWorkbook.Sheets[sheetName]
+      if (!worksheet) return
+      const sheetJson: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
+      if (!sheetJson || sheetJson.length === 0) return
+
+      let headerRowIdx = -1
+      const colMap: Record<string, number> = {}
+
+      for (let r = 0; r < Math.min(sheetJson.length, 35); r++) {
+        const row = sheetJson[r]
+        if (!row || !Array.isArray(row)) continue
+        const upperCells = row.map((c) => String(c || '').trim().toUpperCase())
+
+        const isHeader = upperCells.some((c) =>
+          c.includes('VAGAO') ||
+          c.includes('VAGÃO') ||
+          c.includes('SERIE') ||
+          c.includes('BRUTO') ||
+          c.includes('TARA') ||
+          c.includes('CHAVE') ||
+          c.includes('PESO') ||
+          c.includes('EMISSAO') ||
+          c.includes('EMISSÃO')
+        )
+
+        if (isHeader) {
+          headerRowIdx = r
+          upperCells.forEach((c, idx) => {
+            if (!c) return
+            const norm = c.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9_]/g, '_')
+            colMap[c] = idx
+            colMap[norm] = idx
+          })
+          break
+        }
+      }
+
+      if (headerRowIdx === -1) {
+        headerRowIdx = 0
+      }
+
+      const findColIdx = (candidates: string[]) => {
+        for (const cand of candidates) {
+          const upper = cand.toUpperCase()
+          const norm = upper.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9_]/g, '_')
+          for (const k of Object.keys(colMap)) {
+            if (k === upper || k === norm || k.includes(upper) || k.includes(norm)) {
+              return colMap[k]
+            }
+          }
+        }
+        return -1
+      }
+
+      const serieVagaoCol = findColIdx(['SERIE_VAGAO', 'SERIE VAGAO', 'SERIE_VAGÃO', 'SERIE VAGÃO', 'SERIE', 'SERIEVAGAO'])
+      const vagaoCol = findColIdx(['VAGAO', 'VAGÃO', 'NUM_VAGAO', 'NUMERO_VAGAO', 'NR_VAGAO', 'N_VAGAO', 'VAG'])
+      const brutoCol = findColIdx(['BRUTO', 'PESO_BRUTO', 'PESO BRUTO', 'PESOBRUTO', 'BRUTO(KG)', 'BRUTO (KG)', 'BRUTO (T)', 'BRUTO(T)'])
+      const taraCol = findColIdx(['TARA', 'TARA_VAGAO', 'TARA VAGAO', 'TARA_VAGÃO', 'TARA(KG)', 'TARA (KG)', 'TARA (T)', 'TARA(T)'])
+      const dataEmissaoCol = findColIdx(['DATA_EMISSAO', 'DATA EMISSAO', 'DATA_EMISSÃO', 'DATA EMISSÃO', 'DATA_DE_EMISSAO', 'DATA DE EMISSAO', 'DHEMI', 'DEMI', 'DATA'])
+      const pesoSelecionadoCol = findColIdx(['PESO_SELECIONADO', 'PESO SELECIONADO', 'PESO_LIQUIDO', 'PESO LIQUIDO', 'PESO_LÍQUIDO', 'PESO LÍQUIDO', 'PESOLIQUIDO', 'PESO_LIQ', 'PESO LIQ', 'QTD_NOTA', 'QUANTIDADE'])
+      const pesoNotaVagaoCol = findColIdx(['PESO_NOTA_VAGAO', 'PESO NOTA VAGAO', 'PESO_NOTA_VAGÃO', 'PESO NOTA VAGÃO', 'PESO_VAGAO', 'PESO VAGAO', 'PESO_RATEADO'])
+      const cnpjEmitenteCol = findColIdx(['CNPJ_EMITENTE', 'CNPJ EMITENTE', 'EMITENTE_CNPJ', 'CNPJ_EMIT', 'EMIT_CNPJ', 'EMITENTE'])
+      const cnpjDestinatarioCol = findColIdx(['CNPJ_DESTINATARIO', 'CNPJ DESTINATARIO', 'DESTINATARIO_CNPJ', 'CNPJ_DEST', 'DEST_CNPJ', 'DESTINATARIO'])
+      const numeroCol = findColIdx(['NUMERO', 'NÚMERO', 'Nº NOTA', 'NR_NOTA', 'NNF', 'NUM_NOTA', 'NUMERO_NOTA', 'NOTA'])
+      const chaveCol = findColIdx(['CHAVE', 'CHAVE_DE_ACESSO', 'CHAVE DE ACESSO', 'CHAVE_ACESSO', 'NFE_CHAVE', 'CHAVENFE'])
+
+      // Percorrer todas as linhas na sequência exata sem remover duplicadas
+      for (let r = headerRowIdx + 1; r < sheetJson.length; r++) {
+        const row = sheetJson[r]
+        if (!row || !Array.isArray(row)) continue
+
+        const hasAnyValue = row.some((c) => String(c !== undefined && c !== null ? c : '').trim() !== '')
+        if (!hasAnyValue) continue
+
+        // Identificar e extrair chave de acesso limpa com 44 dígitos (extraindo letras como NFe...)
+        let rowKey = ''
+        if (chaveCol !== -1 && row[chaveCol] !== undefined && row[chaveCol] !== null) {
+          const rawK = String(row[chaveCol]).replace(/\D/g, '')
+          if (rawK.length >= 44) {
+            rowKey = rawK.substring(rawK.length - 44)
+          } else if (rawK.length > 0) {
+            rowKey = rawK
+          }
+        }
+        if (!rowKey || rowKey.length < 44) {
+          for (const cell of row) {
+            const rawDigits = String(cell || '').replace(/\D/g, '')
+            if (rawDigits.length >= 44) {
+              rowKey = rawDigits.substring(rawDigits.length - 44)
+              break
+            }
+          }
+        }
+
+        const linkedNfe = rowKey ? nfeMap.get(rowKey) : null
+
+        // 1. vagao: concatenação dos valores SERIE_VAGAO e VAGAO
+        const serieRaw = serieVagaoCol !== -1 && row[serieVagaoCol] !== undefined && row[serieVagaoCol] !== null ? String(row[serieVagaoCol]).trim() : ''
+        const vagaoRaw = vagaoCol !== -1 && row[vagaoCol] !== undefined && row[vagaoCol] !== null ? String(row[vagaoCol]).trim() : ''
+
+        let vagaoFinal = ''
+        if (serieRaw && vagaoRaw) {
+          if (vagaoRaw.toUpperCase().startsWith(serieRaw.toUpperCase())) {
+            vagaoFinal = vagaoRaw
+          } else {
+            vagaoFinal = `${serieRaw}${vagaoRaw}`
+          }
+        } else {
+          vagaoFinal = serieRaw || vagaoRaw || ''
+        }
+
+        // 2. BRUTO: multiplicar por 1000 se não estiver em KG
+        const brutoFinal = brutoCol !== -1 ? normalizeWeightKg(row[brutoCol]) : ''
+
+        // 3. TARA: multiplicar por 1000 se não estiver em KG
+        const taraFinal = taraCol !== -1 ? normalizeWeightKg(row[taraCol]) : ''
+
+        // 4. data_emissao: extrair somente a data (ex: "18/08/2026 15:02:12" -> "18/08/2026")
+        let dataEmissaoFinal = ''
+        let rawData = dataEmissaoCol !== -1 && row[dataEmissaoCol] !== undefined && row[dataEmissaoCol] !== null
+          ? String(row[dataEmissaoCol]).trim()
+          : ''
+
+        if (!rawData && linkedNfe?.nfeData?.dataEmissao) {
+          rawData = String(linkedNfe.nfeData.dataEmissao).trim()
+        }
+
+        if (rawData) {
+          if (rawData.includes(' ')) {
+            dataEmissaoFinal = rawData.split(' ')[0].trim()
+          } else if (rawData.includes('T')) {
+            const datePart = rawData.split('T')[0].trim()
+            if (datePart.includes('-')) {
+              const [y, m, d] = datePart.split('-')
+              dataEmissaoFinal = `${d}/${m}/${y}`
+            } else {
+              dataEmissaoFinal = datePart
+            }
+          } else {
+            dataEmissaoFinal = rawData
+          }
+        }
+
+        // 5. PESO_SELECIONADO: multiplicar por 1000 se não estiver em KG
+        const pesoSelecionadoFinal = pesoSelecionadoCol !== -1 ? normalizeWeightKg(row[pesoSelecionadoCol]) : ''
+
+        // 6. PESO_NOTA_VAGAO: multiplicar por 1000 se não estiver em KG
+        const pesoNotaVagaoFinal = pesoNotaVagaoCol !== -1 ? normalizeWeightKg(row[pesoNotaVagaoCol]) : ''
+
+        // 7. CNPJ_EMITENTE
+        let cnpjEmitenteFinal = ''
+        if (cnpjEmitenteCol !== -1 && row[cnpjEmitenteCol] !== undefined && row[cnpjEmitenteCol] !== null && String(row[cnpjEmitenteCol]).trim() !== '') {
+          cnpjEmitenteFinal = String(row[cnpjEmitenteCol]).trim()
+        } else if (linkedNfe?.nfeData?.emitente?.cnpj) {
+          cnpjEmitenteFinal = String(linkedNfe.nfeData.emitente.cnpj).trim()
+        }
+
+        // 8. CNPJ_DESTINATARIO
+        let cnpjDestinatarioFinal = ''
+        if (cnpjDestinatarioCol !== -1 && row[cnpjDestinatarioCol] !== undefined && row[cnpjDestinatarioCol] !== null && String(row[cnpjDestinatarioCol]).trim() !== '') {
+          cnpjDestinatarioFinal = String(row[cnpjDestinatarioCol]).trim()
+        } else if (linkedNfe?.nfeData?.destinatario?.cpfCnpj) {
+          cnpjDestinatarioFinal = String(linkedNfe.nfeData.destinatario.cpfCnpj).trim()
+        }
+
+        // 9. NUMERO
+        let numeroFinal: any = ''
+        if (numeroCol !== -1 && row[numeroCol] !== undefined && row[numeroCol] !== null && String(row[numeroCol]).trim() !== '') {
+          numeroFinal = String(row[numeroCol]).trim()
+        } else if (linkedNfe?.nfeData?.numero) {
+          numeroFinal = String(linkedNfe.nfeData.numero).trim()
+        }
+
+        // 10. CHAVE: extrair os 44 dígitos numéricos puros (limpando "NFe", prefixos e pontuações)
+        let chaveFinal = ''
+        if (rowKey && rowKey.length === 44) {
+          chaveFinal = rowKey
+        } else if (linkedNfe) {
+          const keyFromNfe = getNormalizedKey(linkedNfe)
+          if (keyFromNfe && keyFromNfe.length === 44) {
+            chaveFinal = keyFromNfe
+          }
+        }
+        if (!chaveFinal && chaveCol !== -1 && row[chaveCol] !== undefined && row[chaveCol] !== null) {
+          const rawDigits = String(row[chaveCol]).replace(/\D/g, '')
+          if (rawDigits.length >= 44) {
+            chaveFinal = rawDigits.substring(rawDigits.length - 44)
+          } else {
+            chaveFinal = rawDigits
+          }
+        }
+
+        digitacaoRows.push({
+          'vagao': vagaoFinal,
+          'BRUTO': brutoFinal,
+          'TARA': taraFinal,
+          'data_emissao': dataEmissaoFinal,
+          'PESO_SELECIONADO': pesoSelecionadoFinal,
+          'PESO_NOTA_VAGAO': pesoNotaVagaoFinal,
+          'CNPJ_EMITENTE': cnpjEmitenteFinal,
+          'CNPJ_DESTINATARIO': cnpjDestinatarioFinal,
+          'NUMERO': numeroFinal,
+          'CHAVE': chaveFinal,
+        })
+      }
+    })
+
+    return digitacaoRows
+  }
+
+  // Exportar exclusivamente a Planilha de Digitação
+  const handleExportDigitacaoOnly = () => {
+    if (!rawWorkbook) {
+      alert('Carregue uma planilha Excel de origem para gerar a Planilha de Digitação.')
+      return
+    }
+
+    const digitacaoRows = extractDigitacaoRows()
+    if (digitacaoRows.length === 0) {
+      alert('Nenhum dado encontrado na planilha de origem para gerar a digitação.')
+      return
+    }
+
+    const wb = XLSX.utils.book_new()
+    const wsDigitacao = createFormattedWorksheet(digitacaoRows)
+    XLSX.utils.book_append_sheet(wb, wsDigitacao, 'Planilha de Digitação')
+    XLSX.writeFile(wb, `planilha_digitacao_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  }
+
   // Exportar Relatório Consolidado de Conferência em Excel com Múltiplas Abas (Formato Original Idêntico)
   const handleExportReconciliationReport = () => {
     if (!excelData && validFiles.length === 0) {
@@ -703,7 +968,16 @@ export function ExcelReconciliationTab({
     const wsSummary = createFormattedWorksheet(summaryRows)
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumo Geral')
 
-    // 2. ABA CONSOLIDAÇÃO POR VAGÃO (CÁLCULO TOTAL: SOMA DE PESO_NOTA_VAGAO + TARA)
+    // 2. ABA PLANILHA DE DIGITAÇÃO (SEQUÊNCIA ORIGINAL COMPLETA SEM REMOVER DUPLICADAS)
+    if (rawWorkbook) {
+      const digitacaoRows = extractDigitacaoRows()
+      if (digitacaoRows.length > 0) {
+        const wsDigitacao = createFormattedWorksheet(digitacaoRows)
+        XLSX.utils.book_append_sheet(wb, wsDigitacao, 'Planilha de Digitação')
+      }
+    }
+
+    // 3. ABA CONSOLIDAÇÃO POR VAGÃO (CÁLCULO TOTAL: SOMA DE PESO_NOTA_VAGAO + TARA)
     if (excelData && excelData.wagonSummaries && excelData.wagonSummaries.length > 0) {
       const wagonExportRows = excelData.wagonSummaries.map((w) => ({
         'Vagão': w.vagao,
@@ -718,7 +992,7 @@ export function ExcelReconciliationTab({
       XLSX.utils.book_append_sheet(wb, wsWagons, 'Consolidação por Vagão')
     }
 
-    // 3. ABA TOTAL DE ARQUIVOS (ORDENADOS CONFORME A ORDEM DAS CHAVES DA PLANILHA EXCEL)
+    // 4. ABA TOTAL DE ARQUIVOS (ORDENADOS CONFORME A ORDEM DAS CHAVES DA PLANILHA EXCEL)
     const orderedAllResults = [...validFiles].sort((a, b) => {
       const keyA = getNormalizedKey(a)
       const keyB = getNormalizedKey(b)
@@ -782,7 +1056,7 @@ export function ExcelReconciliationTab({
     const wsTotalOrdered = createFormattedWorksheet(rowsTotalOrdered)
     XLSX.utils.book_append_sheet(wb, wsTotalOrdered, 'Total Arquivos (Ord. Excel)')
 
-    // 4. ABA NOTAS ENCONTRADAS NA PLANILHA EXCEL
+    // 5. ABA NOTAS ENCONTRADAS NA PLANILHA EXCEL
     const orderedMatchedResults = [...matchedResults].sort((a, b) => {
       const keyA = getNormalizedKey(a)
       const keyB = getNormalizedKey(b)
@@ -840,7 +1114,7 @@ export function ExcelReconciliationTab({
     const wsMatched = createFormattedWorksheet(rowsMatched)
     XLSX.utils.book_append_sheet(wb, wsMatched, 'Notas Encontradas')
 
-    // 5. ABA NOTAS QUE NÃO CONSTAM NA PLANILHA EXCEL
+    // 6. ABA NOTAS QUE NÃO CONSTAM NA PLANILHA EXCEL
     if (unmatchedResults.length > 0) {
       const rowsUnmatched = unmatchedResults.map((f) => {
         const key = getNormalizedKey(f)
@@ -872,8 +1146,8 @@ export function ExcelReconciliationTab({
       XLSX.utils.book_append_sheet(wb, wsUnmatched, 'Notas Ausentes no Excel')
     }
 
-    // 6. ABA CHAVES NA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE
-    if (excelKeysWithoutFiles.length > 0 && excelData) {
+    // 7. ABA CHAVES NA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE (SEMPRE GERADA)
+    if (excelData) {
       const rowsExcelOnly = excelKeysWithoutFiles.map((key) => {
         const matchInfo = getExcelMatchInfo(key)
         return {
@@ -887,11 +1161,25 @@ export function ExcelReconciliationTab({
           'Observação': 'Chave consta na planilha Excel, porém nenhum arquivo correspondente foi importado',
         }
       })
+
+      // Se todas as notas estiverem 100% presentes, exibe uma linha informativa clara
+      if (rowsExcelOnly.length === 0) {
+        rowsExcelOnly.push({
+          'Linha no Excel': 'Nenhuma pendência',
+          'Aba no Excel': '-',
+          'Chave de Acesso (Excel)': '-',
+          'Vagão (Excel)': '-',
+          'Peso Selecionado (Excel)': '-',
+          'Conteúdo Original Célula': '-',
+          'Status': 'TODAS AS CHAVES FORAM ENCONTRADAS (100% CONFERIDO)',
+          'Observação': 'Todos os arquivos correspondentes às chaves da planilha Excel foram carregados com sucesso.',
+        })
+      }
       const wsExcelOnly = createFormattedWorksheet(rowsExcelOnly)
       XLSX.utils.book_append_sheet(wb, wsExcelOnly, 'Chaves Excel Sem Arquivo')
     }
 
-    // 7. ABA DIVERGÊNCIAS DE PESO
+    // 8. ABA DIVERGÊNCIAS DE PESO
     const divergentWeightRows = validFiles
       .filter((f) => {
         const key = getNormalizedKey(f)
@@ -981,12 +1269,20 @@ export function ExcelReconciliationTab({
     return !!matchInfo && vWeight.status === 'DIVERGENTE'
   }
 
+  const matchedWeightCount = validFiles.filter((f) => {
+    const key = getNormalizedKey(f)
+    const matchInfo = getExcelMatchInfo(key)
+    const qtd = getFileQuantidade(f)
+    const vWeight = confrontWeights(matchInfo, qtd)
+    return !!matchInfo && vWeight.status === 'CONFERE'
+  }).length
+
   const divergentWeightCount = validFiles.filter((f) => {
     const key = getNormalizedKey(f)
     const matchInfo = getExcelMatchInfo(key)
     const qtd = getFileQuantidade(f)
     const vWeight = confrontWeights(matchInfo, qtd)
-    return vWeight.status === 'DIVERGENTE'
+    return isMatchedWithDivergence(matchInfo, vWeight)
   }).length
 
   return (
@@ -1007,6 +1303,16 @@ export function ExcelReconciliationTab({
 
             {excelData && (
               <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  onClick={handleExportDigitacaoOnly}
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 border-teal-300 dark:border-teal-800 text-teal-700 dark:text-teal-300 hover:bg-teal-100/50 dark:hover:bg-teal-950/40 text-xs font-semibold cursor-pointer"
+                  title="Exportar planilha formatada para digitação com Vagão concatenado, Bruto/Tara x1000 e sequência original"
+                >
+                  <FileSpreadsheet className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                  Planilha de Digitação (.xlsx)
+                </Button>
                 <Button
                   onClick={handleExportReconciliationReport}
                   size="sm"
@@ -1175,8 +1481,15 @@ export function ExcelReconciliationTab({
               )}
 
               {/* Cards de Métricas de Confronto */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                <div className="p-3 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+                <div
+                  onClick={() => setExcelFilter('all')}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    excelFilter === 'all'
+                      ? 'ring-2 ring-zinc-500 bg-zinc-100 dark:bg-zinc-800/80 border-zinc-400'
+                      : 'bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 hover:border-zinc-300'
+                  }`}
+                >
                   <span className="text-zinc-500 font-medium block">Notas Carregadas</span>
                   <span className="text-lg font-extrabold text-zinc-900 dark:text-zinc-100 mt-0.5 block">
                     {validFiles.length}
@@ -1184,26 +1497,98 @@ export function ExcelReconciliationTab({
                   <span className="text-[10px] text-zinc-400">arquivos no sistema</span>
                 </div>
 
-                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/40">
-                  <span className="text-emerald-700 dark:text-emerald-400 font-medium block">Conferidas no Excel</span>
+                <div
+                  onClick={() => setExcelFilter('matched')}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    excelFilter === 'matched'
+                      ? 'ring-2 ring-emerald-500 bg-emerald-100/70 dark:bg-emerald-950/60 border-emerald-400'
+                      : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/40 hover:border-emerald-300'
+                  }`}
+                >
+                  <span className="text-emerald-700 dark:text-emerald-400 font-medium flex items-center justify-between">
+                    <span>Conferidas no Excel</span>
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                  </span>
                   <span className="text-lg font-extrabold text-emerald-800 dark:text-emerald-200 mt-0.5 block">
                     {matchedResults.length}
                   </span>
-                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
                     {validFiles.length > 0 ? Math.round((matchedResults.length / validFiles.length) * 100) : 0}% de cobertura
                   </span>
                 </div>
 
-                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40">
-                  <span className="text-rose-700 dark:text-rose-400 font-medium block">Ausentes no Excel</span>
+                <div
+                  onClick={() => setExcelFilter('matched')}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    excelFilter === 'matched'
+                      ? 'ring-2 ring-teal-500 bg-teal-100/70 dark:bg-teal-950/60 border-teal-400'
+                      : 'bg-teal-50/60 dark:bg-teal-950/30 border-teal-200 dark:border-teal-900/40 hover:border-teal-300'
+                  }`}
+                >
+                  <span className="text-teal-700 dark:text-teal-400 font-medium flex items-center justify-between">
+                    <span>Peso Confere</span>
+                    <Scale className="h-3.5 w-3.5 text-teal-600" />
+                  </span>
+                  <span className="text-lg font-extrabold text-teal-800 dark:text-teal-200 mt-0.5 block">
+                    {matchedWeightCount}
+                  </span>
+                  <span className="text-[10px] text-teal-600 dark:text-teal-400 font-semibold">
+                    Excel x Nota idênticos
+                  </span>
+                </div>
+
+                <div
+                  onClick={() => setExcelFilter('weight_divergent')}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    excelFilter === 'weight_divergent'
+                      ? 'ring-2 ring-amber-500 bg-amber-100/70 dark:bg-amber-950/60 border-amber-400'
+                      : divergentWeightCount > 0
+                      ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-900/50 hover:border-amber-400'
+                      : 'bg-zinc-50/50 dark:bg-zinc-900/30 border-zinc-200 dark:border-zinc-800'
+                  }`}
+                >
+                  <span className="text-amber-700 dark:text-amber-400 font-medium flex items-center justify-between">
+                    <span>Dif. de Peso</span>
+                    <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
+                  </span>
+                  <span className={`text-lg font-extrabold mt-0.5 block ${divergentWeightCount > 0 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-700 dark:text-zinc-300'}`}>
+                    {divergentWeightCount}
+                  </span>
+                  <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold">
+                    {divergentWeightCount > 0 ? 'Exigem conferência' : 'Pesos alinhados'}
+                  </span>
+                </div>
+
+                <div
+                  onClick={() => setExcelFilter('unmatched')}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    excelFilter === 'unmatched'
+                      ? 'ring-2 ring-rose-500 bg-rose-100/70 dark:bg-rose-950/60 border-rose-400'
+                      : 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/40 hover:border-rose-300'
+                  }`}
+                >
+                  <span className="text-rose-700 dark:text-rose-400 font-medium flex items-center justify-between">
+                    <span>Ausentes no Excel</span>
+                    <XCircle className="h-3.5 w-3.5 text-rose-600" />
+                  </span>
                   <span className="text-lg font-extrabold text-rose-800 dark:text-rose-200 mt-0.5 block">
                     {unmatchedResults.length}
                   </span>
                   <span className="text-[10px] text-rose-600 dark:text-rose-400">chaves não localizadas</span>
                 </div>
 
-                <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900/40">
-                  <span className="text-indigo-700 dark:text-indigo-400 font-medium block">No Excel s/ Arquivo</span>
+                <div
+                  onClick={() => setExcelFilter('excel_only')}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    excelFilter === 'excel_only'
+                      ? 'ring-2 ring-indigo-500 bg-indigo-100/70 dark:bg-indigo-950/60 border-indigo-400'
+                      : 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-900/40 hover:border-indigo-300'
+                  }`}
+                >
+                  <span className="text-indigo-700 dark:text-indigo-400 font-medium flex items-center justify-between">
+                    <span>No Excel s/ Arquivo</span>
+                    <FileQuestion className="h-3.5 w-3.5 text-indigo-600" />
+                  </span>
                   <span className="text-lg font-extrabold text-indigo-800 dark:text-indigo-200 mt-0.5 block">
                     {excelKeysWithoutFiles.length}
                   </span>

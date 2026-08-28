@@ -1567,6 +1567,280 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     return ws
   }
 
+  // Helper para converter/normalizar valores de peso para KG (multiplica por 1000 se o valor estiver em Toneladas, ex: < 1000)
+  const normalizeWeightKg = (rawVal: any): number | string => {
+    if (rawVal === undefined || rawVal === null || String(rawVal).trim() === '') return ''
+    const num = parseBRFloat(rawVal)
+    if (isNaN(num) || num === 0) return rawVal
+
+    // Se o valor for menor que 1000 (ex: 45.5, 78.12, 120.5 T), significa que está em toneladas e deve ser multiplicado por 1000
+    // Se o valor já for >= 1000 (ex: 45500, 78120, 120500 KG), já está multiplicado por 1000 e não deve multiplicar novamente
+    if (Math.abs(num) < 1000) {
+      return Math.round(num * 1000 * 1000) / 1000
+    }
+    return Math.round(num * 1000) / 1000
+  }
+
+  // Helper para extrair as linhas da "Planilha de Digitação" exatamente na sequência original
+  const extractDigitacaoRows = (): any[] => {
+    if (!rawWorkbook) return []
+
+    // Mapa auxiliar com os dados dos PDFs/XMLs carregados indexados por chave e número
+    const nfeMap = new Map<string, PDFConversionResult>()
+    validConvertedResults.forEach((res) => {
+      const key = getNormalizedKey(res) || res.parsedData?.chave || ''
+      if (key) {
+        nfeMap.set(key, res)
+        if (key.length === 44 && key.startsWith('0')) {
+          nfeMap.set(key.substring(1), res)
+        }
+      }
+      const num = res.parsedData?.nNF || res.nfeData?.numero
+      if (num) {
+        nfeMap.set(`NUM_${num}`, res)
+      }
+    })
+
+    const digitacaoRows: any[] = []
+
+    rawWorkbook.SheetNames.forEach((sheetName) => {
+      const worksheet = rawWorkbook.Sheets[sheetName]
+      if (!worksheet) return
+      const sheetJson: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
+      if (!sheetJson || sheetJson.length === 0) return
+
+      let headerRowIdx = -1
+      const colMap: Record<string, number> = {}
+
+      for (let r = 0; r < Math.min(sheetJson.length, 35); r++) {
+        const row = sheetJson[r]
+        if (!row || !Array.isArray(row)) continue
+        const upperCells = row.map((c) => String(c || '').trim().toUpperCase())
+
+        const isHeader = upperCells.some((c) =>
+          c.includes('VAGAO') ||
+          c.includes('VAGÃO') ||
+          c.includes('SERIE') ||
+          c.includes('BRUTO') ||
+          c.includes('TARA') ||
+          c.includes('CHAVE') ||
+          c.includes('PESO') ||
+          c.includes('EMISSAO') ||
+          c.includes('EMISSÃO')
+        )
+
+        if (isHeader) {
+          headerRowIdx = r
+          upperCells.forEach((c, idx) => {
+            if (!c) return
+            const norm = c.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9_]/g, '_')
+            colMap[c] = idx
+            colMap[norm] = idx
+          })
+          break
+        }
+      }
+
+      if (headerRowIdx === -1) {
+        headerRowIdx = 0
+      }
+
+      const findColIdx = (candidates: string[]) => {
+        for (const cand of candidates) {
+          const upper = cand.toUpperCase()
+          const norm = upper.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9_]/g, '_')
+          for (const k of Object.keys(colMap)) {
+            if (k === upper || k === norm || k.includes(upper) || k.includes(norm)) {
+              return colMap[k]
+            }
+          }
+        }
+        return -1
+      }
+
+      const serieVagaoCol = findColIdx(['SERIE_VAGAO', 'SERIE VAGAO', 'SERIE_VAGÃO', 'SERIE VAGÃO', 'SERIE', 'SERIEVAGAO'])
+      const vagaoCol = findColIdx(['VAGAO', 'VAGÃO', 'NUM_VAGAO', 'NUMERO_VAGAO', 'NR_VAGAO', 'N_VAGAO', 'VAG'])
+      const brutoCol = findColIdx(['BRUTO', 'PESO_BRUTO', 'PESO BRUTO', 'PESOBRUTO', 'BRUTO(KG)', 'BRUTO (KG)', 'BRUTO (T)', 'BRUTO(T)'])
+      const taraCol = findColIdx(['TARA', 'TARA_VAGAO', 'TARA VAGAO', 'TARA_VAGÃO', 'TARA(KG)', 'TARA (KG)', 'TARA (T)', 'TARA(T)'])
+      const dataEmissaoCol = findColIdx(['DATA_EMISSAO', 'DATA EMISSAO', 'DATA_EMISSÃO', 'DATA EMISSÃO', 'DATA_DE_EMISSAO', 'DATA DE EMISSAO', 'DHEMI', 'DEMI', 'DATA'])
+      const pesoSelecionadoCol = findColIdx(['PESO_SELECIONADO', 'PESO SELECIONADO', 'PESO_LIQUIDO', 'PESO LIQUIDO', 'PESO_LÍQUIDO', 'PESO LÍQUIDO', 'PESOLIQUIDO', 'PESO_LIQ', 'PESO LIQ', 'QTD_NOTA', 'QUANTIDADE'])
+      const pesoNotaVagaoCol = findColIdx(['PESO_NOTA_VAGAO', 'PESO NOTA VAGAO', 'PESO_NOTA_VAGÃO', 'PESO NOTA VAGÃO', 'PESO_VAGAO', 'PESO VAGAO', 'PESO_RATEADO'])
+      const cnpjEmitenteCol = findColIdx(['CNPJ_EMITENTE', 'CNPJ EMITENTE', 'EMITENTE_CNPJ', 'CNPJ_EMIT', 'EMIT_CNPJ', 'EMITENTE'])
+      const cnpjDestinatarioCol = findColIdx(['CNPJ_DESTINATARIO', 'CNPJ DESTINATARIO', 'DESTINATARIO_CNPJ', 'CNPJ_DEST', 'DEST_CNPJ', 'DESTINATARIO'])
+      const numeroCol = findColIdx(['NUMERO', 'NÚMERO', 'Nº NOTA', 'NR_NOTA', 'NNF', 'NUM_NOTA', 'NUMERO_NOTA', 'NOTA'])
+      const chaveCol = findColIdx(['CHAVE', 'CHAVE_DE_ACESSO', 'CHAVE DE ACESSO', 'CHAVE_ACESSO', 'NFE_CHAVE', 'CHAVENFE'])
+
+      // Percorrer todas as linhas na sequência exata sem remover duplicadas
+      for (let r = headerRowIdx + 1; r < sheetJson.length; r++) {
+        const row = sheetJson[r]
+        if (!row || !Array.isArray(row)) continue
+
+        const hasAnyValue = row.some((c) => String(c !== undefined && c !== null ? c : '').trim() !== '')
+        if (!hasAnyValue) continue
+
+        // Identificar e extrair chave de acesso limpa com 44 dígitos (extraindo letras como NFe...)
+        let rowKey = ''
+        if (chaveCol !== -1 && row[chaveCol] !== undefined && row[chaveCol] !== null) {
+          const rawK = String(row[chaveCol]).replace(/\D/g, '')
+          if (rawK.length >= 44) {
+            rowKey = rawK.substring(rawK.length - 44)
+          } else if (rawK.length > 0) {
+            rowKey = rawK
+          }
+        }
+        if (!rowKey || rowKey.length < 44) {
+          for (const cell of row) {
+            const rawDigits = String(cell || '').replace(/\D/g, '')
+            if (rawDigits.length >= 44) {
+              rowKey = rawDigits.substring(rawDigits.length - 44)
+              break
+            }
+          }
+        }
+
+        const linkedNfe = rowKey ? nfeMap.get(rowKey) : null
+
+        // 1. vagao: concatenação dos valores SERIE_VAGAO e VAGAO
+        const serieRaw = serieVagaoCol !== -1 && row[serieVagaoCol] !== undefined && row[serieVagaoCol] !== null ? String(row[serieVagaoCol]).trim() : ''
+        const vagaoRaw = vagaoCol !== -1 && row[vagaoCol] !== undefined && row[vagaoCol] !== null ? String(row[vagaoCol]).trim() : ''
+
+        let vagaoFinal = ''
+        if (serieRaw && vagaoRaw) {
+          if (vagaoRaw.toUpperCase().startsWith(serieRaw.toUpperCase())) {
+            vagaoFinal = vagaoRaw
+          } else {
+            vagaoFinal = `${serieRaw}${vagaoRaw}`
+          }
+        } else {
+          vagaoFinal = serieRaw || vagaoRaw || ''
+        }
+
+        // 2. BRUTO: multiplicar por 1000 se não estiver em KG
+        const brutoFinal = brutoCol !== -1 ? normalizeWeightKg(row[brutoCol]) : ''
+
+        // 3. TARA: multiplicar por 1000 se não estiver em KG
+        const taraFinal = taraCol !== -1 ? normalizeWeightKg(row[taraCol]) : ''
+
+        // 4. data_emissao: extrair somente a data (ex: "18/08/2026 15:02:12" -> "18/08/2026")
+        let dataEmissaoFinal = ''
+        let rawData = dataEmissaoCol !== -1 && row[dataEmissaoCol] !== undefined && row[dataEmissaoCol] !== null
+          ? String(row[dataEmissaoCol]).trim()
+          : ''
+
+        if (!rawData && linkedNfe?.parsedData?.dataEmissao) {
+          rawData = String(linkedNfe.parsedData.dataEmissao).trim()
+        } else if (!rawData && linkedNfe?.nfeData?.dataEmissao) {
+          rawData = String(linkedNfe.nfeData.dataEmissao).trim()
+        }
+
+        if (rawData) {
+          if (rawData.includes(' ')) {
+            dataEmissaoFinal = rawData.split(' ')[0].trim()
+          } else if (rawData.includes('T')) {
+            const datePart = rawData.split('T')[0].trim()
+            if (datePart.includes('-')) {
+              const [y, m, d] = datePart.split('-')
+              dataEmissaoFinal = `${d}/${m}/${y}`
+            } else {
+              dataEmissaoFinal = datePart
+            }
+          } else {
+            dataEmissaoFinal = rawData
+          }
+        }
+
+        // 5. PESO_SELECIONADO: multiplicar por 1000 se não estiver em KG
+        const pesoSelecionadoFinal = pesoSelecionadoCol !== -1 ? normalizeWeightKg(row[pesoSelecionadoCol]) : ''
+
+        // 6. PESO_NOTA_VAGAO: multiplicar por 1000 se não estiver em KG
+        const pesoNotaVagaoFinal = pesoNotaVagaoCol !== -1 ? normalizeWeightKg(row[pesoNotaVagaoCol]) : ''
+
+        // 7. CNPJ_EMITENTE
+        let cnpjEmitenteFinal = ''
+        if (cnpjEmitenteCol !== -1 && row[cnpjEmitenteCol] !== undefined && row[cnpjEmitenteCol] !== null && String(row[cnpjEmitenteCol]).trim() !== '') {
+          cnpjEmitenteFinal = String(row[cnpjEmitenteCol]).trim()
+        } else if (linkedNfe?.parsedData?.emitCNPJ) {
+          cnpjEmitenteFinal = String(linkedNfe.parsedData.emitCNPJ).trim()
+        } else if (linkedNfe?.nfeData?.emitente?.cnpj) {
+          cnpjEmitenteFinal = String(linkedNfe.nfeData.emitente.cnpj).trim()
+        }
+
+        // 8. CNPJ_DESTINATARIO
+        let cnpjDestinatarioFinal = ''
+        if (cnpjDestinatarioCol !== -1 && row[cnpjDestinatarioCol] !== undefined && row[cnpjDestinatarioCol] !== null && String(row[cnpjDestinatarioCol]).trim() !== '') {
+          cnpjDestinatarioFinal = String(row[cnpjDestinatarioCol]).trim()
+        } else if (linkedNfe?.parsedData?.destCNPJ) {
+          cnpjDestinatarioFinal = String(linkedNfe.parsedData.destCNPJ).trim()
+        } else if (linkedNfe?.nfeData?.destinatario?.cpfCnpj) {
+          cnpjDestinatarioFinal = String(linkedNfe.nfeData.destinatario.cpfCnpj).trim()
+        }
+
+        // 9. NUMERO
+        let numeroFinal: any = ''
+        if (numeroCol !== -1 && row[numeroCol] !== undefined && row[numeroCol] !== null && String(row[numeroCol]).trim() !== '') {
+          numeroFinal = String(row[numeroCol]).trim()
+        } else if (linkedNfe?.parsedData?.nNF) {
+          numeroFinal = String(linkedNfe.parsedData.nNF).trim()
+        } else if (linkedNfe?.nfeData?.numero) {
+          numeroFinal = String(linkedNfe.nfeData.numero).trim()
+        }
+
+        // 10. CHAVE: extrair os 44 dígitos numéricos puros (limpando "NFe", prefixos e pontuações)
+        let chaveFinal = ''
+        if (rowKey && rowKey.length === 44) {
+          chaveFinal = rowKey
+        } else if (linkedNfe) {
+          const keyFromNfe = getNormalizedKey(linkedNfe) || linkedNfe.parsedData?.chave
+          if (keyFromNfe && keyFromNfe.length === 44) {
+            chaveFinal = keyFromNfe
+          }
+        }
+        if (!chaveFinal && chaveCol !== -1 && row[chaveCol] !== undefined && row[chaveCol] !== null) {
+          const rawDigits = String(row[chaveCol]).replace(/\D/g, '')
+          if (rawDigits.length >= 44) {
+            chaveFinal = rawDigits.substring(rawDigits.length - 44)
+          } else {
+            chaveFinal = rawDigits
+          }
+        }
+
+        digitacaoRows.push({
+          'vagao': vagaoFinal,
+          'BRUTO': brutoFinal,
+          'TARA': taraFinal,
+          'data_emissao': dataEmissaoFinal,
+          'PESO_SELECIONADO': pesoSelecionadoFinal,
+          'PESO_NOTA_VAGAO': pesoNotaVagaoFinal,
+          'CNPJ_EMITENTE': cnpjEmitenteFinal,
+          'CNPJ_DESTINATARIO': cnpjDestinatarioFinal,
+          'NUMERO': numeroFinal,
+          'CHAVE': chaveFinal,
+        })
+      }
+    })
+
+    return digitacaoRows
+  }
+
+  // Exportar exclusivamente a Planilha de Digitação
+  const handleExportDigitacaoOnly = () => {
+    if (!rawWorkbook) {
+      alert('Carregue uma planilha Excel de origem para gerar a Planilha de Digitação.')
+      return
+    }
+
+    const digitacaoRows = extractDigitacaoRows()
+    if (digitacaoRows.length === 0) {
+      alert('Nenhum dado encontrado na planilha de origem para gerar a digitação.')
+      return
+    }
+
+    const wb = XLSX.utils.book_new()
+    const wsDigitacao = createFormattedWorksheet(digitacaoRows)
+    XLSX.utils.book_append_sheet(wb, wsDigitacao, 'Planilha de Digitação')
+    XLSX.writeFile(wb, `planilha_digitacao_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  }
+
   // Exportar Relatório Consolidado de Conferência em Excel com Múltiplas Abas
   const handleExportReconciliationReport = () => {
     if (!excelData && validConvertedResults.length === 0) {
@@ -1617,7 +1891,16 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     const wsSummary = createFormattedWorksheet(summaryRows)
     XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumo Geral')
 
-    // 2. ABA CONSOLIDAÇÃO POR VAGÃO (CÁLCULO TOTAL: SOMA DE PESO_NOTA_VAGAO + TARA)
+    // 2. ABA PLANILHA DE DIGITAÇÃO (SEQUÊNCIA ORIGINAL COMPLETA SEM REMOVER DUPLICADAS)
+    if (rawWorkbook) {
+      const digitacaoRows = extractDigitacaoRows()
+      if (digitacaoRows.length > 0) {
+        const wsDigitacao = createFormattedWorksheet(digitacaoRows)
+        XLSX.utils.book_append_sheet(wb, wsDigitacao, 'Planilha de Digitação')
+      }
+    }
+
+    // 3. ABA CONSOLIDAÇÃO POR VAGÃO (CÁLCULO TOTAL: SOMA DE PESO_NOTA_VAGAO + TARA)
     if (excelData && excelData.wagonSummaries && excelData.wagonSummaries.length > 0) {
       const wagonExportRows = excelData.wagonSummaries.map((w) => ({
         'Vagão': w.vagao,
@@ -1632,7 +1915,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       XLSX.utils.book_append_sheet(wb, wsWagons, 'Consolidação por Vagão')
     }
 
-    // 2. ABA TOTAL DE ARQUIVOS (ORDENADOS CONFORME A ORDEM DAS CHAVES DA PLANILHA EXCEL)
+    // 4. ABA TOTAL DE ARQUIVOS (ORDENADOS CONFORME A ORDEM DAS CHAVES DA PLANILHA EXCEL)
     const orderedAllResults = [...validConvertedResults].sort((a, b) => {
       const keyA = getNormalizedKey(a)
       const keyB = getNormalizedKey(b)
@@ -2102,7 +2385,17 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             </div>
 
             {excelData && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  onClick={handleExportDigitacaoOnly}
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 border-teal-300 dark:border-teal-800 text-teal-700 dark:text-teal-300 hover:bg-teal-100/50 dark:hover:bg-teal-950/40 text-xs font-semibold cursor-pointer"
+                  title="Exportar planilha formatada para digitação com Vagão concatenado, Bruto/Tara x1000 e sequência original"
+                >
+                  <FileSpreadsheet className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                  Planilha de Digitação (.xlsx)
+                </Button>
                 <Button
                   onClick={handleExportReconciliationReport}
                   size="sm"
