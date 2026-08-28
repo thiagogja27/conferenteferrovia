@@ -98,7 +98,7 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
 
   // Estados de Interface e Filtros
   const [searchTerm, setSearchTerm] = useState('')
-  const [activeFilter, setActiveFilter] = useState<'TODOS' | 'CONFERIDO' | 'FALTA_NO_EXCEL' | 'FALTA_NO_MDF' | 'DIVERGENCIA_PESO'>('TODOS')
+  const [activeFilter, setActiveFilter] = useState<'TODOS' | 'CONFERIDO' | 'FALTA_NO_EXCEL' | 'DIVERGENCIA_PESO'>('TODOS')
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [copiedWagons, setCopiedWagons] = useState(false)
   const [showMdfDetails, setShowMdfDetails] = useState(false)
@@ -415,7 +415,7 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
     const totalExcel = excelVagoesList.length
     const totalConferidos = comparisonItems.filter((i) => i.status === 'CONFERIDO').length
     const totalFaltamExcel = comparisonItems.filter((i) => i.status === 'FALTA_NO_EXCEL').length
-    const totalFaltamMDF = comparisonItems.filter((i) => i.status === 'FALTA_NO_MDF').length
+    const totalFaltamMDF = 0
     const percentualConferencia = totalMDF > 0 ? Number(((totalConferidos / totalMDF) * 100).toFixed(1)) : 0
     const pesoTotalMDF = Number(allMdfVagoes.reduce((acc, v) => acc + (v.tonUtil || 0), 0).toFixed(3))
     const pesoTotalExcel = Number(excelVagoesList.reduce((acc, v) => acc + (v.peso || 0), 0).toFixed(3))
@@ -582,8 +582,7 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
       ['Total de Vagões no MDF-e:', resumo.totalMDF],
       ['Total de Vagões na Planilha Excel:', resumo.totalExcel],
       ['Vagões Conferidos (Em Ambos):', resumo.totalConferidos],
-      ['Vagões Faltando no Excel (Apenas no MDF):', resumo.totalFaltamExcel],
-      ['Vagões Faltando no MDF (Apenas no Excel):', resumo.totalFaltamMDF],
+      ['Vagões Faltando no Excel (Pendências do MDF):', resumo.totalFaltamExcel],
       ['Taxa de Assertividade / Match:', `${resumo.percentualConferencia}%`],
       ['Peso Total MDF (t):', resumo.pesoTotalMDF],
       ['Peso Total Excel (t):', resumo.pesoTotalExcel],
@@ -1202,8 +1201,8 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
       {/* DASHBOARD DE MÉTRICAS / KPIS DA CONCILIAÇÃO */}
       {comparisonItems.length > 0 && (
         <>
-          {/* DASHBOARD DE MÉTRICAS / KPIS DA CONCILIAÇÃO */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {/* DASHBOARD DE MÉTRICAS / KPIS DA CONCILIAÇÃO (FOCADO NO MDF-E) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             {/* Card 1: Total MDF */}
             <Card
               className={`cursor-pointer transition-all ${activeFilter === 'TODOS' ? 'ring-2 ring-indigo-500' : 'hover:border-indigo-300'}`}
@@ -1228,7 +1227,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
             >
               <CardContent className="p-3.5 space-y-1">
                 <div className="flex items-center justify-between text-zinc-500">
-                  <span className="text-[11px] font-bold uppercase tracking-wider">No Excel</span>
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Na Planilha</span>
                   <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
                 </div>
                 <div className="text-2xl font-black text-zinc-900 dark:text-zinc-50">{resumo.totalExcel}</div>
@@ -1267,29 +1266,12 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                 </div>
                 <div className="text-2xl font-black text-rose-700 dark:text-rose-400">{resumo.totalFaltamExcel}</div>
                 <p className="text-[10px] text-rose-500 font-medium">
-                  {resumo.totalFaltamExcel === 0 ? 'Nenhuma pendência' : 'Apenas no MDF-e'}
+                  {resumo.totalFaltamExcel === 0 ? 'Nenhuma pendência' : 'Não achados na planilha'}
                 </p>
               </CardContent>
             </Card>
 
-            {/* Card 5: Faltam no MDF */}
-            <Card
-              className={`cursor-pointer transition-all ${activeFilter === 'FALTA_NO_MDF' ? 'ring-2 ring-amber-600 bg-amber-50/50 dark:bg-amber-950/40' : 'hover:border-amber-300'}`}
-              onClick={() => setActiveFilter('FALTA_NO_MDF')}
-            >
-              <CardContent className="p-3.5 space-y-1">
-                <div className="flex items-center justify-between text-amber-700 dark:text-amber-300">
-                  <span className="text-[11px] font-bold uppercase tracking-wider">Faltam no MDF</span>
-                  <AlertTriangle className="h-4 w-4 text-amber-600" />
-                </div>
-                <div className="text-2xl font-black text-amber-700 dark:text-amber-400">{resumo.totalFaltamMDF}</div>
-                <p className="text-[10px] text-amber-600 font-medium">
-                  {resumo.totalFaltamMDF === 0 ? 'Nenhum excedente' : 'Apenas na planilha'}
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* Card 6: Divergências de Peso com IA */}
+            {/* Card 5: Divergências de Peso com IA */}
             <Card
               className={`cursor-pointer transition-all ${
                 activeFilter === 'DIVERGENCIA_PESO'
@@ -1499,18 +1481,6 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                     <XCircle className="h-3.5 w-3.5" />
                     Faltam no Excel ({resumo.totalFaltamExcel})
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveFilter('FALTA_NO_MDF')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                      activeFilter === 'FALTA_NO_MDF'
-                        ? 'bg-amber-600 text-white shadow-xs'
-                        : 'bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 hover:bg-amber-100'
-                    }`}
-                  >
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    Faltam no MDF ({resumo.totalFaltamMDF})
-                  </button>
                 </div>
 
                 {/* Input de Busca */}
@@ -1551,7 +1521,6 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                       filteredItems.map((item, idx) => {
                         const isMatch = item.status === 'CONFERIDO'
                         const isFaltaExcel = item.status === 'FALTA_NO_EXCEL'
-                        const isFaltaMdf = item.status === 'FALTA_NO_MDF'
                         const hasWeightDivergence = isMatch && ((item.diferencaPeso !== undefined && Math.abs(item.diferencaPeso) > 0.05) || (item.pesoMDF === undefined && item.pesoExcel !== undefined))
                         const isOverridden = overrideWeightsMap[item.id] !== undefined
                         const isRowAuditing = auditingItemId === item.id || (isAuditingAllWeights && hasWeightDivergence)
@@ -1562,8 +1531,6 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                             className={`transition-colors hover:bg-zinc-50/80 dark:hover:bg-zinc-900/80 ${
                               isFaltaExcel
                                 ? 'bg-rose-50/20 dark:bg-rose-950/10'
-                                : isFaltaMdf
-                                ? 'bg-amber-50/20 dark:bg-amber-950/10'
                                 : hasWeightDivergence
                                 ? 'bg-purple-50/20 dark:bg-purple-950/10'
                                 : ''
@@ -1581,12 +1548,6 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
                                   <XCircle className="h-3.5 w-3.5" />
                                   FALTA NO EXCEL
-                                </span>
-                              )}
-                              {isFaltaMdf && (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                                  <AlertTriangle className="h-3.5 w-3.5" />
-                                  FALTA NO MDF
                                 </span>
                               )}
                             </td>
@@ -1705,8 +1666,6 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                                     className={`text-[11px] font-medium block ${
                                       isFaltaExcel
                                         ? 'text-rose-700 dark:text-rose-300 font-semibold'
-                                        : isFaltaMdf
-                                        ? 'text-amber-700 dark:text-amber-300 font-semibold'
                                         : hasWeightDivergence
                                         ? 'text-purple-700 dark:text-purple-400 font-bold'
                                         : 'text-zinc-500 dark:text-zinc-400'

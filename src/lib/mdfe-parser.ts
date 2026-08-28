@@ -650,28 +650,15 @@ export function executarComparacaoMdfeExcel(
     }
   })
 
-  // 2. Iterar sobre os vagões do Excel que NÃO deram match (Sobrando no Excel / Faltando no MDF)
-  vagoesExcel.forEach((rowExcel) => {
-    if (!excelUtilizados.has(rowExcel.rowIndex)) {
-      itens.push({
-        id: `missing-mdf-${rowExcel.rowIndex}`,
-        status: 'FALTA_NO_MDF',
-        vagaoExcel: rowExcel,
-        identificadorExibicao: rowExcel.vagaoRaw,
-        numeroApenas: rowExcel.numeroApenas,
-        serie: rowExcel.serie,
-        pesoExcel: rowExcel.peso,
-        observacao: `Consta na Linha ${rowExcel.rowIndex} do Excel, mas não está manifestado no MDF-e.`,
-      })
-    }
-  })
+  // O sistema analisa exclusivamente os vagões manifestados no MDF-e contra o Excel.
+  // Registros extras no Excel que não constam no MDF-e não precisam ser analisados.
 
-  // Cálculos do Resumo
+  // Cálculos do Resumo (Focado nos vagões do MDF-e)
   const totalMDF = vagoesMdf.length
   const totalExcel = vagoesExcel.length
   const totalConferidos = itens.filter((i) => i.status === 'CONFERIDO').length
   const totalFaltamExcel = itens.filter((i) => i.status === 'FALTA_NO_EXCEL').length
-  const totalFaltamMDF = itens.filter((i) => i.status === 'FALTA_NO_MDF').length
+  const totalFaltamMDF = 0 // Linhas excedentes da planilha não são objeto de análise
 
   const percentualConferencia = totalMDF > 0 ? Number(((totalConferidos / totalMDF) * 100).toFixed(1)) : 0
 

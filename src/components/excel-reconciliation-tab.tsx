@@ -653,7 +653,7 @@ export function ExcelReconciliationTab({
     return ws
   }
 
-  // Exportar Relatório Consolidado de Conferência em Excel com Múltiplas Abas
+  // Exportar Relatório Consolidado de Conferência em Excel com Múltiplas Abas (Formato Original Idêntico)
   const handleExportReconciliationReport = () => {
     if (!excelData && validFiles.length === 0) {
       alert('Carregue notas e/ou uma planilha Excel para gerar o relatório de conferência.')
@@ -678,44 +678,220 @@ export function ExcelReconciliationTab({
       return vWeight.status === 'DIVERGENTE'
     }).length
 
-    const summaryRows = [
-      { 'Métrica / Indicador': 'Total de Arquivos NF-e Carregados', 'Quantidade / Valor': totalFilesCount },
-      { 'Métrica / Indicador': 'Total de Chaves Encontradas na Planilha Excel', 'Quantidade / Valor': totalExcelKeys },
-      { 'Métrica / Indicador': 'Notas com Chave Presente na Planilha (Conferidas)', 'Quantidade / Valor': matchedCount },
-      { 'Métrica / Indicador': 'Notas com Chave Ausente na Planilha', 'Quantidade / Valor': unmatchedCount },
-      { 'Métrica / Indicador': 'Chaves no Excel sem Arquivo Correspondente', 'Quantidade / Valor': missingFilesCount },
-      { 'Métrica / Indicador': 'Divergências de Peso (Excel vs Nota Fiscal)', 'Quantidade / Valor': weightDivergentCount },
-      { 'Métrica / Indicador': 'Taxa de Conformidade das Chaves', 'Quantidade / Valor': `${matchPercentage}%` },
-      { 'Métrica / Indicador': 'Data e Hora da Conferência', 'Quantidade / Valor': new Date().toLocaleString('pt-BR') },
-    ]
-    XLSX.utils.book_append_sheet(wb, createFormattedWorksheet(summaryRows), 'Resumo Geral')
-
-    // 2. Notas Conferidas
-    const matchedRows = matchedResults.map((f) => {
+    const weightMatchedCount = validFiles.filter((f) => {
       const key = getNormalizedKey(f)
       const matchInfo = getExcelMatchInfo(key)
+      const qtd = getFileQuantidade(f)
+      const vWeight = confrontWeights(matchInfo, qtd)
+      return vWeight.status === 'CONFERE'
+    }).length
+
+    const summaryRows = [
+      { 'Métrica / Indicador': 'Data e Hora da Conferência', 'Valor / Detalhe': new Date().toLocaleString('pt-BR') },
+      { 'Métrica / Indicador': 'Planilha Excel de Origem', 'Valor / Detalhe': excelData?.fileName || excelFileName || 'Nenhuma planilha informada' },
+      { 'Métrica / Indicador': 'Modo de Operação', 'Valor / Detalhe': 'XML para PDF (DANFE)' },
+      { 'Métrica / Indicador': 'Total de Arquivos Importados (PDF/XML)', 'Valor / Detalhe': totalFilesCount },
+      { 'Métrica / Indicador': 'Notas ENCONTRADAS na Planilha Excel', 'Valor / Detalhe': matchedCount },
+      { 'Métrica / Indicador': 'Notas AUSENTES na Planilha Excel', 'Valor / Detalhe': unmatchedCount },
+      { 'Métrica / Indicador': 'Total de Vagões Únicos Consolidados', 'Valor / Detalhe': excelData?.wagonSummaries?.length || 0 },
+      { 'Métrica / Indicador': 'Notas com PESO CONFERIDO (Excel x Nota)', 'Valor / Detalhe': weightMatchedCount },
+      { 'Métrica / Indicador': 'Notas com DIVERGÊNCIA DE PESO (Excel x Nota)', 'Valor / Detalhe': weightDivergentCount },
+      { 'Métrica / Indicador': 'Total de Chaves de Acesso na Planilha Excel', 'Valor / Detalhe': totalExcelKeys },
+      { 'Métrica / Indicador': 'Chaves no Excel Faltando Arquivo de Nota', 'Valor / Detalhe': missingFilesCount },
+      { 'Métrica / Indicador': 'Taxa de Batimento / Batimento (%)', 'Valor / Detalhe': `${matchPercentage}%` },
+    ]
+    const wsSummary = createFormattedWorksheet(summaryRows)
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumo Geral')
+
+    // 2. ABA CONSOLIDAÇÃO POR VAGÃO (CÁLCULO TOTAL: SOMA DE PESO_NOTA_VAGAO + TARA)
+    if (excelData && excelData.wagonSummaries && excelData.wagonSummaries.length > 0) {
+      const wagonExportRows = excelData.wagonSummaries.map((w) => ({
+        'Vagão': w.vagao,
+        'Aba / Planilha de Origem': w.sheetName,
+        'Qtd de Notas / Linhas no Vagão': w.qtdNotas,
+        'Soma Total PESO_NOTA_VAGAO (kg/t)': w.somaPesoNotaVagaoStr,
+        'Tara Única do Vagão (kg/t)': w.taraStr,
+        'PESO BRUTO TOTAL DO VAGÃO (Soma + Tara)': w.pesoBrutoTotalStr,
+        'Posição / Linhas no Excel': w.linhas,
+      }))
+      const wsWagons = createFormattedWorksheet(wagonExportRows)
+      XLSX.utils.book_append_sheet(wb, wsWagons, 'Consolidação por Vagão')
+    }
+
+    // 3. ABA TOTAL DE ARQUIVOS (ORDENADOS CONFORME A ORDEM DAS CHAVES DA PLANILHA EXCEL)
+    const orderedAllResults = [...validFiles].sort((a, b) => {
+      const keyA = getNormalizedKey(a)
+      const keyB = getNormalizedKey(b)
+      const matchA = getExcelMatchInfo(keyA)
+      const matchB = getExcelMatchInfo(keyB)
+
+      if (matchA && matchB) {
+        return matchA.row - matchB.row
+      }
+      if (matchA && !matchB) return -1
+      if (!matchA && matchB) return 1
+      return keyA.localeCompare(keyB)
+    })
+
+    const rowsTotalOrdered = orderedAllResults.map((f) => {
+      const key = getNormalizedKey(f)
+      const matchInfo = getExcelMatchInfo(key)
+      const isMatched = !!matchInfo
+      const destCNPJ = f.nfeData?.destinatario?.cpfCnpj || ''
+      const emitCNPJ = f.nfeData?.emitente?.cnpj || ''
+      const vCNPJ = f.nfeData?.verificacaoCNPJ || verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
       const qtdNota = getFileQuantidade(f)
       const vWeight = confrontWeights(matchInfo, qtdNota)
+      const itemAudit = auditResultsMap[key || f.fileName]
+      const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
+        ? itemAudit.pesoCorrigidoDoc
+        : (overrideWeightsMap[key || f.fileName] !== undefined ? overrideWeightsMap[key || f.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
+
       return {
-        'Arquivo': f.fileName,
-        'Nº Nota': f.nfeData?.numero || '',
+        'Posição / Linha Excel': matchInfo ? `Linha ${matchInfo.row} (${matchInfo.sheetName})` : 'Fora da Planilha Excel',
+        'Status Conferência Excel': isMatched ? 'CONSTA NA PLANILHA' : 'NÃO CONSTA NA PLANILHA',
+        'Vagão (Excel)': matchInfo?.vagao || 'N/A',
         'Chave de Acesso': key,
-        'Linha no Excel': matchInfo?.row || '',
-        'Aba no Excel': matchInfo?.sheetName || '',
-        'Vagão': matchInfo?.vagao || '',
-        'Peso Nota Fiscal': qtdNota,
-        'Peso Selecionado Excel': matchInfo?.pesoSelecionadoStr || '',
-        'Status Peso': vWeight.statusLabel,
-        'Divergência Peso': vWeight.diferenca !== 0 ? vWeight.diferenca : '',
+        'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+        'Destinatário CNPJ': destCNPJ,
+        'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+        'Validação CNPJ': vCNPJ.statusLabel,
+        'Nº Nota (nNF)': f.nfeData?.numero || '',
+        'Série': f.nfeData?.serie || '',
+        'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
+        'Quantidade Extraída (Nota)': qtdNota,
+        'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
+        'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
+        'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
+        'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA'
+          ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)'
+          : itemAudit?.status === 'DIVERGENCIA_REAL'
+            ? 'DIVERGÊNCIA REAL DE PESAGEM'
+            : itemAudit?.status === 'CONFERIDO_CORRETO'
+              ? 'PESO CONFERIDO CORRETO'
+              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
+        'Explicação IA': itemAudit?.explicacao || '',
+        'Valor Total (R$)': f.nfeData?.impostos?.valorTotal || 0,
         'Emitente': f.nfeData?.emitente?.nome || '',
+        'CNPJ Emitente': emitCNPJ,
         'Destinatário': f.nfeData?.destinatario?.nome || '',
-        'Terminal Entrega': f.nfeData?.terminalEntrega || '',
-        'Transbordo': f.nfeData?.transbordo || '',
+        'Nome do Arquivo': f.fileName,
+        'Tipo Documento': f.xmlContent ? 'XML' : 'PDF',
       }
     })
-    XLSX.utils.book_append_sheet(wb, createFormattedWorksheet(matchedRows), 'Notas Conferidas')
+    const wsTotalOrdered = createFormattedWorksheet(rowsTotalOrdered)
+    XLSX.utils.book_append_sheet(wb, wsTotalOrdered, 'Total Arquivos (Ord. Excel)')
 
-    // 3. Divergências de Peso
+    // 4. ABA NOTAS ENCONTRADAS NA PLANILHA EXCEL
+    const orderedMatchedResults = [...matchedResults].sort((a, b) => {
+      const keyA = getNormalizedKey(a)
+      const keyB = getNormalizedKey(b)
+      const rowA = getExcelMatchInfo(keyA)?.row ?? 9999999
+      const rowB = getExcelMatchInfo(keyB)?.row ?? 9999999
+      return rowA - rowB
+    })
+
+    const rowsMatched = orderedMatchedResults.map((f) => {
+      const key = getNormalizedKey(f)
+      const matchInfo = getExcelMatchInfo(key)
+      const destCNPJ = f.nfeData?.destinatario?.cpfCnpj || ''
+      const emitCNPJ = f.nfeData?.emitente?.cnpj || ''
+      const vCNPJ = f.nfeData?.verificacaoCNPJ || verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
+      const qtdNota = getFileQuantidade(f)
+      const vWeight = confrontWeights(matchInfo, qtdNota)
+      const itemAudit = auditResultsMap[key || f.fileName]
+      const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
+        ? itemAudit.pesoCorrigidoDoc
+        : (overrideWeightsMap[key || f.fileName] !== undefined ? overrideWeightsMap[key || f.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
+
+      return {
+        'Linha no Excel': matchInfo ? `Linha ${matchInfo.row}` : 'N/A',
+        'Aba no Excel': matchInfo?.sheetName || '',
+        'Status Conferência': 'CONSTA NA PLANILHA EXCEL',
+        'Vagão (Excel)': matchInfo?.vagao || 'N/A',
+        'Chave de Acesso': key,
+        'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+        'Destinatário CNPJ': destCNPJ,
+        'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+        'Validação CNPJ': vCNPJ.statusLabel,
+        'Nº Nota (nNF)': f.nfeData?.numero || '',
+        'Série': f.nfeData?.serie || '',
+        'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
+        'Quantidade Extraída (Nota)': qtdNota,
+        'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
+        'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
+        'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
+        'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA'
+          ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)'
+          : itemAudit?.status === 'DIVERGENCIA_REAL'
+            ? 'DIVERGÊNCIA REAL DE PESAGEM'
+            : itemAudit?.status === 'CONFERIDO_CORRETO'
+              ? 'PESO CONFERIDO CORRETO'
+              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
+        'Explicação IA': itemAudit?.explicacao || '',
+        'Valor Total (R$)': f.nfeData?.impostos?.valorTotal || 0,
+        'Emitente': f.nfeData?.emitente?.nome || '',
+        'CNPJ Emitente': emitCNPJ,
+        'Destinatário': f.nfeData?.destinatario?.nome || '',
+        'Nome do Arquivo': f.fileName,
+        'Tipo Documento': f.xmlContent ? 'XML' : 'PDF',
+      }
+    })
+    const wsMatched = createFormattedWorksheet(rowsMatched)
+    XLSX.utils.book_append_sheet(wb, wsMatched, 'Notas Encontradas')
+
+    // 5. ABA NOTAS QUE NÃO CONSTAM NA PLANILHA EXCEL
+    if (unmatchedResults.length > 0) {
+      const rowsUnmatched = unmatchedResults.map((f) => {
+        const key = getNormalizedKey(f)
+        const destCNPJ = f.nfeData?.destinatario?.cpfCnpj || ''
+        const emitCNPJ = f.nfeData?.emitente?.cnpj || ''
+        const vCNPJ = f.nfeData?.verificacaoCNPJ || verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
+        const qtdNota = getFileQuantidade(f)
+
+        return {
+          'Status Conferência': 'NÃO CONSTA NA PLANILHA EXCEL',
+          'Chave de Acesso': key,
+          'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+          'Destinatário CNPJ': destCNPJ,
+          'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+          'Validação CNPJ': vCNPJ.statusLabel,
+          'Nº Nota (nNF)': f.nfeData?.numero || '',
+          'Série': f.nfeData?.serie || '',
+          'Quantidade Extraída (Nota)': qtdNota,
+          'Valor Total (R$)': f.nfeData?.impostos?.valorTotal || 0,
+          'Emitente': f.nfeData?.emitente?.nome || '',
+          'CNPJ Emitente': emitCNPJ,
+          'Destinatário': f.nfeData?.destinatario?.nome || '',
+          'Nome do Arquivo': f.fileName,
+          'Tipo Documento': f.xmlContent ? 'XML' : 'PDF',
+          'Observação': 'Nota fiscal importada mas a chave de acesso não foi encontrada na planilha Excel',
+        }
+      })
+      const wsUnmatched = createFormattedWorksheet(rowsUnmatched)
+      XLSX.utils.book_append_sheet(wb, wsUnmatched, 'Notas Ausentes no Excel')
+    }
+
+    // 6. ABA CHAVES NA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE
+    if (excelKeysWithoutFiles.length > 0 && excelData) {
+      const rowsExcelOnly = excelKeysWithoutFiles.map((key) => {
+        const matchInfo = getExcelMatchInfo(key)
+        return {
+          'Linha no Excel': matchInfo ? `Linha ${matchInfo.row}` : 'N/A',
+          'Aba no Excel': matchInfo?.sheetName || '',
+          'Chave de Acesso (Excel)': key,
+          'Vagão (Excel)': matchInfo?.vagao || 'N/A',
+          'Peso Selecionado (Excel)': matchInfo?.pesoSelecionadoStr || 'N/A',
+          'Conteúdo Original Célula': matchInfo?.rawValue || '',
+          'Status': 'FALTANDO ARQUIVO DE NOTA (PDF/XML)',
+          'Observação': 'Chave consta na planilha Excel, porém nenhum arquivo correspondente foi importado',
+        }
+      })
+      const wsExcelOnly = createFormattedWorksheet(rowsExcelOnly)
+      XLSX.utils.book_append_sheet(wb, wsExcelOnly, 'Chaves Excel Sem Arquivo')
+    }
+
+    // 7. ABA DIVERGÊNCIAS DE PESO
     const divergentWeightRows = validFiles
       .filter((f) => {
         const key = getNormalizedKey(f)
@@ -745,37 +921,7 @@ export function ExcelReconciliationTab({
       XLSX.utils.book_append_sheet(wb, createFormattedWorksheet(divergentWeightRows), 'Divergências de Peso')
     }
 
-    // 4. Chaves no Excel sem Arquivo
-    if (excelKeysWithoutFiles.length > 0) {
-      const missingRows = excelKeysWithoutFiles.map((key) => {
-        const matchInfo = getExcelMatchInfo(key)
-        return {
-          'Chave de Acesso no Excel': key,
-          'Aba': matchInfo?.sheetName || '',
-          'Linha': matchInfo?.row || '',
-          'Vagão': matchInfo?.vagao || '',
-          'Peso Selecionado': matchInfo?.pesoSelecionadoStr || '',
-          'Status': 'Arquivo de Nota Não Encontrado',
-        }
-      })
-      XLSX.utils.book_append_sheet(wb, createFormattedWorksheet(missingRows), 'Faltantes no Lote')
-    }
-
-    // 5. Resumo por Vagão (se houver)
-    if (excelData?.wagonSummaries && excelData.wagonSummaries.length > 0) {
-      const wagonRows = excelData.wagonSummaries.map((w) => ({
-        'Vagão': w.vagao,
-        'Aba': w.sheetName,
-        'Qtd Notas': w.qtdNotas,
-        'Soma Peso Nota Vagão': w.somaPesoNotaVagaoStr,
-        'Tara': w.taraStr,
-        'Peso Bruto Total': w.pesoBrutoTotalStr,
-        'Linhas no Excel': w.linhas,
-      }))
-      XLSX.utils.book_append_sheet(wb, createFormattedWorksheet(wagonRows), 'Resumo por Vagão')
-    }
-
-    XLSX.writeFile(wb, `relatorio_conferencia_chaves_pesos_${Date.now()}.xlsx`)
+    XLSX.writeFile(wb, `relatorio_conferencia_chaves_${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 
   // Executar auditoria de divergências de peso com IA em lote

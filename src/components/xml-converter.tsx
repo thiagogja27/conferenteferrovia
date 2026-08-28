@@ -880,17 +880,9 @@ export function XMLConverter() {
           <div className='inline-flex items-center justify-center rounded-2xl bg-indigo-600/10 dark:bg-indigo-500/20 p-3 mb-3 text-indigo-600 dark:text-indigo-400 shadow-xs'>
             <FileText className='h-8 w-8' />
           </div>
-          <div className='flex items-center justify-center gap-2 flex-wrap'>
-            <h1 className='text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground'>
-              Sistema de Conferência Fiscal & Logística
-            </h1>
-            <span className="inline-flex items-center rounded-full bg-indigo-100 dark:bg-indigo-950/80 px-2.5 py-0.5 text-xs font-bold text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-              v1.2.3 • NF-e & MDF-e
-            </span>
-          </div>
-          <p className='mt-1 text-sm text-muted-foreground max-w-2xl mx-auto'>
-            Conferência automatizada de Chaves vs Destinatários, auditoria de transbordos e terminais, conciliação de vagões e conversão em lote
-          </p>
+          <h1 className='text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground'>
+            Sistema de Conferência Fiscal
+          </h1>
         </div>
 
         {/* Seletor de Módulos (Menu Principal Intuitivo e Unificado) */}
@@ -954,41 +946,6 @@ export function XMLConverter() {
             </button>
           </div>
         </div>
-
-        {/* Guia de Fluxo Rápido em 3 Passos */}
-        {showWorkflowGuide && converterMode === 'xml-to-pdf' && (
-          <div className="mb-6 p-4 rounded-2xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 text-indigo-950 dark:text-indigo-200">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-900 dark:text-indigo-200">
-                  Como Utilizar o Painel Unificado (3 Passos Simples)
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowWorkflowGuide(false)}
-                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer flex items-center gap-1"
-              >
-                Ocultar Guia
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-              <div className="p-2.5 rounded-xl bg-white/80 dark:bg-zinc-900/70 border border-indigo-100/80 dark:border-zinc-800">
-                <strong className="block text-indigo-700 dark:text-indigo-300 mb-0.5">1. Carregar Arquivos (XML, PDF ou ZIP)</strong>
-                <span>Arraste ou selecione arquivos XML, PDFs de DANFE, pacotes ZIP ou pastas inteiras de notas fiscais.</span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-white/80 dark:bg-zinc-900/70 border border-indigo-100/80 dark:border-zinc-800">
-                <strong className="block text-indigo-700 dark:text-indigo-300 mb-0.5">2. Conferência & Confronto Automático</strong>
-                <span>O sistema extrai os dados fiscais, valida a Chave vs Destinatário, confere transbordos (ex: Pradópolis) e confronta com a planilha Excel.</span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-white/80 dark:bg-zinc-900/70 border border-indigo-100/80 dark:border-zinc-800">
-                <strong className="block text-indigo-700 dark:text-indigo-300 mb-0.5">3. Exportar & Baixar em Lote</strong>
-                <span>Baixe o relatório Excel completo (.xlsx), exporte todos os PDFs de DANFE ou baixe o pacote ZIP com todos os arquivos XML gerados.</span>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Módulos do Sistema Preservados em Memória */}
         <div className={converterMode === 'xml-to-pdf' ? 'block' : 'hidden'}>
@@ -1307,33 +1264,122 @@ export function XMLConverter() {
           </div>
         )}
 
-        {/* Results Area */}
+        {/* Results Area with Lateral Vertical Navigation */}
         {files.length > 0 && (
           <Tabs value={activeTab} onValueChange={setActiveTab} className='w-full'>
-            <TabsList className='mb-4 grid w-full grid-cols-2 sm:grid-cols-5 bg-zinc-100 dark:bg-zinc-900 p-1 rounded-xl gap-1'>
-              <TabsTrigger value='list' className='gap-1.5 font-bold text-xs cursor-pointer'>
-                <List className='h-4 w-4' />
-                <span>Lista ({files.length})</span>
-              </TabsTrigger>
-              <TabsTrigger value='reconciliation' className='gap-1.5 font-bold text-xs cursor-pointer'>
-                <Scale className='h-4 w-4 text-emerald-600' />
-                <span>Conferência c/ Excel</span>
-              </TabsTrigger>
-              <TabsTrigger value='dashboard' className='gap-1.5 font-bold text-xs cursor-pointer'>
-                <BarChart3 className='h-4 w-4' />
-                <span>Dashboard</span>
-              </TabsTrigger>
-              <TabsTrigger value='search' className='gap-1.5 font-bold text-xs cursor-pointer'>
-                <Search className='h-4 w-4' />
-                <span>Busca Avançada</span>
-              </TabsTrigger>
-              <TabsTrigger value='map' className='gap-1.5 font-bold text-xs cursor-pointer'>
-                <Map className='h-4 w-4' />
-                <span>Mapa Logístico</span>
-              </TabsTrigger>
-            </TabsList>
+            <div className="flex flex-col lg:flex-row items-start gap-6 w-full">
+              {/* Menu Lateral com opções empilhadas verticalmente */}
+              <aside className="w-full lg:w-64 xl:w-72 shrink-0 lg:sticky lg:top-4 z-10">
+                <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-xs space-y-1">
+                  <div className="px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 border-b border-zinc-100 dark:border-zinc-800/80 mb-2 flex items-center justify-between">
+                    <span>Módulos de Conferência</span>
+                    <span className="text-[10px] font-semibold bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-600 dark:text-zinc-400">
+                      {files.length} {files.length === 1 ? 'nota' : 'notas'}
+                    </span>
+                  </div>
 
-            <TabsContent value='list' className='space-y-4'>
+                  <TabsList className='flex flex-col w-full h-auto bg-transparent p-0 gap-1.5'>
+                    <TabsTrigger
+                      value='list'
+                      className={`w-full justify-between text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        activeTab === 'list'
+                          ? 'bg-indigo-600 text-white shadow-xs dark:bg-indigo-600 dark:text-white font-extrabold'
+                          : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <List className={`h-4 w-4 shrink-0 ${activeTab === 'list' ? 'text-white' : 'text-indigo-600 dark:text-indigo-400'}`} />
+                        <span>Lista ({files.length})</span>
+                      </div>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        activeTab === 'list' ? 'bg-white/20 text-white' : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                      }`}>
+                        {files.length}
+                      </span>
+                    </TabsTrigger>
+
+                    <TabsTrigger
+                      value='reconciliation'
+                      className={`w-full justify-between text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        activeTab === 'reconciliation'
+                          ? 'bg-indigo-600 text-white shadow-xs dark:bg-indigo-600 dark:text-white font-extrabold'
+                          : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Scale className={`h-4 w-4 shrink-0 ${activeTab === 'reconciliation' ? 'text-white' : 'text-emerald-600 dark:text-emerald-400'}`} />
+                        <span>Conferência c/ Excel</span>
+                      </div>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                        activeTab === 'reconciliation' ? 'bg-white/20 text-white' : 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 border border-emerald-200/60 dark:border-emerald-800/40'
+                      }`}>
+                        Pesagem
+                      </span>
+                    </TabsTrigger>
+
+                    <TabsTrigger
+                      value='dashboard'
+                      className={`w-full justify-between text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        activeTab === 'dashboard'
+                          ? 'bg-indigo-600 text-white shadow-xs dark:bg-indigo-600 dark:text-white font-extrabold'
+                          : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <BarChart3 className={`h-4 w-4 shrink-0 ${activeTab === 'dashboard' ? 'text-white' : 'text-blue-600 dark:text-blue-400'}`} />
+                        <span>Dashboard</span>
+                      </div>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                        activeTab === 'dashboard' ? 'bg-white/20 text-white' : 'bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-200/60 dark:border-blue-800/40'
+                      }`}>
+                        Gráficos
+                      </span>
+                    </TabsTrigger>
+
+                    <TabsTrigger
+                      value='search'
+                      className={`w-full justify-between text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        activeTab === 'search'
+                          ? 'bg-indigo-600 text-white shadow-xs dark:bg-indigo-600 dark:text-white font-extrabold'
+                          : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Search className={`h-4 w-4 shrink-0 ${activeTab === 'search' ? 'text-white' : 'text-amber-600 dark:text-amber-400'}`} />
+                        <span>Busca Avançada</span>
+                      </div>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                        activeTab === 'search' ? 'bg-white/20 text-white' : 'bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/40'
+                      }`}>
+                        Filtros
+                      </span>
+                    </TabsTrigger>
+
+                    <TabsTrigger
+                      value='map'
+                      className={`w-full justify-between text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        activeTab === 'map'
+                          ? 'bg-indigo-600 text-white shadow-xs dark:bg-indigo-600 dark:text-white font-extrabold'
+                          : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Map className={`h-4 w-4 shrink-0 ${activeTab === 'map' ? 'text-white' : 'text-purple-600 dark:text-purple-400'}`} />
+                        <span>Mapa Logístico</span>
+                      </div>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                        activeTab === 'map' ? 'bg-white/20 text-white' : 'bg-purple-50 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 border border-purple-200/60 dark:border-purple-800/40'
+                      }`}>
+                        Rotas
+                      </span>
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
+              </aside>
+
+              {/* Área Principal de Conteúdo das Abas */}
+              <div className="flex-1 min-w-0 w-full space-y-4">
+                <TabsContent value='list' className='space-y-4 mt-0'>
               {/* Barra de Filtro Rápido em Tempo Real */}
               <div className="flex items-center gap-2 p-2.5 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
                 <Search className="h-4 w-4 text-zinc-400 shrink-0 ml-1" />
@@ -1884,6 +1930,8 @@ export function XMLConverter() {
               <MapPanel files={files} />
             </TabsContent>
 
+              </div>
+            </div>
           </Tabs>
         )}
         </div>
