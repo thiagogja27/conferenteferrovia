@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -103,6 +103,17 @@ async function getAllFilesFromDataTransfer(
         await new Promise<void>((resolve) => {
           entry.file(
             (file: File) => {
+              if (entry.fullPath) {
+                const cleanFullPath = entry.fullPath.replace(/^\//, '')
+                try {
+                  Object.defineProperty(file, 'webkitRelativePath', {
+                    value: cleanFullPath,
+                    writable: true,
+                  })
+                } catch (e) {}
+                ;(file as any).originalPath = cleanFullPath
+                ;(file as any).filePath = cleanFullPath
+              }
               files.push(file)
               resolve()
             },
@@ -173,6 +184,7 @@ export function XMLConverter() {
   const [activeTab, setActiveTab] = useState<string>('list')
   const [converterMode, setConverterMode] = useState<'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'documentation'>('xml-to-pdf')
   const [processFileType, setProcessFileType] = useState<'all' | 'xml' | 'pdf'>('all')
+  const folderInputRef = useRef<HTMLInputElement>(null)
 
   const [listFilterTerm, setListFilterTerm] = useState('')
   const [showWorkflowGuide, setShowWorkflowGuide] = useState(true)
@@ -524,6 +536,7 @@ export function XMLConverter() {
 
     const workItems: WorkItem[] = []
     const allOtherFiles: { path: string; content: Blob }[] = []
+    const directResults: ProcessedFile[] = []
 
     for (const file of Array.from(selectedFiles)) {
       const fileName = file.name.toLowerCase()
@@ -531,14 +544,7 @@ export function XMLConverter() {
       if (fileName.endsWith('.zip')) {
         try {
           const zipData = await processZipFile(file, typeFilter)
-          for (const f of zipData.files) {
-            workItems.push({
-              fileName: f.fileName,
-              filePath: f.originalPath,
-              type: f.xmlContent ? 'xml' : 'pdf',
-              contentOrBlob: f.xmlContent || f.fileName,
-            })
-          }
+          directResults.push(...zipData.files)
           allOtherFiles.push(...zipData.otherFiles)
         } catch (err) {
           console.error(`[v0] Erro ao processar o arquivo ZIP '${file.name}':`, err)
@@ -546,24 +552,26 @@ export function XMLConverter() {
       } else if (fileName.endsWith('.xml')) {
         if (typeFilter === 'pdf') continue // Filtro apenas PDF ativo
         const content = await file.text()
+        const origPath = (file as any).originalPath || (file as any).filePath || file.webkitRelativePath || file.name
         workItems.push({
           fileName: file.name,
-          filePath: file.name,
+          filePath: origPath,
           type: 'xml',
           contentOrBlob: content,
         })
       } else if (fileName.endsWith('.pdf')) {
         if (typeFilter === 'xml') continue // Filtro apenas XML ativo
+        const origPath = (file as any).originalPath || (file as any).filePath || file.webkitRelativePath || file.name
         workItems.push({
           fileName: file.name,
-          filePath: file.name,
+          filePath: origPath,
           type: 'pdf',
           contentOrBlob: file,
         })
       }
     }
 
-    if (workItems.length === 0) {
+    if (workItems.length === 0 && directResults.length === 0) {
       setIsProcessing(false)
       if (typeFilter === 'xml') {
         alert("Nenhum arquivo XML (.xml) encontrado na seleção. O filtro 'Processar apenas XML' está ativo.")
@@ -575,7 +583,7 @@ export function XMLConverter() {
       return
     }
 
-    const results: ProcessedFile[] = []
+    const results: ProcessedFile[] = [...directResults]
     const CONCURRENCY_LIMIT = 6
     const pdfQueue = workItems.filter(w => w.type === 'pdf')
 
@@ -1117,12 +1125,34 @@ export function XMLConverter() {
                   <p className='text-sm font-bold text-foreground'>
                     {isDragOver
                       ? 'Solte os arquivos ou pastas aqui!'
-                      : 'Arraste seus arquivos XML, PDFs, pacotes ZIP ou pastas aqui'}
+                      : 'Arraste seus arquivos XML, PDFs, pacotes ZIP ou pastas de vagões aqui'}
                   </p>
                   <p className='text-xs text-muted-foreground mt-1 max-w-md'>
-                    Ou clique em qualquer ponto desta caixa para selecionar arquivos do seu computador
+                    Ou utilize os botões abaixo para selecionar arquivos ou pastas com subpastas do seu computador
                   </p>
-                  <div className="mt-3 flex items-center gap-2 flex-wrap justify-center">
+
+                  <div className="mt-3.5 flex items-center gap-2.5 z-20" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="file"
+                      id="xml-folder-upload"
+                      ref={folderInputRef}
+                      className="hidden"
+                      onChange={handleFileChange}
+                      {...({ webkitdirectory: "", directory: "", multiple: true } as any)}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => folderInputRef.current?.click()}
+                      className="cursor-pointer bg-white dark:bg-zinc-800 border-amber-300 dark:border-amber-700/60 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-800 dark:text-amber-300 font-bold shadow-xs text-xs"
+                    >
+                      <Folder className="mr-1.5 h-4 w-4 text-amber-600 dark:text-amber-400" />
+                      Selecionar Pasta(s) de Vagões
+                    </Button>
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-2 flex-wrap justify-center pointer-events-none">
                     <span className="text-[11px] px-2 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium">
                       .XML (NF-e)
                     </span>
@@ -1132,8 +1162,8 @@ export function XMLConverter() {
                     <span className="text-[11px] px-2 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium">
                       .ZIP
                     </span>
-                    <span className="text-[11px] px-2 py-0.5 rounded-md bg-zinc-200/80 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium">
-                      Pastas Completas
+                    <span className="text-[11px] px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800">
+                      Pastas c/ Nome de Vagão
                     </span>
                   </div>
                 </>

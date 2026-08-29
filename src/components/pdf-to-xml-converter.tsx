@@ -70,6 +70,17 @@ async function getAllFilesFromDataTransfer(dataTransfer: DataTransfer): Promise<
         await new Promise<void>((resolve) => {
           entry.file(
             (file: File) => {
+              if (entry.fullPath) {
+                const cleanFullPath = entry.fullPath.replace(/^\//, '')
+                try {
+                  Object.defineProperty(file, 'webkitRelativePath', {
+                    value: cleanFullPath,
+                    writable: true,
+                  })
+                } catch (e) {}
+                ;(file as any).originalPath = cleanFullPath
+                ;(file as any).filePath = cleanFullPath
+              }
               files.push(file)
               resolve()
             },
@@ -136,6 +147,8 @@ import { findKeysInText, isValidNFeKey } from '@/lib/pdf-text-parser'
 
 interface PDFConversionResult {
   fileName: string
+  filePath?: string
+  originalPath?: string
   fileType?: 'pdf' | 'xml'
   xmlContent: string | null
   error: string | null
@@ -423,6 +436,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       // Servidor inacessível, cai no processamento direto no navegador
     }
 
+    const fileOrigPath = (file as any).originalPath || (file as any).filePath || file.webkitRelativePath || file.name
+
     if (apiSuccess && data) {
       if (data.items && Array.isArray(data.items) && data.items.length > 0) {
         return data.items.map((it: any) => {
@@ -434,6 +449,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           }
           return {
             fileName: it.fileName || file.name,
+            filePath: fileOrigPath,
+            originalPath: fileOrigPath,
             fileType: 'pdf' as const,
             xmlContent: it.xml,
             error: null,
@@ -453,6 +470,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
       return [{
         fileName: file.name,
+        filePath: fileOrigPath,
+        originalPath: fileOrigPath,
         fileType: 'pdf' as const,
         xmlContent: data.xml,
         error: null,
@@ -468,6 +487,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       if (clientResult.items && clientResult.items.length > 0) {
         return clientResult.items.map((it: any) => ({
           fileName: it.fileName || file.name,
+          filePath: fileOrigPath,
+          originalPath: fileOrigPath,
           fileType: 'pdf' as const,
           xmlContent: it.xml,
           error: null,
@@ -479,6 +500,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
       return [{
         fileName: file.name,
+        filePath: fileOrigPath,
+        originalPath: fileOrigPath,
         fileType: 'pdf' as const,
         xmlContent: clientResult.xml,
         error: null,
@@ -490,6 +513,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       console.error(`Erro ao converter ${file.name} no cliente:`, clientErr)
       return [{
         fileName: file.name,
+        filePath: fileOrigPath,
+        originalPath: fileOrigPath,
         fileType: 'pdf' as const,
         xmlContent: null,
         error: clientErr.message || 'Não foi possível ler o arquivo PDF.',
@@ -528,6 +553,14 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
               if (cleanName.toLowerCase().endsWith('.pdf')) {
                 const blob = await zipEntry.async('blob')
                 const pdfFile = new File([blob], cleanName, { type: 'application/pdf' })
+                ;(pdfFile as any).originalPath = relativePath
+                ;(pdfFile as any).filePath = relativePath
+                try {
+                  Object.defineProperty(pdfFile, 'webkitRelativePath', {
+                    value: relativePath,
+                    writable: true,
+                  })
+                } catch (e) {}
                 pdfFiles.push(pdfFile)
               }
             }
@@ -622,6 +655,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
     interface RawItem {
       fileName: string
+      filePath?: string
+      originalPath?: string
       fileType: 'xml' | 'pdf'
       contentOrBlob: File | Blob | string
     }
@@ -630,6 +665,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
     for (const file of validFiles) {
       const lowerName = file.name.toLowerCase()
+      const origPath = (file as any).originalPath || (file as any).filePath || file.webkitRelativePath || file.name
       if (lowerName.endsWith('.zip')) {
         try {
           const zip = new JSZip()
@@ -640,10 +676,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
               const entryLower = cleanName.toLowerCase()
               if (entryLower.endsWith('.xml')) {
                 const xmlText = await zipEntry.async('string')
-                rawItems.push({ fileName: cleanName, fileType: 'xml', contentOrBlob: xmlText })
+                rawItems.push({ fileName: cleanName, filePath: relativePath, originalPath: relativePath, fileType: 'xml', contentOrBlob: xmlText })
               } else if (entryLower.endsWith('.pdf')) {
                 const blob = await zipEntry.async('blob')
-                rawItems.push({ fileName: cleanName, fileType: 'pdf', contentOrBlob: blob })
+                rawItems.push({ fileName: cleanName, filePath: relativePath, originalPath: relativePath, fileType: 'pdf', contentOrBlob: blob })
               }
             }
           }
@@ -651,10 +687,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           console.error('Erro ao processar arquivo ZIP:', zipErr)
         }
       } else if (lowerName.endsWith('.pdf')) {
-        rawItems.push({ fileName: file.name, fileType: 'pdf', contentOrBlob: file })
+        rawItems.push({ fileName: file.name, filePath: origPath, originalPath: origPath, fileType: 'pdf', contentOrBlob: file })
       } else if (lowerName.endsWith('.xml')) {
         const xmlText = await file.text()
-        rawItems.push({ fileName: file.name, fileType: 'xml', contentOrBlob: xmlText })
+        rawItems.push({ fileName: file.name, filePath: origPath, originalPath: origPath, fileType: 'xml', contentOrBlob: xmlText })
       }
       // Outros formatos são ignorados silenciosamente sem tentar ler como XML
     }
@@ -695,6 +731,17 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             const pdfFile = item.contentOrBlob instanceof File
               ? item.contentOrBlob
               : new File([item.contentOrBlob as Blob], item.fileName, { type: 'application/pdf' })
+            const itemPath = item.originalPath || item.filePath
+            if (itemPath) {
+              ;(pdfFile as any).originalPath = itemPath
+              ;(pdfFile as any).filePath = itemPath
+              try {
+                Object.defineProperty(pdfFile, 'webkitRelativePath', {
+                  value: itemPath,
+                  writable: true,
+                })
+              } catch (e) {}
+            }
             itemRes = await convertSinglePDF(pdfFile)
           } catch (err: any) {
             itemRes = [{
@@ -715,6 +762,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
             itemRes = [{
               fileName: item.fileName,
+              filePath: item.filePath || item.originalPath,
+              originalPath: item.originalPath || item.filePath,
               fileType: 'xml',
               xmlContent: xmlText,
               error: null,
@@ -2384,7 +2433,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             <CardDescription>Visualização em tempo real por Destinatário, Terminal de Entrega, Transbordo e Produto</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
-            <Dashboard files={results.map((r) => ({ fileName: r.fileName, nfeData: r.nfeData || null, parsedData: r.parsedData || null }))} />
+            <Dashboard files={results.map((r) => ({ fileName: r.fileName, filePath: r.filePath || r.originalPath, originalPath: r.originalPath || r.filePath, nfeData: r.nfeData || null, parsedData: r.parsedData || null, xmlContent: r.xmlContent || undefined, rawSnippet: r.parsedData?.infCpl || undefined }))} />
           </CardContent>
         </Card>
       )}

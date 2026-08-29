@@ -194,10 +194,27 @@ export function parseMultiDanfePdf(
           groupedItems.push(currentGroup);
         }
       } else if (isDCL || isRomaneio || pageKeys.length > 1) {
-        // É página de DCL, Romaneio ou Manifesto que referencia chaves existentes
-        // Anexa ao grupo atual se existir para enriquecer dados sem gerar DANFE falso
-        if (currentGroup) {
-          currentGroup.pagesText.push(pText);
+        // É página de DCL, Romaneio ou Manifesto que referencia múltiplas chaves
+        // Anexa o texto do DCL/Romaneio a todos os grupos de notas correspondentes
+        let matchedAnyGroup = false;
+        for (const g of groupedItems) {
+          if (g.key && pageKeys.includes(g.key)) {
+            g.pagesText.push(pText);
+            matchedAnyGroup = true;
+          }
+        }
+        if (!matchedAnyGroup) {
+          if (currentGroup) {
+            currentGroup.pagesText.push(pText);
+          } else if (pageKeys.length > 0) {
+            // Se for um DCL puro sem páginas DANFE anteriores, cria grupos para as chaves
+            for (const k of pageKeys) {
+              groupedItems.push({ key: k, pagesText: [pText] });
+            }
+          } else {
+            currentGroup = { key: '', pagesText: [pText] };
+            groupedItems.push(currentGroup);
+          }
         }
       } else if (pageKeys.length === 1) {
         const k = pageKeys[0];

@@ -50,8 +50,18 @@ import {
   RotateCcw,
   CheckCircle2,
   Wand2,
+  TrainFront,
+  TrainTrack,
+  Folder,
 } from "lucide-react"
 import * as XLSX from "xlsx"
+import {
+  extractVagoesFromDocument,
+  extractFolderName,
+  getVagaoNumeralKey,
+  TRANSBORDO_VAGAO_COLORS,
+  type ExtractedVagao,
+} from "@/lib/vagao-utils"
 
 export interface DashboardFileItem {
   fileName?: string
@@ -234,6 +244,35 @@ export function getNoteDetails(
   const placa = nfe?.transportador?.placaVeiculo || ""
   const motorista = ""
 
+  // Extração inteligente de vagões do documento (DCL, DANFE, XML, Placa ou Informações Complementares)
+  let vagoes = extractVagoesFromDocument({
+    text: `${f.fileName || ""} ${f.rawSnippet || ""}`,
+    xmlContent: f.xmlContent || f.xmlGerado,
+    placa: placa,
+    rawSnippet: f.rawSnippet,
+    infCpl: infCpl,
+  })
+
+  // Se não houver placa/código de vagão no documento, considerar a pasta inputada
+  const folderName = extractFolderName(f)
+  if (vagoes.length === 0 && folderName) {
+    const vagoesFromFolder = extractVagoesFromDocument({ text: folderName })
+    if (vagoesFromFolder.length > 0) {
+      vagoes = vagoesFromFolder
+    } else {
+      vagoes = [
+        {
+          identificador: folderName,
+          serie: "PASTA",
+          numero: folderName,
+          origemDoc: "PASTA_INPUT",
+        },
+      ]
+    }
+  }
+  const primaryVagao = vagoes.length > 0 ? vagoes[0].identificador : ""
+  const allVagoesStr = vagoes.map((v) => v.identificador).join(", ")
+
   const hasMissingLogistics =
     terminal === "Não Informado" ||
     transbordo === "Não Informado" ||
@@ -263,6 +302,9 @@ export function getNoteDetails(
     infCpl,
     placa,
     motorista,
+    vagoes,
+    primaryVagao,
+    allVagoesStr,
     isAIAjustado,
     aiCamposAjustados,
     aiAuditResult: override?.auditResult,
@@ -309,6 +351,28 @@ export function Dashboard({ files }: DashboardProps) {
     const transbordoCount: Record<string, number> = {}
     const transbordoFiles: Record<string, DashboardFileItem[]> = {}
 
+    // Estrutura para agrupar e rastrear Vagões por Transbordo
+    const transbordoVagoesMap = new Map<
+      string,
+      Map<
+        string,
+        {
+          identificador: string
+          serie?: string
+          numero?: string
+          origemDoc?: string
+          files: DashboardFileItem[]
+          pesoTotal: number
+          valorTotal: number
+          notas: string[]
+        }
+      >
+    >()
+    const allUniqueVagoesGlobal = new Set<string>()
+    const allFilesWithWagons: DashboardFileItem[] = []
+    let hasFolderDerivedWagons = false
+    let hasDocExtractedWagons = false
+
     let missingTerminalCount = 0
     let missingTransbordoCount = 0
     let missingDestinatarioCount = 0
@@ -328,6 +392,64 @@ export function Dashboard({ files }: DashboardProps) {
       }
       if (details.hasMissingLogistics) {
         totalNotesWithMissingData++
+      }
+
+      // Rastreamento e contagem de vagões por transbordo
+      const transKey = details.transbordo
+      if (details.vagoes && details.vagoes.length > 0) {
+        allFilesWithWagons.push(f)
+        if (!transbordoVagoesMap.has(transKey)) {
+          transbordoVagoesMap.set(transKey, new Map())
+        }
+        const vagoesMapForTransbordo = transbordoVagoesMap.get(transKey)!
+
+        // Evita duplicar o mesmo vagão na mesma nota caso haja repetições no texto/XML
+        const processedVagKeysInNote = new Set<string>()
+
+        details.vagoes.forEach((vag) => {
+          if (vag.origemDoc === "PASTA_INPUT") {
+            hasFolderDerivedWagons = true
+          } else {
+            hasDocExtractedWagons = true
+          }
+
+          const numKey = getVagaoNumeralKey(vag.numero || vag.identificador)
+          if (!numKey || processedVagKeysInNote.has(numKey)) return
+          processedVagKeysInNote.add(numKey)
+
+          allUniqueVagoesGlobal.add(numKey)
+
+          if (!vagoesMapForTransbordo.has(numKey)) {
+            vagoesMapForTransbordo.set(numKey, {
+              identificador: vag.identificador,
+              serie: vag.serie,
+              numero: vag.numero,
+              origemDoc: vag.origemDoc,
+              files: [],
+              pesoTotal: 0,
+              valorTotal: 0,
+              notas: [],
+            })
+          }
+          const entry = vagoesMapForTransbordo.get(numKey)!
+
+          // Se encontrar formato mais completo com série (ex: "HPT-0329479" vs "0329479"), atualiza identificador
+          if (vag.serie && vag.serie !== "PASTA" && (!entry.serie || entry.serie.length < vag.serie.length)) {
+            entry.identificador = vag.identificador
+            entry.serie = vag.serie
+            entry.origemDoc = vag.origemDoc
+          }
+
+          if (!entry.files.includes(f)) {
+            entry.files.push(f)
+            entry.pesoTotal += details.pesoNum || 0
+            entry.valorTotal += details.valorNum || 0
+          }
+
+          if (details.numero && details.numero !== "S/N" && !entry.notas.includes(details.numero)) {
+            entry.notas.push(details.numero)
+          }
+        })
       }
 
       // Destinatário: agrupado por nome + CNPJ para identificar filiais distintas
@@ -360,7 +482,6 @@ export function Dashboard({ files }: DashboardProps) {
       produtoFiles[prodFullKey].push(f)
 
       // Transbordo
-      const transKey = details.transbordo
       transbordoCount[transKey] = (transbordoCount[transKey] || 0) + 1
       if (!transbordoFiles[transKey]) transbordoFiles[transKey] = []
       transbordoFiles[transKey].push(f)
@@ -461,14 +582,89 @@ export function Dashboard({ files }: DashboardProps) {
 
     const totalAdjustedByAI = Object.keys(logisticsOverrides).length
 
+    // Construção dos dados do gráfico e tabela de Vagões por Transbordo
+    const vagoesPorTransbordo = Array.from(transbordoVagoesMap.entries())
+      .map(([transbordo, vagoesMap], index) => {
+        const vagoesEntries = Array.from(vagoesMap.values())
+        const totalVagoes = vagoesEntries.length
+        const vagoesList = vagoesEntries.map((v) => v.identificador)
+
+        const allFilesSet = new Set<DashboardFileItem>()
+        let pesoTotalKg = 0
+        let valorTotal = 0
+        vagoesEntries.forEach((entry) => {
+          entry.files.forEach((file) => allFilesSet.add(file))
+          pesoTotalKg += entry.pesoTotal
+          valorTotal += entry.valorTotal
+        })
+        const relatedFiles = Array.from(allFilesSet)
+        const isMissing =
+          transbordo === "Não Informado" ||
+          transbordo === "Não informado" ||
+          transbordo === "TRANSBORDO NÃO INFORMADO"
+        const color = isMissing
+          ? "#f59e0b"
+          : TRANSBORDO_VAGAO_COLORS[index % TRANSBORDO_VAGAO_COLORS.length]
+
+        return {
+          name: transbordo.length > 25 ? transbordo.substring(0, 23) + "..." : transbordo,
+          fullName: transbordo,
+          transbordo,
+          totalVagoes,
+          value: totalVagoes,
+          vagoesList,
+          vagoesDetails: vagoesEntries.map((entry) => ({
+            vagao: entry.identificador,
+            serie: entry.serie,
+            origemDoc: entry.origemDoc,
+            isFolder: entry.origemDoc === "PASTA_INPUT",
+            totalNotas: entry.files.length,
+            pesoKg: entry.pesoTotal,
+            pesoFormatted: entry.pesoTotal > 0 ? `${entry.pesoTotal.toLocaleString("pt-BR")} kg` : "-",
+            valorTotal: entry.valorTotal,
+            valorFormatted:
+              entry.valorTotal > 0
+                ? `R$ ${entry.valorTotal.toLocaleString("pt-BR", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}`
+                : "-",
+            notas: entry.notas,
+            files: entry.files,
+          })),
+          totalNotas: relatedFiles.length,
+          pesoTotalKg,
+          pesoTotalFormatted: pesoTotalKg > 0 ? `${pesoTotalKg.toLocaleString("pt-BR")} kg` : "-",
+          valorTotal,
+          valorTotalFormatted:
+            valorTotal > 0
+              ? `R$ ${valorTotal.toLocaleString("pt-BR", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}`
+              : "-",
+          relatedFiles,
+          isMissing,
+          color,
+        }
+      })
+      .filter((item) => item.totalVagoes > 0)
+      .sort((a, b) => b.totalVagoes - a.totalVagoes)
+
     return {
       totalNotas: validFiles.length,
       allFiles: validFiles,
+      allFilesWithWagons,
       destinatarios: destinatariosChartData,
       totalDestinatariosUnicos: Object.keys(destinatarioGroupCounts).length,
       terminais: toChartData(terminalCount, terminalFiles),
       produtos: toChartData(produtoCount, produtoFiles),
       transbordos: toChartData(transbordoCount, transbordoFiles),
+      vagoesPorTransbordo,
+      totalVagoesUnicos: allUniqueVagoesGlobal.size,
+      isDerivedFromFolders: hasFolderDerivedWagons && !hasDocExtractedWagons,
+      hasFolderDerivedWagons,
+      hasDocExtractedWagons,
       missingTerminalCount,
       missingTransbordoCount,
       missingDestinatarioCount,
@@ -613,6 +809,8 @@ export function Dashboard({ files }: DashboardProps) {
         d.produto.toLowerCase().includes(term) ||
         d.terminal.toLowerCase().includes(term) ||
         d.transbordo.toLowerCase().includes(term) ||
+        d.allVagoesStr.toLowerCase().includes(term) ||
+        d.placa.toLowerCase().includes(term) ||
         d.infCpl.toLowerCase().includes(term)
       )
     })
@@ -636,6 +834,7 @@ export function Dashboard({ files }: DashboardProps) {
         Produto: d.produto,
         "Terminal de Entrega": d.terminal,
         Transbordo: d.transbordo,
+        "Vagão (Ferrovia)": d.allVagoesStr || d.placa || "-",
         "Local de Retirada": d.retirada || "-",
         "Ajustado pela IA": d.isAIAjustado ? `SIM (${d.aiCamposAjustados.join(", ")})` : "NÃO",
         "Explicação IA": d.aiAuditResult?.explicacao || "-",
@@ -783,7 +982,7 @@ export function Dashboard({ files }: DashboardProps) {
       </div>
 
       {/* Cards de resumo */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Card
           className="cursor-pointer hover:border-indigo-400 transition-all shadow-xs"
           onClick={() => {
@@ -855,6 +1054,46 @@ export function Dashboard({ files }: DashboardProps) {
               ) : (
                 "100% identificados"
               )}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card
+          className="cursor-pointer hover:border-amber-400 transition-all shadow-xs"
+          onClick={() => {
+            if (stats.allFilesWithWagons.length > 0) {
+              setSelectedGroup({
+                category: stats.isDerivedFromFolders ? "Pastas (Vagões)" : "Vagões",
+                fullName: stats.isDerivedFromFolders
+                  ? "Notas agrupadas por Pastas Inputadas"
+                  : "Notas com Vagões Ferroviários",
+                files: stats.allFilesWithWagons,
+              })
+              setModalSearch("")
+              setExpandedIndex(null)
+            }
+          }}
+        >
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">
+              {stats.isDerivedFromFolders ? "Vagões / Pastas" : "Vagões Detectados"}
+            </CardTitle>
+            {stats.isDerivedFromFolders ? (
+              <Folder className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            ) : (
+              <TrainFront className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            )}
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+              {stats.totalVagoesUnicos}
+            </div>
+            <p className="text-[11px] text-zinc-500 mt-1">
+              {stats.vagoesPorTransbordo.length > 0
+                ? `${stats.vagoesPorTransbordo.length} transbordo(s)${
+                    stats.isDerivedFromFolders ? " (por pastas)" : ""
+                  }`
+                : "Sem vagões no lote"}
             </p>
           </CardContent>
         </Card>
@@ -1116,6 +1355,214 @@ export function Dashboard({ files }: DashboardProps) {
         </Card>
       </div>
 
+      {/* ========================================================================= */}
+      {/* NOVO CARD DEDICADO: QUANTIDADE DE VAGÕES POR TRANSBORDO (FERROVIA)         */}
+      {/* ========================================================================= */}
+      <Card className="border border-amber-200 dark:border-amber-900/60 shadow-xs hover:border-amber-300 transition-colors bg-gradient-to-b from-white to-amber-50/20 dark:from-zinc-950 dark:to-amber-950/10">
+        <CardHeader className="pb-3 border-b border-amber-100 dark:border-amber-900/40">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-amber-500 text-white shadow-xs">
+                <TrainFront className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="text-base font-bold flex items-center gap-2 text-zinc-900 dark:text-zinc-100 flex-wrap">
+                  <span>Quantidade de Vagões por Transbordo</span>
+                  {stats.totalVagoesUnicos > 0 && (
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                      {stats.totalVagoesUnicos} {stats.isDerivedFromFolders ? "pasta(s) / vagão(ões)" : "vagão(ões) único(s)"}
+                    </span>
+                  )}
+                </CardTitle>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  {stats.isDerivedFromFolders
+                    ? "Contagem de vagões calculada com base na quantidade de pastas inputadas (sem placas identificadas nos documentos)"
+                    : "Distribuição e contagem de vagões ferroviários identificados em cada local de transbordo (DCL, DANFEs, XMLs ou pastas)"}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-normal text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950 px-2.5 py-1 rounded-md border border-amber-200 dark:border-amber-800">
+                Clique nas barras ou vagões para filtrar
+              </span>
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent className="pt-4 space-y-5">
+          {stats.vagoesPorTransbordo.length === 0 ? (
+            <div className="py-8 px-4 text-center rounded-xl bg-zinc-50/50 dark:bg-zinc-900/50 border border-dashed border-zinc-200 dark:border-zinc-800">
+              <TrainTrack className="h-8 w-8 text-zinc-400 mx-auto mb-2 opacity-60" />
+              <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                Nenhum vagão ferroviário identificado nas notas atuais.
+              </p>
+              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1 max-w-lg mx-auto">
+                Quando carregar documentos com vagão (DCLs da Rumo, DANFEs com Série/Cód. Vagão ou XMLs CT-e/MDF-e/NF-e com identificador de vagão), os vagões serão agrupados e contabilizados por transbordo aqui automaticamente.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Gráfico de Barras de Vagões por Transbordo */}
+              <div className="lg:col-span-6 h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={stats.vagoesPorTransbordo}
+                    layout="vertical"
+                    onClick={(state: any) => {
+                      if (state && state.activePayload && state.activePayload.length > 0) {
+                        handleChartClick("Vagões no Transbordo", state.activePayload[0].payload)
+                      }
+                    }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" allowDecimals={false} />
+                    <YAxis
+                      dataKey="name"
+                      type="category"
+                      width={160}
+                      tick={{ fontSize: 11 }}
+                    />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length > 0) {
+                          const data = payload[0].payload
+                          return (
+                            <div className="bg-white dark:bg-zinc-900 p-3 rounded-xl shadow-xl border border-zinc-200 dark:border-zinc-800 text-xs space-y-1.5 z-50 max-w-xs">
+                              <div className="font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                                <span
+                                  className="inline-block w-3 h-3 rounded-full shrink-0"
+                                  style={{ backgroundColor: data.color || "#f59e0b" }}
+                                />
+                                Transbordo: {data.fullName}
+                              </div>
+                              <div className="text-amber-600 dark:text-amber-400 font-bold text-sm">
+                                {data.totalVagoes} vagão(ões) único(s)
+                              </div>
+                              <div className="text-zinc-600 dark:text-zinc-400 text-[11px]">
+                                {data.totalNotas} nota(s) vinculada(s) • {data.pesoTotalFormatted}
+                              </div>
+                              {data.vagoesList && data.vagoesList.length > 0 && (
+                                <div className="pt-1 border-t border-zinc-100 dark:border-zinc-800">
+                                  <span className="text-[10px] text-zinc-400 uppercase font-semibold block mb-1">
+                                    Vagões Identificados:
+                                  </span>
+                                  <div className="flex flex-wrap gap-1">
+                                    {data.vagoesList.slice(0, 8).map((vag: string, idx: number) => (
+                                      <span
+                                        key={idx}
+                                        className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-mono text-[10px] border border-amber-200 dark:border-amber-800"
+                                      >
+                                        {vag}
+                                      </span>
+                                    ))}
+                                    {data.vagoesList.length > 8 && (
+                                      <span className="text-[10px] text-zinc-500 font-medium">
+                                        +{data.vagoesList.length - 8} mais
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        }
+                        return null
+                      }}
+                    />
+                    <Bar
+                      dataKey="value"
+                      className="cursor-pointer hover:opacity-80 transition-opacity"
+                      onClick={(entry) => handleChartClick("Vagões no Transbordo", entry)}
+                    >
+                      {stats.vagoesPorTransbordo.map((entry, index) => (
+                        <Cell
+                          key={`vag-trans-cell-${index}`}
+                          fill={entry.color || TRANSBORDO_VAGAO_COLORS[index % TRANSBORDO_VAGAO_COLORS.length]}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Lista Detalhada de Transbordos com seus Vagões */}
+              <div className="lg:col-span-6 space-y-3 max-h-[280px] overflow-y-auto pr-1">
+                {stats.vagoesPorTransbordo.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 shadow-xs space-y-2 hover:border-amber-300 dark:hover:border-amber-700 transition-all"
+                  >
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: item.color || "#f59e0b" }}
+                        />
+                        <span className="font-bold text-xs text-zinc-900 dark:text-zinc-100">
+                          {item.fullName}
+                        </span>
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300">
+                          {item.totalVagoes} vagão(ões)
+                        </span>
+                      </div>
+
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          handleChartClick("Vagões no Transbordo", {
+                            fullName: `${item.fullName} (${item.totalVagoes} vagões)`,
+                            relatedFiles: item.relatedFiles,
+                          })
+                        }
+                        className="h-6 px-2 text-[11px] font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950 cursor-pointer"
+                      >
+                        Ver {item.totalNotas} Notas ({item.pesoTotalFormatted})
+                      </Button>
+                    </div>
+
+                    {/* Chips de vagões identificados */}
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {item.vagoesDetails.map((vagDetail, vIdx) => (
+                        <button
+                          key={vIdx}
+                          type="button"
+                          onClick={() => {
+                            setSelectedGroup({
+                              category: vagDetail.isFolder
+                                ? `Pasta ${vagDetail.vagao} em ${item.fullName}`
+                                : `Vagão ${vagDetail.vagao} em ${item.fullName}`,
+                              fullName: `${vagDetail.vagao} (${vagDetail.totalNotas} notas • ${vagDetail.pesoFormatted})`,
+                              files: vagDetail.files,
+                            })
+                            setModalSearch("")
+                            setExpandedIndex(null)
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-50 dark:bg-amber-950/70 border border-amber-200 dark:border-amber-800 text-[11px] font-mono text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900 transition-colors cursor-pointer"
+                          title={`${vagDetail.isFolder ? "Pasta" : "Vagão"} ${vagDetail.vagao}: ${vagDetail.totalNotas} nota(s) vinculada(s). Clique para ver notas.`}
+                        >
+                          {vagDetail.isFolder ? (
+                            <Folder className="h-3 w-3 text-amber-600 shrink-0" />
+                          ) : (
+                            <TrainFront className="h-3 w-3 text-amber-600 shrink-0" />
+                          )}
+                          <strong>{vagDetail.vagao}</strong>
+                          <span className="text-[10px] text-amber-700/70 dark:text-amber-300/70 font-sans">
+                            ({vagDetail.totalNotas} NF)
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Modal de Notas do Gráfico */}
       <Dialog open={!!selectedGroup} onOpenChange={(open) => !open && setSelectedGroup(null)}>
         <DialogContent className="max-w-5xl max-h-[90vh] flex flex-col p-6 overflow-hidden bg-white dark:bg-zinc-950 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800">
@@ -1213,6 +1660,21 @@ export function Dashboard({ files }: DashboardProps) {
                         <span className="text-xs text-zinc-500 dark:text-zinc-400">
                           Emissão: <strong>{note.dataEmissao}</strong>
                         </span>
+                        {note.primaryVagao && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1 font-mono">
+                            {note.vagoes[0]?.origemDoc === "PASTA_INPUT" ? (
+                              <>
+                                <Folder className="h-3 w-3 text-amber-600" />
+                                Pasta: {note.primaryVagao}
+                              </>
+                            ) : (
+                              <>
+                                <TrainFront className="h-3 w-3 text-amber-600" />
+                                Vagão: {note.primaryVagao}
+                              </>
+                            )}
+                          </span>
+                        )}
                         {note.isAIAjustado && (
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
                             <Sparkles className="h-3 w-3 text-emerald-600" />
@@ -1373,9 +1835,18 @@ export function Dashboard({ files }: DashboardProps) {
                     {/* Seção Expandida com Informações Adicionais */}
                     {isExpanded && (
                       <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800 space-y-2 text-xs text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-950 p-3 rounded-lg">
+                        {note.allVagoesStr && (
+                          <p className="text-amber-800 dark:text-amber-300 font-semibold flex items-center gap-1.5">
+                            <TrainFront className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                            <strong>Vagão(ões) Ferroviário(s):</strong>{" "}
+                            <span className="font-mono bg-amber-100 dark:bg-amber-950 px-1.5 py-0.5 rounded">
+                              {note.allVagoesStr}
+                            </span>
+                          </p>
+                        )}
                         {note.placa && (
                           <p>
-                            <strong>Placa do Veículo:</strong> {note.placa}
+                            <strong>Placa do Veículo / Reboque:</strong> {note.placa}
                           </p>
                         )}
                         {note.motorista && (
