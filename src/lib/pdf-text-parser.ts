@@ -1,5 +1,7 @@
 // Utilitário de análise de texto de DANFE para conversão em XML (Processamento Local e Sem IA)
 
+import { sanitizeDestinatarioNome } from './destinatario-utils';
+
 export interface ParsedNFeData {
   chave: string;
   nNF: string;
@@ -419,6 +421,9 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       destNome = raw.replace(/[:=\-.,;]+$/, '').trim();
     }
 
+    // Limpar e sanitizar nome inicial capturado
+    destNome = sanitizeDestinatarioNome(destNome, '', text);
+
     // Buscar CNPJ/CPF formatado especificamente no bloco (com pontuação)
     const formattedCnpjs = block.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g);
     const formattedCpfs = block.match(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g);
@@ -460,63 +465,8 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     destIE = emitIE;
   }
 
-  // Se não foi encontrado nome de destinatário ou ficou genérico
-  if (!destNome || destNome.length < 3 || /DESTINATÁRIO|DESTINATARIO/i.test(destNome)) {
-    const textUpper = text.toUpperCase();
-    if (textUpper.includes('CORURIPE')) {
-      destNome = 'S/A USINA CORURIPE ACUCAR E ALCOOL';
-    } else if (textUpper.includes('CARGILL')) {
-      destNome = 'CARGILL AGRICOLA SA';
-    } else if (textUpper.includes('COPERSUCAR')) {
-      destNome = 'COPERSUCAR S.A.';
-    } else if (textUpper.includes('RAIZEN') || textUpper.includes('RAÍZEN')) {
-      destNome = 'RAIZEN ENERGIA S.A.';
-    } else if (textUpper.includes('SAO MARTINHO') || textUpper.includes('SÃO MARTINHO')) {
-      destNome = 'USINA SAO MARTINHO S/A';
-    } else if (textUpper.includes('ADECOAGRO')) {
-      destNome = 'ADECOAGRO VALE DO IVINHEMA S.A.';
-    } else if (textUpper.includes('ALTA MOGIANA')) {
-      destNome = 'USINA ALTA MOGIANA S/A - ACUCAR E ALCOOL';
-    } else if (textUpper.includes('SANTA TEREZINHA') || textUpper.includes('USACUCAR')) {
-      destNome = 'USINA SANTA TEREZINHA LTDA';
-    } else if (textUpper.includes('BATATAIS')) {
-      destNome = 'USINA BATATAIS S/A ACUCAR E ALCOOL';
-    } else if (textUpper.includes('TEREOS') || textUpper.includes('GUARANI')) {
-      destNome = 'TEREOS ACUCAR E ENERGIA BRASIL S.A.';
-    } else if (textUpper.includes('BP BUNGE')) {
-      destNome = 'BP BUNGE BIOENERGIA S.A.';
-    } else if (textUpper.includes('BOM FUTURO')) {
-      destNome = 'BOM FUTURO AGRICOLA LTDA';
-    } else if (textUpper.includes('ADM DO BRASIL') || textUpper.includes('ADM ')) {
-      destNome = 'ADM DO BRASIL LTDA';
-    } else if (textUpper.includes('LOUIS DREYFUS') || textUpper.includes('LDC BRASIL') || textUpper.includes('LDC -')) {
-      destNome = 'LOUIS DREYFUS COMPANY BRASIL S.A.';
-    } else if (textUpper.includes('BUNGE')) {
-      destNome = 'BUNGE ALIMENTOS S.A.';
-    } else if (textUpper.includes('AMAGGI')) {
-      destNome = 'AMAGGI EXPORTACAO E IMPORTACAO LTDA';
-    } else if (textUpper.includes('COAMO')) {
-      destNome = 'COAMO AGROINDUSTRIAL COOPERATIVA';
-    } else if (textUpper.includes('C.VALE') || textUpper.includes('C VALE')) {
-      destNome = 'C.VALE COOPERATIVA AGROINDUSTRIAL';
-    } else if (textUpper.includes('VITERRA') || textUpper.includes('GLENCORE')) {
-      destNome = 'VITERRA BRASIL S.A.';
-    } else if (textUpper.includes('COFCO')) {
-      destNome = 'COFCO INTERNATIONAL BRASIL S.A.';
-    } else if (textUpper.includes('JALLES MACHADO')) {
-      destNome = 'JALLES MACHADO S.A.';
-    } else if (textUpper.includes('AGROVALE')) {
-      destNome = 'AGROVALE - AGRO INDUSTRIAS DO VALE DO SAO FRANCISCO S.A.';
-    } else if (textUpper.includes('USINA CAETE') || textUpper.includes('CAETÉ')) {
-      destNome = 'USINA CAETE S/A';
-    } else if (textUpper.includes('SANTA FE') || textUpper.includes('SANTA FÉ')) {
-      destNome = 'USINA SANTA FE S/A';
-    } else if (destCNPJ) {
-      destNome = `DESTINATÁRIO (CNPJ: ${formatCNPJStr(destCNPJ)})`;
-    } else {
-      destNome = 'DESTINATÁRIO NÃO IDENTIFICADO';
-    }
-  }
+  // Se não foi encontrado nome de destinatário ou ficou genérico/sujo
+  destNome = sanitizeDestinatarioNome(destNome, destCNPJ, text);
 
   // Format CNPJs
   const emitCNPJFormatted = formatCNPJStr(emitCNPJRaw);

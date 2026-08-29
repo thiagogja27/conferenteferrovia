@@ -1,3 +1,5 @@
+import { sanitizeDestinatarioNome } from './destinatario-utils'
+
 export interface LogisticsAuditInputItem {
   id: string
   numero?: string
@@ -184,54 +186,13 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
   }
 
   // 3. Auditoria e Identificação de Destinatário
-  if (isNaoInformado(item.destNome)) {
-    if (/CORURIPE/i.test(fullText) || /12\.?229\.?415/i.test(fullText)) {
-      destinatarioCorrigido = 'S/A USINA CORURIPE ACUCAR E ALCOOL'
-      camposAjustados.push('destinatario')
-    } else if (/CARGILL/i.test(fullText)) {
-      destinatarioCorrigido = 'CARGILL AGRICOLA SA'
-      camposAjustados.push('destinatario')
-    } else if (/COPERSUCAR/i.test(fullText) || /10\.?265\.?949/i.test(fullText)) {
-      destinatarioCorrigido = 'COPERSUCAR S.A.'
-      camposAjustados.push('destinatario')
-    } else if (/RA[IÍ]ZEN/i.test(fullText)) {
-      destinatarioCorrigido = 'RAIZEN ENERGIA S.A.'
-      camposAjustados.push('destinatario')
-    } else if (/S[AÃ]O\s*MARTINHO/i.test(fullText)) {
-      destinatarioCorrigido = 'USINA SAO MARTINHO S/A'
-      camposAjustados.push('destinatario')
-    } else if (/ADECOAGRO/i.test(fullText)) {
-      destinatarioCorrigido = 'ADECOAGRO VALE DO IVINHEMA S.A.'
-      camposAjustados.push('destinatario')
-    } else if (/ALTA\s*MOGIANA/i.test(fullText)) {
-      destinatarioCorrigido = 'USINA ALTA MOGIANA S/A - ACUCAR E ALCOOL'
-      camposAjustados.push('destinatario')
-    } else if (/SANTA\s*TEREZINHA|USACUCAR/i.test(fullText)) {
-      destinatarioCorrigido = 'USINA SANTA TEREZINHA LTDA'
-      camposAjustados.push('destinatario')
-    } else if (/BATATAIS/i.test(fullText)) {
-      destinatarioCorrigido = 'USINA BATATAIS S/A ACUCAR E ALCOOL'
-      camposAjustados.push('destinatario')
-    } else if (/TEREOS|GUARANI/i.test(fullText)) {
-      destinatarioCorrigido = 'TEREOS ACUCAR E ENERGIA BRASIL S.A.'
-      camposAjustados.push('destinatario')
-    } else if (/BP\s*BUNGE|BUNGE/i.test(fullText)) {
-      destinatarioCorrigido = 'BP BUNGE BIOENERGIA S.A.'
-      camposAjustados.push('destinatario')
-    } else if (/COFCO/i.test(fullText)) {
-      destinatarioCorrigido = 'COFCO INTERNATIONAL BRASIL S.A.'
-      camposAjustados.push('destinatario')
-    } else if (/LOUIS\s*DREYFUS|LDC/i.test(fullText)) {
-      destinatarioCorrigido = 'LOUIS DREYFUS COMPANY BRASIL S.A.'
-      camposAjustados.push('destinatario')
-    } else if (/AMAGGI/i.test(fullText)) {
-      destinatarioCorrigido = 'AMAGGI EXPORTACAO E IMPORTACAO LTDA'
-      camposAjustados.push('destinatario')
-    } else if (/ADM\s*DO\s*BRASIL/i.test(fullText)) {
-      destinatarioCorrigido = 'ADM DO BRASIL LTDA'
+  const cleanDest = sanitizeDestinatarioNome(item.destNome, item.destCNPJ, fullText)
+  if (isNaoInformado(item.destNome) || (item.destNome && item.destNome !== cleanDest)) {
+    if (cleanDest && !isNaoInformado(cleanDest)) {
+      destinatarioCorrigido = cleanDest
       camposAjustados.push('destinatario')
     } else if (item.destCNPJ) {
-      destinatarioCorrigido = `DESTINATÁRIO (CNPJ ${item.destCNPJ})`
+      destinatarioCorrigido = `DESTINATÁRIO (${item.destCNPJ})`
       camposAjustados.push('destinatario')
     }
   }

@@ -13,6 +13,11 @@ import {
   type LogisticsAuditResultItem,
   type NoteLogisticsOverride,
 } from "@/lib/logistics-ai-auditor"
+import {
+  sanitizeDestinatarioNome,
+  formatCNPJ,
+  extractCNPJFilial,
+} from "@/lib/destinatario-utils"
 
 import {
   BarChart,
@@ -104,42 +109,22 @@ export function getNoteDetails(
 
   const emitCNPJ = nfe?.emitente?.cnpj || parsed?.emitCNPJ || ""
 
-  let destNome = "Não informado"
-  if (nfe?.destinatario?.nome && nfe.destinatario.nome !== "DESTINATÁRIO NÃO IDENTIFICADO") {
-    destNome = nfe.destinatario.nome
-  } else if (parsed?.destNome && parsed.destNome !== "DESTINATÁRIO NÃO IDENTIFICADO") {
-    destNome = parsed.destNome
-  }
+  const rawDestNome =
+    nfe?.destinatario?.nome && nfe.destinatario.nome !== "DESTINATÁRIO NÃO IDENTIFICADO"
+      ? nfe.destinatario.nome
+      : parsed?.destNome && parsed.destNome !== "DESTINATÁRIO NÃO IDENTIFICADO"
+      ? parsed.destNome
+      : ""
 
-  const destCNPJ = nfe?.destinatario?.cpfCnpj || parsed?.destCNPJ || ""
+  const rawDestCnpj = nfe?.destinatario?.cpfCnpj || parsed?.destCNPJ || ""
   const infCpl = nfe?.informacoesComplementares || parsed?.infCpl || rawXml || f.rawSnippet || ""
 
-  // Normalizações inteligentes para garantir exibição precisa no Dashboard
-  if (/CORURIPE/i.test(destNome) || /12\.?229\.?415/i.test(destCNPJ) || /12229415/i.test(destCNPJ) || /CORURIPE/i.test(infCpl)) {
-    destNome = "S/A USINA CORURIPE ACUCAR E ALCOOL"
-  } else if (destNome === "Não informado" || destNome === "DESTINATÁRIO NÃO IDENTIFICADO" || /DESTINAT/i.test(destNome)) {
-    if (/CARGILL/i.test(infCpl) || /CARGILL/i.test(rawXml)) {
-      destNome = "CARGILL AGRICOLA SA"
-    } else if (/COPERSUCAR/i.test(infCpl) || /COPERSUCAR/i.test(rawXml)) {
-      destNome = "COPERSUCAR S.A."
-    } else if (/RAIZEN|RAÍZEN/i.test(infCpl) || /RAIZEN/i.test(rawXml)) {
-      destNome = "RAIZEN ENERGIA S.A."
-    } else if (/SAO MARTINHO|SÃO MARTINHO/i.test(infCpl) || /SAO MARTINHO/i.test(rawXml)) {
-      destNome = "USINA SAO MARTINHO S/A"
-    } else if (/ADECOAGRO/i.test(infCpl) || /ADECOAGRO/i.test(rawXml)) {
-      destNome = "ADECOAGRO VALE DO IVINHEMA S.A."
-    } else if (/ALTA MOGIANA/i.test(infCpl) || /ALTA MOGIANA/i.test(rawXml)) {
-      destNome = "USINA ALTA MOGIANA S/A - ACUCAR E ALCOOL"
-    } else if (/BATATAIS/i.test(infCpl) || /BATATAIS/i.test(rawXml)) {
-      destNome = "USINA BATATAIS S/A ACUCAR E ALCOOL"
-    } else if (/TEREOS|GUARANI/i.test(infCpl) || /TEREOS/i.test(rawXml)) {
-      destNome = "TEREOS ACUCAR E ENERGIA BRASIL S.A."
-    } else if (/BP BUNGE/i.test(infCpl) || /BP BUNGE/i.test(rawXml)) {
-      destNome = "BP BUNGE BIOENERGIA S.A."
-    } else if (destCNPJ) {
-      destNome = `DESTINATÁRIO (${destCNPJ})`
-    }
-  }
+  let destNome = sanitizeDestinatarioNome(
+    rawDestNome,
+    rawDestCnpj,
+    `${infCpl} ${rawXml} ${f.rawSnippet || ""}`
+  )
+  const destCNPJ = rawDestCnpj ? formatCNPJ(rawDestCnpj) : ""
 
   let produto = "Outros"
   if (nfe?.tipoProduto && nfe.tipoProduto !== "OUTRO") {
@@ -206,7 +191,7 @@ export function getNoteDetails(
       aiCamposAjustados.push("Transbordo")
     }
     if (override.destNome && override.destNome !== destNome) {
-      destNome = override.destNome
+      destNome = sanitizeDestinatarioNome(override.destNome, destCNPJ)
       isAIAjustado = true
       aiCamposAjustados.push("Destinatário")
     }
@@ -310,8 +295,10 @@ export function Dashboard({ files }: DashboardProps) {
     )
 
     // Contadores e Listas de arquivos por chave
-    const destinatarioCount: Record<string, number> = {}
-    const destinatarioFiles: Record<string, DashboardFileItem[]> = {}
+    const destinatarioGroupCounts: Record<string, number> = {}
+    const destinatarioGroupFiles: Record<string, DashboardFileItem[]> = {}
+    const destinatarioGroupMeta: Record<string, { destNome: string; destCNPJ: string }> = {}
+    const destNomeToCnpjsMap = new Map<string, Set<string>>()
 
     const terminalCount: Record<string, number> = {}
     const terminalFiles: Record<string, DashboardFileItem[]> = {}
@@ -343,11 +330,22 @@ export function Dashboard({ files }: DashboardProps) {
         totalNotesWithMissingData++
       }
 
-      // Destinatário
-      const destKey = details.destNome
-      destinatarioCount[destKey] = (destinatarioCount[destKey] || 0) + 1
-      if (!destinatarioFiles[destKey]) destinatarioFiles[destKey] = []
-      destinatarioFiles[destKey].push(f)
+      // Destinatário: agrupado por nome + CNPJ para identificar filiais distintas
+      const dNome = details.destNome
+      const dCnpj = details.destCNPJ || ""
+      const destGroupKey = dCnpj ? `${dNome}###${dCnpj}` : dNome
+
+      destinatarioGroupCounts[destGroupKey] = (destinatarioGroupCounts[destGroupKey] || 0) + 1
+      if (!destinatarioGroupFiles[destGroupKey]) destinatarioGroupFiles[destGroupKey] = []
+      destinatarioGroupFiles[destGroupKey].push(f)
+      destinatarioGroupMeta[destGroupKey] = { destNome: dNome, destCNPJ: dCnpj }
+
+      if (!destNomeToCnpjsMap.has(dNome)) {
+        destNomeToCnpjsMap.set(dNome, new Set())
+      }
+      if (dCnpj) {
+        destNomeToCnpjsMap.get(dNome)!.add(dCnpj)
+      }
 
       // Terminal
       const termKey = details.terminal
@@ -367,6 +365,80 @@ export function Dashboard({ files }: DashboardProps) {
       if (!transbordoFiles[transKey]) transbordoFiles[transKey] = []
       transbordoFiles[transKey].push(f)
     })
+
+    // Paleta rica de cores distintas para diferenciar destinatários e filiais com mesmo nome
+    const DEST_BRANCH_COLORS = [
+      "#2563eb", // Azul Royal
+      "#10b981", // Verde Esmeralda
+      "#f97316", // Laranja Vivo
+      "#8b5cf6", // Violeta
+      "#ec4899", // Rosa
+      "#06b6d4", // Ciano
+      "#eab308", // Amarelo Dourado
+      "#14b8a6", // Teal / Verde Água
+      "#6366f1", // Índigo
+      "#84cc16", // Lima
+      "#d946ef", // Fúcsia
+      "#0284c7", // Azul Céu
+    ]
+
+    // Mapeia índices de cores para cada CNPJ de um mesmo destinatário
+    const destCnpjColorIndexMap = new Map<string, number>()
+    destNomeToCnpjsMap.forEach((cnpjs, nome) => {
+      const cnpjsArr = Array.from(cnpjs)
+      cnpjsArr.forEach((cnpj, idx) => {
+        destCnpjColorIndexMap.set(`${nome}###${cnpj}`, idx)
+      })
+    })
+
+    const destinatariosChartData = Object.entries(destinatarioGroupCounts)
+      .map(([groupKey, value]) => {
+        const meta = destinatarioGroupMeta[groupKey] || { destNome: groupKey, destCNPJ: "" }
+        const { destNome, destCNPJ } = meta
+        const cnpjsForThisNome = destNomeToCnpjsMap.get(destNome)
+        const hasMultipleBranches = !!(cnpjsForThisNome && cnpjsForThisNome.size > 1)
+        const isMissing =
+          destNome === "Não Informado" ||
+          destNome === "Não informado" ||
+          destNome === "DESTINATÁRIO NÃO IDENTIFICADO" ||
+          destNome.startsWith("DESTINATÁRIO (")
+
+        let displayName = destNome
+        if (hasMultipleBranches && destCNPJ) {
+          const filialShort = extractCNPJFilial(destCNPJ)
+          const baseTrunc = destNome.length > 20 ? destNome.substring(0, 18) + "..." : destNome
+          displayName = `${baseTrunc} (${filialShort})`
+        } else if (destNome.length > 30) {
+          displayName = destNome.substring(0, 28) + "..."
+        }
+
+        const fullName = destCNPJ ? `${destNome} (CNPJ: ${destCNPJ})` : destNome
+
+        // Cor da barra: quando o CNPJ for diferente para o mesmo nome, atribui cor diferente da paleta
+        let barColor = "#2563eb"
+        if (isMissing) {
+          barColor = "#f59e0b"
+        } else if (hasMultipleBranches && destCNPJ) {
+          const colorIdx = destCnpjColorIndexMap.get(groupKey) ?? 0
+          barColor = DEST_BRANCH_COLORS[colorIdx % DEST_BRANCH_COLORS.length]
+        } else {
+          barColor = "#2563eb"
+        }
+
+        return {
+          name: displayName,
+          fullName,
+          destNome,
+          destCNPJ,
+          value,
+          color: barColor,
+          hasMultipleBranches,
+          relatedFiles: destinatarioGroupFiles[groupKey] || [],
+          isMissing,
+        }
+      })
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10)
 
     const toChartData = (
       counts: Record<string, number>,
@@ -392,7 +464,8 @@ export function Dashboard({ files }: DashboardProps) {
     return {
       totalNotas: validFiles.length,
       allFiles: validFiles,
-      destinatarios: toChartData(destinatarioCount, destinatarioFiles),
+      destinatarios: destinatariosChartData,
+      totalDestinatariosUnicos: Object.keys(destinatarioGroupCounts).length,
       terminais: toChartData(terminalCount, terminalFiles),
       produtos: toChartData(produtoCount, produtoFiles),
       transbordos: toChartData(transbordoCount, transbordoFiles),
@@ -872,14 +945,35 @@ export function Dashboard({ files }: DashboardProps) {
                   <YAxis
                     dataKey="name"
                     type="category"
-                    width={160}
+                    width={170}
                     tick={{ fontSize: 11 }}
                   />
                   <Tooltip
-                    formatter={(value, _, props) => [
-                      `${value} nota(s)`,
-                      props.payload.fullName,
-                    ]}
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length > 0) {
+                        const data = payload[0].payload
+                        return (
+                          <div className="bg-white dark:bg-zinc-900 p-2.5 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-800 text-xs space-y-1 z-50">
+                            <div className="font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                              <span
+                                className="inline-block w-3 h-3 rounded-full shrink-0"
+                                style={{ backgroundColor: data.color || "#2563eb" }}
+                              />
+                              {data.destNome || data.fullName}
+                            </div>
+                            {data.destCNPJ && (
+                              <div className="text-zinc-600 dark:text-zinc-400 font-mono text-[11px]">
+                                CNPJ / Filial: <span className="font-bold text-zinc-800 dark:text-zinc-200">{data.destCNPJ}</span>
+                              </div>
+                            )}
+                            <div className="text-blue-600 dark:text-blue-400 font-semibold pt-0.5">
+                              {data.value} nota(s) ({((data.value / (stats.totalNotas || 1)) * 100).toFixed(1)}%)
+                            </div>
+                          </div>
+                        )
+                      }
+                      return null
+                    }}
                   />
                   <Bar
                     dataKey="value"
@@ -889,7 +983,7 @@ export function Dashboard({ files }: DashboardProps) {
                     {stats.destinatarios.map((entry, index) => (
                       <Cell
                         key={`dest-cell-${index}`}
-                        fill={entry.isMissing ? "#f59e0b" : "#0088FE"}
+                        fill={entry.isMissing ? "#f59e0b" : (entry.color || COLORS[index % COLORS.length])}
                       />
                     ))}
                   </Bar>
