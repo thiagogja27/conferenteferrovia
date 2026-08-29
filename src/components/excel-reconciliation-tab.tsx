@@ -4,6 +4,12 @@ import React, { useState, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { verifyChaveCNPJ, type NFEData } from '@/lib/nfe-parser'
+import {
+  type CteData,
+  processCteFile,
+  normalizarVagao,
+  extrairApenasDigitosVagao,
+} from '@/lib/cte-parser'
 import * as XLSX from 'xlsx'
 import {
   FileSpreadsheet,
@@ -28,6 +34,8 @@ import {
   Zap,
   CheckCheck,
   Sparkles,
+  TrainTrack,
+  FileText,
 } from 'lucide-react'
 import {
   auditarDivergenciasComIA,
@@ -209,6 +217,75 @@ export function ExcelReconciliationTab({
   const [excelFilter, setExcelFilter] = useState<'all' | 'matched' | 'unmatched' | 'excel_only' | 'weight_divergent'>('all')
   const [excelSearchQuery, setExcelSearchQuery] = useState<string>('')
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  // Estados para CT-e (Conhecimento de Transporte Eletrônico - Transbordo / Expedidor)
+  const [cteList, setCteList] = useState<CteData[]>([])
+  const [isCteLoading, setIsCteLoading] = useState<boolean>(false)
+  const [cteUploadFeedback, setCteUploadFeedback] = useState<string | null>(null)
+  const cteInputRef = useRef<HTMLInputElement>(null)
+
+  const handleCteFilesUpload = async (filesToProcess: FileList | File[]) => {
+    const fileArray = Array.from(filesToProcess).filter((f) => {
+      const lower = f.name.toLowerCase()
+      return lower.endsWith('.pdf') || lower.endsWith('.xml')
+    })
+
+    if (fileArray.length === 0) {
+      alert('Nenhum arquivo PDF (DACTE) ou XML de CT-e válido selecionado.')
+      return
+    }
+
+    setIsCteLoading(true)
+    try {
+      const parsedList: CteData[] = []
+      for (const file of fileArray) {
+        try {
+          const cte = await processCteFile(file)
+          if (cte) {
+            parsedList.push(cte)
+          }
+        } catch (err) {
+          console.warn(`Erro ao processar CT-e ${file.name}:`, err)
+        }
+      }
+
+      if (parsedList.length > 0) {
+        setCteList((prev) => {
+          const existingKeys = new Set(prev.map((c) => c.chaveAcesso || c.fileName))
+          const newOnes = parsedList.filter((c) => !existingKeys.has(c.chaveAcesso || c.fileName))
+          return [...prev, ...newOnes]
+        })
+
+        const totalVagoes = parsedList.reduce((acc, c) => acc + c.vagoes.length, 0)
+        const expedidoresNomes = Array.from(
+          new Set(
+            parsedList
+              .map((c) => c.expedidor.nome || c.expedidor.cnpjCpfFormatado || c.expedidor.cnpjCpf)
+              .filter(Boolean)
+          )
+        ).join(', ')
+
+        setCteUploadFeedback(
+          `${parsedList.length} CT-e(s) processado(s) com sucesso! ${
+            totalVagoes > 0 ? `${totalVagoes} vagão(ões) identificados.` : ''
+          } Expedidor (Transbordo): ${expedidoresNomes || 'Identificado'}`
+        )
+        setTimeout(() => setCteUploadFeedback(null), 9000)
+      } else {
+        alert('Nenhum CT-e válido com informações de expedidor/transbordo pôde ser extraído dos arquivos selecionados.')
+      }
+    } catch (err) {
+      console.error('Erro ao ler arquivos de CT-e:', err)
+      alert('Erro ao processar arquivos de CT-e.')
+    } finally {
+      setIsCteLoading(false)
+    }
+  }
+
+  const handleRemoveAllCtes = () => {
+    setCteList([])
+    setCteUploadFeedback(null)
+  }
 
   // Estados para Auditoria de IA
   const [auditResultsMap, setAuditResultsMap] = useState<Record<string, WeightAuditItemResult>>({})
@@ -433,9 +510,15 @@ export function ExcelReconciliationTab({
               const taraStr = rowTara
                 ? rowTara.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
                 : undefined
-              const pesoBrutoStr = rowBruto
-                ? rowBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
-                : (rowPesoNotaVagao && rowTara ? (rowPesoNotaVagao + rowTara).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : undefined)
+
+              // O BRUTO DEVE SER IGUAL A TARA + PESO_NOTA_VAGAO
+              const calculatedBruto = (rowTara || 0) + (rowPesoNotaVagao || 0) > 0
+                ? Math.round(((rowTara || 0) + (rowPesoNotaVagao || 0)) * 1000) / 1000
+                : rowBruto
+
+              const pesoBrutoStr = calculatedBruto
+                ? calculatedBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+                : undefined
 
               const matchInfo: ExcelMatchInfo = {
                 row: rowNumber,
@@ -448,7 +531,7 @@ export function ExcelReconciliationTab({
                 tara: rowTara,
                 taraStr,
                 vagao: rowVagao,
-                pesoBruto: rowBruto,
+                pesoBruto: calculatedBruto,
                 pesoBrutoStr,
               }
 
@@ -686,6 +769,55 @@ export function ExcelReconciliationTab({
       }
     })
 
+    // Mapeamento e consolidação de CT-es carregados para extração e validação do Transbordo (Expedidor)
+    const cteByVagaoMap = new Map<string, CteData>()
+    const cteByNumVagaoMap = new Map<string, CteData>()
+    const cteByChaveNfeMap = new Map<string, CteData>()
+    const cteByNumNfeMap = new Map<string, CteData>()
+
+    const transbordoCnpjsSet = new Set<string>()
+    let predominantExpedidorCnpj = ''
+    let predominantExpedidorNome = ''
+    let predominantExpedidorMun = ''
+
+    cteList.forEach((cte) => {
+      const cnpj = cte.expedidor.cnpjCpfFormatado || cte.expedidor.cnpjCpf || cte.expedidor.cnpjApenasDigitos
+      if (cnpj) {
+        transbordoCnpjsSet.add(cnpj)
+        if (!predominantExpedidorCnpj) {
+          predominantExpedidorCnpj = cnpj
+          predominantExpedidorNome = cte.expedidor.nome || ''
+          predominantExpedidorMun = cte.expedidor.municipio || ''
+        }
+      }
+
+      cte.vagoes.forEach((v) => {
+        if (v.vagaoNormalizado) {
+          cteByVagaoMap.set(v.vagaoNormalizado, cte)
+        }
+        if (v.numeroApenas) {
+          cteByNumVagaoMap.set(v.numeroApenas, cte)
+        }
+        if (v.numero) {
+          const cleanV = v.numero.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+          cteByVagaoMap.set(cleanV, cte)
+        }
+      })
+      cte.documentosOriginarios.forEach((doc) => {
+        if (doc.chaveNfe) {
+          cteByChaveNfeMap.set(doc.chaveNfe, cte)
+        }
+        if (doc.numeroNfe) {
+          cteByNumNfeMap.set(doc.numeroNfe, cte)
+          cteByNumNfeMap.set(doc.numeroNfe.replace(/^0+/, ''), cte)
+        }
+      })
+    })
+
+    const uniqueTransbordoCnpjs = Array.from(transbordoCnpjsSet)
+    const isSingleTransbordo = uniqueTransbordoCnpjs.length === 1
+    const globalTransbordoCnpj = isSingleTransbordo ? uniqueTransbordoCnpjs[0] : (predominantExpedidorCnpj || '')
+
     const digitacaoRows: any[] = []
 
     rawWorkbook.SheetNames.forEach((sheetName) => {
@@ -754,6 +886,7 @@ export function ExcelReconciliationTab({
       const cnpjDestinatarioCol = findColIdx(['CNPJ_DESTINATARIO', 'CNPJ DESTINATARIO', 'DESTINATARIO_CNPJ', 'CNPJ_DEST', 'DEST_CNPJ', 'DESTINATARIO'])
       const numeroCol = findColIdx(['NUMERO', 'NÚMERO', 'Nº NOTA', 'NR_NOTA', 'NNF', 'NUM_NOTA', 'NUMERO_NOTA', 'NOTA'])
       const chaveCol = findColIdx(['CHAVE', 'CHAVE_DE_ACESSO', 'CHAVE DE ACESSO', 'CHAVE_ACESSO', 'NFE_CHAVE', 'CHAVENFE'])
+      const transbordoExcelCol = findColIdx(['TRANSBORDO DO CTE', 'TRANSBORDO_DO_CTE', 'TRANSBORDO', 'CNPJ_TRANSBORDO', 'CNPJ TRANSBORDO', 'EXPEDIDOR', 'CNPJ_EXPEDIDOR'])
 
       // Percorrer todas as linhas na sequência exata sem remover duplicadas
       for (let r = headerRowIdx + 1; r < sheetJson.length; r++) {
@@ -800,11 +933,25 @@ export function ExcelReconciliationTab({
           vagaoFinal = serieRaw || vagaoRaw || ''
         }
 
-        // 2. BRUTO: multiplicar por 1000 se não estiver em KG
-        const brutoFinal = brutoCol !== -1 ? normalizeWeightKg(row[brutoCol]) : ''
-
         // 3. TARA: multiplicar por 1000 se não estiver em KG
         const taraFinal = taraCol !== -1 ? normalizeWeightKg(row[taraCol]) : ''
+
+        // 5. PESO_SELECIONADO: multiplicar por 1000 se não estiver em KG
+        const pesoSelecionadoFinal = pesoSelecionadoCol !== -1 ? normalizeWeightKg(row[pesoSelecionadoCol]) : ''
+
+        // 6. PESO_NOTA_VAGAO: multiplicar por 1000 se não estiver em KG
+        const pesoNotaVagaoFinal = pesoNotaVagaoCol !== -1 ? normalizeWeightKg(row[pesoNotaVagaoCol]) : ''
+
+        // 2. BRUTO: O BRUTO DEVE SER IGUAL A COLUNA TARA + PESO_NOTA_VAGAO
+        let brutoFinal: number | string = ''
+        const taraNum = typeof taraFinal === 'number' ? taraFinal : (taraFinal ? parseBRFloat(taraFinal) : 0)
+        const pesoNotaNum = typeof pesoNotaVagaoFinal === 'number' ? pesoNotaVagaoFinal : (pesoNotaVagaoFinal ? parseBRFloat(pesoNotaVagaoFinal) : 0)
+
+        if (taraNum > 0 || pesoNotaNum > 0) {
+          brutoFinal = Math.round((taraNum + pesoNotaNum) * 1000) / 1000
+        } else if (brutoCol !== -1 && row[brutoCol] !== undefined && row[brutoCol] !== null && String(row[brutoCol]).trim() !== '') {
+          brutoFinal = normalizeWeightKg(row[brutoCol])
+        }
 
         // 4. data_emissao: extrair somente a data (ex: "18/08/2026 15:02:12" -> "18/08/2026")
         let dataEmissaoFinal = ''
@@ -831,12 +978,6 @@ export function ExcelReconciliationTab({
             dataEmissaoFinal = rawData
           }
         }
-
-        // 5. PESO_SELECIONADO: multiplicar por 1000 se não estiver em KG
-        const pesoSelecionadoFinal = pesoSelecionadoCol !== -1 ? normalizeWeightKg(row[pesoSelecionadoCol]) : ''
-
-        // 6. PESO_NOTA_VAGAO: multiplicar por 1000 se não estiver em KG
-        const pesoNotaVagaoFinal = pesoNotaVagaoCol !== -1 ? normalizeWeightKg(row[pesoNotaVagaoCol]) : ''
 
         // 7. CNPJ_EMITENTE
         let cnpjEmitenteFinal = ''
@@ -881,6 +1022,40 @@ export function ExcelReconciliationTab({
           }
         }
 
+        // 11. transbordo do CTe: extrair do campo do expedidor do CT-e correspondente a este vagão/nota
+        const vagaoNorm = normalizarVagao(vagaoFinal)
+        const vagaoNumApenas = extrairApenasDigitosVagao(vagaoFinal)
+        const cleanVagaoUpper = vagaoFinal.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+
+        let matchedCte: CteData | undefined = undefined
+        if (cleanVagaoUpper && cteByVagaoMap.has(cleanVagaoUpper)) {
+          matchedCte = cteByVagaoMap.get(cleanVagaoUpper)
+        } else if (vagaoNorm && cteByVagaoMap.has(vagaoNorm)) {
+          matchedCte = cteByVagaoMap.get(vagaoNorm)
+        } else if (vagaoNumApenas && cteByNumVagaoMap.has(vagaoNumApenas)) {
+          matchedCte = cteByNumVagaoMap.get(vagaoNumApenas)
+        } else if (chaveFinal && cteByChaveNfeMap.has(chaveFinal)) {
+          matchedCte = cteByChaveNfeMap.get(chaveFinal)
+        } else if (numeroFinal && cteByNumNfeMap.has(String(numeroFinal).replace(/^0+/, ''))) {
+          matchedCte = cteByNumNfeMap.get(String(numeroFinal).replace(/^0+/, ''))
+        }
+
+        let transbordoCteFinal = ''
+        if (isSingleTransbordo && globalTransbordoCnpj) {
+          // Se todos os CT-es são do mesmo transbordo (ex: Pradópolis, Pederneiras), aplica o CNPJ a todas as linhas diretamente
+          transbordoCteFinal = globalTransbordoCnpj
+        } else if (matchedCte?.expedidor) {
+          transbordoCteFinal =
+            matchedCte.expedidor.cnpjCpfFormatado ||
+            matchedCte.expedidor.cnpjCpf ||
+            matchedCte.expedidor.cnpjApenasDigitos ||
+            ''
+        } else if (globalTransbordoCnpj) {
+          transbordoCteFinal = globalTransbordoCnpj
+        } else if (transbordoExcelCol !== -1 && row[transbordoExcelCol] !== undefined && row[transbordoExcelCol] !== null) {
+          transbordoCteFinal = String(row[transbordoExcelCol]).trim()
+        }
+
         digitacaoRows.push({
           'vagao': vagaoFinal,
           'BRUTO': brutoFinal,
@@ -892,6 +1067,7 @@ export function ExcelReconciliationTab({
           'CNPJ_DESTINATARIO': cnpjDestinatarioFinal,
           'NUMERO': numeroFinal,
           'CHAVE': chaveFinal,
+          'transbordo do CTe': transbordoCteFinal,
         })
       }
     })
@@ -1033,6 +1209,9 @@ export function ExcelReconciliationTab({
         'Nº Nota (nNF)': f.nfeData?.numero || '',
         'Série': f.nfeData?.serie || '',
         'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
+        'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
+        'Tara (Excel)': matchInfo?.taraStr || 'N/A',
+        'Peso Bruto (Tara + Peso Nota Vagão)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
         'Quantidade Extraída (Nota)': qtdNota,
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
@@ -1091,6 +1270,9 @@ export function ExcelReconciliationTab({
         'Nº Nota (nNF)': f.nfeData?.numero || '',
         'Série': f.nfeData?.serie || '',
         'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
+        'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
+        'Tara (Excel)': matchInfo?.taraStr || 'N/A',
+        'Peso Bruto (Tara + Peso Nota Vagão)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
         'Quantidade Extraída (Nota)': qtdNota,
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
@@ -1440,6 +1622,229 @@ export function ExcelReconciliationTab({
                     )}
                   </select>
                 </div>
+              </div>
+
+              {/* Seção de Integração com CT-e (DACTE / XML) para Transbordo */}
+              <div className="p-4 rounded-xl border border-sky-200 dark:border-sky-900/60 bg-sky-50/40 dark:bg-sky-950/20 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <div className="p-2 rounded-lg bg-sky-100 dark:bg-sky-900/60 text-sky-700 dark:text-sky-300 shrink-0">
+                      <TrainTrack className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-xs font-bold text-sky-950 dark:text-sky-100">
+                          CT-e de Transporte Ferroviário (Transbordo)
+                        </h4>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-100 text-sky-800 dark:bg-sky-900/70 dark:text-sky-300">
+                          {cteList.length > 0 ? `${cteList.length} CT-e(s) ativo(s)` : 'Opcional'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-sky-800/80 dark:text-sky-300/80 mt-0.5">
+                        Carregue os arquivos PDF (DACTE) ou XML do CT-e para extrair automaticamente o CNPJ do Expedidor e preencher a coluna <strong className="font-semibold text-sky-900 dark:text-sky-200">&quot;transbordo do CTe&quot;</strong> para cada vagão na Planilha de Digitação.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <input
+                      type="file"
+                      ref={cteInputRef}
+                      multiple
+                      accept=".pdf,.xml"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files.length > 0) {
+                          handleCteFilesUpload(e.target.files)
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      onClick={() => cteInputRef.current?.click()}
+                      disabled={isCteLoading}
+                      size="sm"
+                      className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs gap-1.5 cursor-pointer shadow-sm"
+                    >
+                      {isCteLoading ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Processando CT-e...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="h-3.5 w-3.5" />
+                          {cteList.length > 0 ? 'Adicionar mais CT-e(s)' : 'Carregar CT-e (PDF/XML)'}
+                        </>
+                      )}
+                    </Button>
+
+                    {cteList.length > 0 && (
+                      <Button
+                        type="button"
+                        onClick={handleRemoveAllCtes}
+                        size="sm"
+                        variant="ghost"
+                        className="text-xs text-zinc-500 hover:text-red-600 dark:hover:text-red-400 cursor-pointer h-8 px-2"
+                        title="Limpar todos os CT-es carregados"
+                      >
+                        <X className="h-3.5 w-3.5 mr-1" />
+                        Limpar
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {cteUploadFeedback && (
+                  <div className="p-2.5 rounded-lg bg-sky-100/80 border border-sky-300 dark:bg-sky-950/60 dark:border-sky-800 text-sky-900 dark:text-sky-200 text-xs font-medium flex items-center justify-between">
+                    <span>{cteUploadFeedback}</span>
+                    <button
+                      type="button"
+                      onClick={() => setCteUploadFeedback(null)}
+                      className="text-sky-700 hover:text-sky-900 dark:text-sky-300 text-xs ml-2 cursor-pointer font-bold"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+
+                {/* Card de Validação Consolidada de Transbordo */}
+                {(() => {
+                  if (cteList.length === 0) return null
+
+                  const transbordoCnpjsMap = new Map<string, { nome: string; municipio: string; count: number }>()
+                  cteList.forEach((c) => {
+                    const cnpj = c.expedidor.cnpjCpfFormatado || c.expedidor.cnpjCpf || c.expedidor.cnpjApenasDigitos
+                    if (cnpj) {
+                      const prev = transbordoCnpjsMap.get(cnpj) || {
+                        nome: c.expedidor.nome || '',
+                        municipio: c.expedidor.municipio || '',
+                        count: 0,
+                      }
+                      prev.count += 1
+                      if (!prev.nome && c.expedidor.nome) prev.nome = c.expedidor.nome
+                      if (!prev.municipio && c.expedidor.municipio) prev.municipio = c.expedidor.municipio
+                      transbordoCnpjsMap.set(cnpj, prev)
+                    }
+                  })
+
+                  const uniqueCnpjs = Array.from(transbordoCnpjsMap.keys())
+                  const isHomogeneous = uniqueCnpjs.length === 1
+
+                  if (isHomogeneous && uniqueCnpjs[0]) {
+                    const cnpj = uniqueCnpjs[0]
+                    const info = transbordoCnpjsMap.get(cnpj)!
+                    return (
+                      <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100 flex items-start gap-3">
+                        <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                        <div className="space-y-1 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-emerald-950 dark:text-emerald-50 text-sm">
+                              Transbordo 100% Homogêneo e Validado
+                            </span>
+                            <span className="px-2 py-0.5 rounded text-[11px] font-extrabold bg-emerald-200/80 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-200">
+                              {cteList.length} de {cteList.length} CT-e(s)
+                            </span>
+                          </div>
+                          <div className="text-emerald-800 dark:text-emerald-200">
+                            Todos os CT-es carregados apontam para o mesmo Transbordo/Expedidor:{' '}
+                            <strong className="font-mono font-bold text-emerald-950 dark:text-emerald-100 text-xs bg-emerald-100/80 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded">
+                              {cnpj}
+                            </strong>
+                            {info.nome && <span className="font-semibold ml-1.5">— {info.nome}</span>}
+                            {info.municipio && <span className="ml-1">({info.municipio})</span>}
+                          </div>
+                          <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                            ✓ <strong>Preenchimento Automático Global:</strong> Todas as linhas da Planilha de Digitação receberão o CNPJ <code>{cnpj}</code> na coluna <strong>&quot;transbordo do CTe&quot;</strong>, sem necessidade de correlação individual de vagão.
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  if (uniqueCnpjs.length > 1) {
+                    return (
+                      <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-100 flex items-start gap-3">
+                        <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                        <div className="space-y-1 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-amber-950 dark:text-amber-50 text-sm">
+                              Atenção: Múltiplos CNPJs de Transbordo Detectados nos CT-es
+                            </span>
+                            <span className="px-2 py-0.5 rounded text-[11px] font-extrabold bg-amber-200 text-amber-900 dark:bg-amber-900 dark:text-amber-200">
+                              {uniqueCnpjs.length} transbordos distintos
+                            </span>
+                          </div>
+                          <div className="text-amber-800 dark:text-amber-200">
+                            Foram identificados CT-es com CNPJs de expedidor diferentes:{' '}
+                            {uniqueCnpjs.map((c) => {
+                              const inf = transbordoCnpjsMap.get(c)
+                              return (
+                                <span key={c} className="font-mono font-bold bg-amber-100 dark:bg-amber-900/60 px-1.5 py-0.5 rounded mr-1.5">
+                                  {c} {inf?.nome ? `(${inf.nome})` : ''}
+                                </span>
+                              )
+                            })}
+                          </div>
+                          <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                            O sistema utilizará a correlação individual por NF-e ou preencherá com o transbordo correspondente.
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  return null
+                })()}
+
+                {cteList.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                    {cteList.map((cte, idx) => {
+                      const expedidorCnpj =
+                        cte.expedidor.cnpjCpfFormatado ||
+                        cte.expedidor.cnpjCpf ||
+                        cte.expedidor.cnpjApenasDigitos ||
+                        'N/I'
+                      const vagoesList = cte.vagoes.map((v) => v.numero).filter(Boolean).join(', ')
+
+                      return (
+                        <div
+                          key={cte.chaveAcesso || cte.fileName || idx}
+                          className="p-2.5 rounded-lg bg-white dark:bg-zinc-900 border border-sky-200 dark:border-sky-900/60 text-xs flex flex-col justify-between space-y-1.5"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-1.5 overflow-hidden">
+                              <FileText className="h-4 w-4 text-sky-600 shrink-0" />
+                              <span className="font-semibold text-zinc-900 dark:text-zinc-100 truncate" title={cte.fileName}>
+                                {cte.numero ? `CT-e Nº ${cte.numero}` : cte.fileName}
+                              </span>
+                            </div>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-300 shrink-0">
+                              {cte.vagoes.length > 0 ? `${cte.vagoes.length} vagão(ões)` : 'Sem vagão'}
+                            </span>
+                          </div>
+
+                          <div className="space-y-0.5 text-[11px]">
+                            <div className="text-zinc-600 dark:text-zinc-400">
+                              <span className="font-semibold text-sky-800 dark:text-sky-300">CNPJ Transbordo:</span>{' '}
+                              <span className="font-mono text-zinc-800 dark:text-zinc-200 font-bold">{expedidorCnpj}</span>
+                            </div>
+                            {cte.expedidor.nome && (
+                              <div className="text-zinc-500 dark:text-zinc-400 truncate" title={cte.expedidor.nome}>
+                                {cte.expedidor.nome} {cte.expedidor.municipio ? `(${cte.expedidor.municipio})` : ''}
+                              </div>
+                            )}
+                            {vagoesList ? (
+                              <div className="text-[10px] text-zinc-500 dark:text-zinc-400 truncate" title={`Vagões: ${vagoesList}`}>
+                                <span className="font-semibold text-zinc-700 dark:text-zinc-300">Vagão(ões):</span> {vagoesList}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Banner de Auditoria IA se houver divergências de peso */}

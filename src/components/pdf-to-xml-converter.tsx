@@ -1669,6 +1669,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       const cnpjDestinatarioCol = findColIdx(['CNPJ_DESTINATARIO', 'CNPJ DESTINATARIO', 'DESTINATARIO_CNPJ', 'CNPJ_DEST', 'DEST_CNPJ', 'DESTINATARIO'])
       const numeroCol = findColIdx(['NUMERO', 'NÚMERO', 'Nº NOTA', 'NR_NOTA', 'NNF', 'NUM_NOTA', 'NUMERO_NOTA', 'NOTA'])
       const chaveCol = findColIdx(['CHAVE', 'CHAVE_DE_ACESSO', 'CHAVE DE ACESSO', 'CHAVE_ACESSO', 'NFE_CHAVE', 'CHAVENFE'])
+      const transbordoExcelCol = findColIdx(['TRANSBORDO DO CTE', 'TRANSBORDO_DO_CTE', 'TRANSBORDO', 'CNPJ_TRANSBORDO', 'CNPJ TRANSBORDO', 'EXPEDIDOR', 'CNPJ_EXPEDIDOR'])
 
       // Percorrer todas as linhas na sequência exata sem remover duplicadas
       for (let r = headerRowIdx + 1; r < sheetJson.length; r++) {
@@ -1715,11 +1716,25 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           vagaoFinal = serieRaw || vagaoRaw || ''
         }
 
-        // 2. BRUTO: multiplicar por 1000 se não estiver em KG
-        const brutoFinal = brutoCol !== -1 ? normalizeWeightKg(row[brutoCol]) : ''
-
         // 3. TARA: multiplicar por 1000 se não estiver em KG
         const taraFinal = taraCol !== -1 ? normalizeWeightKg(row[taraCol]) : ''
+
+        // 5. PESO_SELECIONADO: multiplicar por 1000 se não estiver em KG
+        const pesoSelecionadoFinal = pesoSelecionadoCol !== -1 ? normalizeWeightKg(row[pesoSelecionadoCol]) : ''
+
+        // 6. PESO_NOTA_VAGAO: multiplicar por 1000 se não estiver em KG
+        const pesoNotaVagaoFinal = pesoNotaVagaoCol !== -1 ? normalizeWeightKg(row[pesoNotaVagaoCol]) : ''
+
+        // 2. BRUTO: O BRUTO DEVE SER IGUAL A COLUNA TARA + PESO_NOTA_VAGAO
+        let brutoFinal: number | string = ''
+        const taraNum = typeof taraFinal === 'number' ? taraFinal : (taraFinal ? parseBRFloat(taraFinal) : 0)
+        const pesoNotaNum = typeof pesoNotaVagaoFinal === 'number' ? pesoNotaVagaoFinal : (pesoNotaVagaoFinal ? parseBRFloat(pesoNotaVagaoFinal) : 0)
+
+        if (taraNum > 0 || pesoNotaNum > 0) {
+          brutoFinal = Math.round((taraNum + pesoNotaNum) * 1000) / 1000
+        } else if (brutoCol !== -1 && row[brutoCol] !== undefined && row[brutoCol] !== null && String(row[brutoCol]).trim() !== '') {
+          brutoFinal = normalizeWeightKg(row[brutoCol])
+        }
 
         // 4. data_emissao: extrair somente a data (ex: "18/08/2026 15:02:12" -> "18/08/2026")
         let dataEmissaoFinal = ''
@@ -1748,12 +1763,6 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             dataEmissaoFinal = rawData
           }
         }
-
-        // 5. PESO_SELECIONADO: multiplicar por 1000 se não estiver em KG
-        const pesoSelecionadoFinal = pesoSelecionadoCol !== -1 ? normalizeWeightKg(row[pesoSelecionadoCol]) : ''
-
-        // 6. PESO_NOTA_VAGAO: multiplicar por 1000 se não estiver em KG
-        const pesoNotaVagaoFinal = pesoNotaVagaoCol !== -1 ? normalizeWeightKg(row[pesoNotaVagaoCol]) : ''
 
         // 7. CNPJ_EMITENTE
         let cnpjEmitenteFinal = ''
@@ -1804,6 +1813,11 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           }
         }
 
+        let transbordoFinal = ''
+        if (transbordoExcelCol !== -1 && row[transbordoExcelCol] !== undefined && row[transbordoExcelCol] !== null) {
+          transbordoFinal = String(row[transbordoExcelCol]).trim()
+        }
+
         digitacaoRows.push({
           'vagao': vagaoFinal,
           'BRUTO': brutoFinal,
@@ -1815,6 +1829,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           'CNPJ_DESTINATARIO': cnpjDestinatarioFinal,
           'NUMERO': numeroFinal,
           'CHAVE': chaveFinal,
+          'transbordo do CTe': transbordoFinal,
         })
       }
     })
@@ -1956,6 +1971,9 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         'Nº Nota (nNF)': d?.nNF || '',
         'Série': d?.serie || '',
         'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
+        'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
+        'Tara (Excel)': matchInfo?.taraStr || 'N/A',
+        'Peso Bruto (Tara + Peso Nota Vagão)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
         'Quantidade Extraída (Nota)': qtdNota,
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
@@ -2014,6 +2032,9 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         'Nº Nota (nNF)': d?.nNF || '',
         'Série': d?.serie || '',
         'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
+        'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
+        'Tara (Excel)': matchInfo?.taraStr || 'N/A',
+        'Peso Bruto (Tara + Peso Nota Vagão)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
         'Quantidade Extraída (Nota)': qtdNota,
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
