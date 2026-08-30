@@ -417,7 +417,70 @@ export function ExcelReconciliationTab({
         }
       }
 
-      // Varredura das linhas da aba
+      // Varredura das linhas da aba: Passo 1 - Mapear e acumular todos os rateios (PESO_NOTA_VAGAO) e TARA ÚNICA de cada vagão
+      rows.forEach((row, rowIndex) => {
+        const rowNumber = rowIndex + 1
+        if (!Array.isArray(row)) return
+
+        let rowVagao = ''
+        let rowPesoNotaVagao: number | null = null
+        let rowPesoSel: number | null = null
+        let rowTara: number | null = null
+        let rowBruto: number | null = null
+
+        if (vagaoColIndex !== -1 && row[vagaoColIndex] !== undefined && row[vagaoColIndex] !== null) {
+          const vStr = String(row[vagaoColIndex]).trim()
+          if (vStr) rowVagao = vStr
+        }
+
+        if (pesoNotaVagaoColIndex !== -1 && row[pesoNotaVagaoColIndex] !== undefined && row[pesoNotaVagaoColIndex] !== null) {
+          const pVal = parseBRFloat(row[pesoNotaVagaoColIndex])
+          if (pVal > 0) rowPesoNotaVagao = pVal
+        }
+
+        if (pesoColIndex >= 0 && row[pesoColIndex] !== undefined && row[pesoColIndex] !== null) {
+          const pVal = parseBRFloat(row[pesoColIndex])
+          if (pVal > 0) rowPesoSel = pVal
+        }
+
+        if (taraColIndex !== -1 && row[taraColIndex] !== undefined && row[taraColIndex] !== null) {
+          const tVal = parseBRFloat(row[taraColIndex])
+          if (tVal > 0) rowTara = tVal
+        }
+
+        if (brutoColIndex !== -1 && row[brutoColIndex] !== undefined && row[brutoColIndex] !== null) {
+          const bVal = parseBRFloat(row[brutoColIndex])
+          if (bVal > 0) rowBruto = bVal
+        }
+
+        if (rowVagao) {
+          const vagaoKey = `${sheetName}_${rowVagao.toUpperCase()}`
+          const cleanVagaoKey = rowVagao.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+          const existing = globalWagonMap.get(vagaoKey) || globalWagonMap.get(cleanVagaoKey) || {
+            vagao: rowVagao,
+            sheetName,
+            sumPeso: 0,
+            tara: 0,
+            count: 0,
+            rows: [],
+          }
+          const effPeso = (rowPesoNotaVagao && rowPesoNotaVagao > 0) ? rowPesoNotaVagao : (rowPesoSel && rowPesoSel > 0 ? rowPesoSel : 0)
+          if (effPeso > 0) {
+            existing.sumPeso += effPeso
+          }
+          if (rowTara && rowTara > 0 && (!existing.tara || rowTara > existing.tara)) {
+            existing.tara = rowTara
+          }
+          existing.count += 1
+          existing.rows.push(rowNumber)
+          globalWagonMap.set(vagaoKey, existing)
+          if (cleanVagaoKey) {
+            globalWagonMap.set(cleanVagaoKey, existing)
+          }
+        }
+      })
+
+      // Passo 2 - Varredura para alimentar keysMap e associar o PESO BRUTO REAL DO VAGÃO (Soma de todos os rateios + Tara única)
       rows.forEach((row, rowIndex) => {
         const rowNumber = rowIndex + 1
         if (!Array.isArray(row)) return
@@ -447,26 +510,21 @@ export function ExcelReconciliationTab({
           if (bVal > 0) rowBruto = bVal
         }
 
-        if (rowVagao) {
-          const vagaoKey = `${sheetName}_${rowVagao.toUpperCase()}`
-          const existing = globalWagonMap.get(vagaoKey) || {
-            vagao: rowVagao,
-            sheetName,
-            sumPeso: 0,
-            tara: rowTara || 0,
-            count: 0,
-            rows: [],
-          }
-          if (rowPesoNotaVagao) {
-            existing.sumPeso += rowPesoNotaVagao
-          }
-          if (rowTara && !existing.tara) {
-            existing.tara = rowTara
-          }
-          existing.count += 1
-          existing.rows.push(rowNumber)
-          globalWagonMap.set(vagaoKey, existing)
-        }
+        const vagaoKey = rowVagao ? `${sheetName}_${rowVagao.toUpperCase()}` : ''
+        const cleanVagaoKey = rowVagao ? rowVagao.replace(/[^A-Za-z0-9]/g, '').toUpperCase() : ''
+        const wagonInfo = vagaoKey ? (globalWagonMap.get(vagaoKey) || (cleanVagaoKey ? globalWagonMap.get(cleanVagaoKey) : null)) : null
+
+        const effTara = (wagonInfo && wagonInfo.tara > 0) ? wagonInfo.tara : (rowTara || 0)
+        const effSumPeso = (wagonInfo && wagonInfo.sumPeso > 0) ? wagonInfo.sumPeso : (rowPesoNotaVagao || 0)
+
+        // O BRUTO DO VAGÃO É A SOMA DE TODOS OS RATEIOS DA COLUNA PESO_NOTA_VAGAO + A TARA ÚNICA DO VAGÃO
+        const calculatedBruto = (effTara > 0 || effSumPeso > 0)
+          ? Math.round((effTara + effSumPeso) * 1000) / 1000
+          : ((rowTara || 0) + (rowPesoNotaVagao || 0) > 0 ? Math.round(((rowTara || 0) + (rowPesoNotaVagao || 0)) * 1000) / 1000 : rowBruto)
+
+        const pesoBrutoStr = calculatedBruto
+          ? calculatedBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+          : undefined
 
         // Buscar Chaves de 44 dígitos
         row.forEach((cell, colIndex) => {
@@ -507,17 +565,9 @@ export function ExcelReconciliationTab({
               const pesoNotaVagaoStr = rowPesoNotaVagao
                 ? rowPesoNotaVagao.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
                 : undefined
-              const taraStr = rowTara
-                ? rowTara.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
-                : undefined
-
-              // O BRUTO DEVE SER IGUAL A TARA + PESO_NOTA_VAGAO
-              const calculatedBruto = (rowTara || 0) + (rowPesoNotaVagao || 0) > 0
-                ? Math.round(((rowTara || 0) + (rowPesoNotaVagao || 0)) * 1000) / 1000
-                : rowBruto
-
-              const pesoBrutoStr = calculatedBruto
-                ? calculatedBruto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+              const taraFinalNum = effTara > 0 ? effTara : rowTara
+              const taraStr = taraFinalNum
+                ? taraFinalNum.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
                 : undefined
 
               const matchInfo: ExcelMatchInfo = {
@@ -528,7 +578,7 @@ export function ExcelReconciliationTab({
                 pesoSelecionadoStr,
                 pesoNotaVagao: rowPesoNotaVagao,
                 pesoNotaVagaoStr,
-                tara: rowTara,
+                tara: taraFinalNum,
                 taraStr,
                 vagao: rowVagao,
                 pesoBruto: calculatedBruto,
@@ -888,7 +938,48 @@ export function ExcelReconciliationTab({
       const chaveCol = findColIdx(['CHAVE', 'CHAVE_DE_ACESSO', 'CHAVE DE ACESSO', 'CHAVE_ACESSO', 'NFE_CHAVE', 'CHAVENFE'])
       const transbordoExcelCol = findColIdx(['TRANSBORDO DO CTE', 'TRANSBORDO_DO_CTE', 'TRANSBORDO', 'CNPJ_TRANSBORDO', 'CNPJ TRANSBORDO', 'EXPEDIDOR', 'CNPJ_EXPEDIDOR'])
 
-      // Percorrer todas as linhas na sequência exata sem remover duplicadas
+      // 1. Passo: Mapear e acumular todos os rateios (PESO_NOTA_VAGAO) e capturar a TARA ÚNICA de cada vagão
+      const sheetWagonMap = new Map<string, { sumPesoNotaVagao: number; sumPesoSel: number; tara: number; bruto: number; count: number }>()
+
+      for (let r = headerRowIdx + 1; r < sheetJson.length; r++) {
+        const row = sheetJson[r]
+        if (!row || !Array.isArray(row)) continue
+        const hasAnyValue = row.some((c) => String(c !== undefined && c !== null ? c : '').trim() !== '')
+        if (!hasAnyValue) continue
+
+        const serieRaw = serieVagaoCol !== -1 && row[serieVagaoCol] !== undefined && row[serieVagaoCol] !== null ? String(row[serieVagaoCol]).trim() : ''
+        const vagaoRaw = vagaoCol !== -1 && row[vagaoCol] !== undefined && row[vagaoCol] !== null ? String(row[vagaoCol]).trim() : ''
+        let vId = ''
+        if (serieRaw && vagaoRaw) {
+          vId = vagaoRaw.toUpperCase().startsWith(serieRaw.toUpperCase()) ? vagaoRaw : `${serieRaw}${vagaoRaw}`
+        } else {
+          vId = serieRaw || vagaoRaw || ''
+        }
+        const vNorm = vId.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+        if (!vNorm) continue
+
+        const taraVal = taraCol !== -1 ? normalizeWeightKg(row[taraCol]) : 0
+        const taraNum = typeof taraVal === 'number' ? taraVal : (taraVal ? parseBRFloat(taraVal) : 0)
+
+        const pesoNotaVal = pesoNotaVagaoCol !== -1 ? normalizeWeightKg(row[pesoNotaVagaoCol]) : 0
+        const pesoNotaNum = typeof pesoNotaVal === 'number' ? pesoNotaVal : (pesoNotaVal ? parseBRFloat(pesoNotaVal) : 0)
+
+        const pesoSelVal = pesoSelecionadoCol !== -1 ? normalizeWeightKg(row[pesoSelecionadoCol]) : 0
+        const pesoSelNum = typeof pesoSelVal === 'number' ? pesoSelVal : (pesoSelVal ? parseBRFloat(pesoSelVal) : 0)
+
+        const brutoVal = brutoCol !== -1 ? normalizeWeightKg(row[brutoCol]) : 0
+        const brutoNum = typeof brutoVal === 'number' ? brutoVal : (brutoVal ? parseBRFloat(brutoVal) : 0)
+
+        const existing = sheetWagonMap.get(vNorm) || { sumPesoNotaVagao: 0, sumPesoSel: 0, tara: 0, bruto: 0, count: 0 }
+        if (pesoNotaNum > 0) existing.sumPesoNotaVagao += pesoNotaNum
+        if (pesoSelNum > 0) existing.sumPesoSel += pesoSelNum
+        if (taraNum > 0 && (existing.tara === 0 || taraNum > existing.tara)) existing.tara = taraNum
+        if (brutoNum > 0 && (existing.bruto === 0 || brutoNum > existing.bruto)) existing.bruto = brutoNum
+        existing.count += 1
+        sheetWagonMap.set(vNorm, existing)
+      }
+
+      // 2. Passo: Percorrer todas as linhas na sequência exata montando a digitação com PESO BRUTO REAL DO VAGÃO
       for (let r = headerRowIdx + 1; r < sheetJson.length; r++) {
         const row = sheetJson[r]
         if (!row || !Array.isArray(row)) continue
@@ -933,8 +1024,14 @@ export function ExcelReconciliationTab({
           vagaoFinal = serieRaw || vagaoRaw || ''
         }
 
-        // 3. TARA: multiplicar por 1000 se não estiver em KG
-        const taraFinal = taraCol !== -1 ? normalizeWeightKg(row[taraCol]) : ''
+        const vNorm = vagaoFinal.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+        const wagonInfo = vNorm ? sheetWagonMap.get(vNorm) : null
+
+        // 3. TARA: usar a tara única do vagão (se identificada) ou a da linha
+        const taraFinalRaw = taraCol !== -1 ? normalizeWeightKg(row[taraCol]) : ''
+        const taraNumRow = typeof taraFinalRaw === 'number' ? taraFinalRaw : (taraFinalRaw ? parseBRFloat(taraFinalRaw) : 0)
+        const taraFinalNum = (wagonInfo && wagonInfo.tara > 0) ? wagonInfo.tara : taraNumRow
+        const taraFinal = taraFinalNum > 0 ? taraFinalNum : taraFinalRaw
 
         // 5. PESO_SELECIONADO: multiplicar por 1000 se não estiver em KG
         const pesoSelecionadoFinal = pesoSelecionadoCol !== -1 ? normalizeWeightKg(row[pesoSelecionadoCol]) : ''
@@ -942,13 +1039,20 @@ export function ExcelReconciliationTab({
         // 6. PESO_NOTA_VAGAO: multiplicar por 1000 se não estiver em KG
         const pesoNotaVagaoFinal = pesoNotaVagaoCol !== -1 ? normalizeWeightKg(row[pesoNotaVagaoCol]) : ''
 
-        // 2. BRUTO: O BRUTO DEVE SER IGUAL A COLUNA TARA + PESO_NOTA_VAGAO
+        // 2. BRUTO: O BRUTO DEVE SER IGUAL À SOMA DE TODOS OS RATEIOS DA COLUNA PESO_NOTA_VAGAO + A TARA ÚNICA DO VAGÃO
         let brutoFinal: number | string = ''
-        const taraNum = typeof taraFinal === 'number' ? taraFinal : (taraFinal ? parseBRFloat(taraFinal) : 0)
-        const pesoNotaNum = typeof pesoNotaVagaoFinal === 'number' ? pesoNotaVagaoFinal : (pesoNotaVagaoFinal ? parseBRFloat(pesoNotaVagaoFinal) : 0)
+        const effWagonSumPeso = (wagonInfo && wagonInfo.sumPesoNotaVagao > 0)
+          ? wagonInfo.sumPesoNotaVagao
+          : (wagonInfo && wagonInfo.sumPesoSel > 0 ? wagonInfo.sumPesoSel : 0)
 
-        if (taraNum > 0 || pesoNotaNum > 0) {
-          brutoFinal = Math.round((taraNum + pesoNotaNum) * 1000) / 1000
+        const pesoNotaNumRow = typeof pesoNotaVagaoFinal === 'number' ? pesoNotaVagaoFinal : (pesoNotaVagaoFinal ? parseBRFloat(pesoNotaVagaoFinal) : 0)
+
+        if (wagonInfo && (wagonInfo.tara > 0 || effWagonSumPeso > 0)) {
+          brutoFinal = Math.round((wagonInfo.tara + effWagonSumPeso) * 1000) / 1000
+        } else if (taraNumRow > 0 || pesoNotaNumRow > 0) {
+          brutoFinal = Math.round((taraNumRow + pesoNotaNumRow) * 1000) / 1000
+        } else if (wagonInfo && wagonInfo.bruto > 0) {
+          brutoFinal = wagonInfo.bruto
         } else if (brutoCol !== -1 && row[brutoCol] !== undefined && row[brutoCol] !== null && String(row[brutoCol]).trim() !== '') {
           brutoFinal = normalizeWeightKg(row[brutoCol])
         }
@@ -1211,7 +1315,7 @@ export function ExcelReconciliationTab({
         'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
         'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
         'Tara (Excel)': matchInfo?.taraStr || 'N/A',
-        'Peso Bruto (Tara + Peso Nota Vagão)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
+        'Peso Bruto do Vagão (Soma Rateios + Tara)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
         'Quantidade Extraída (Nota)': qtdNota,
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
@@ -1272,7 +1376,7 @@ export function ExcelReconciliationTab({
         'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
         'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
         'Tara (Excel)': matchInfo?.taraStr || 'N/A',
-        'Peso Bruto (Tara + Peso Nota Vagão)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
+        'Peso Bruto do Vagão (Soma Rateios + Tara)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
         'Quantidade Extraída (Nota)': qtdNota,
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',

@@ -1343,17 +1343,20 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       tempRowRecords.forEach((rec) => {
         const effPeso = rec.pesoNotaVagao ?? rec.pesoSelecionado ?? 0
         let pesoBrutoCalc: number | null = null
+        let effTara = rec.tara
 
         if (rec.vagao && wagonTotals.has(rec.vagao)) {
           const wInfo = wagonTotals.get(rec.vagao)!
-          if (wInfo.sumPeso > 0 && wInfo.tara > 0) {
-            // Rateia a tara do vagão proporcionalmente ao peso da nota no vagão
-            const taraRateada = wInfo.tara * (effPeso / wInfo.sumPeso)
-            pesoBrutoCalc = effPeso + taraRateada
-          } else if (wInfo.bruto > 0 && wInfo.sumPeso > 0) {
-            pesoBrutoCalc = wInfo.bruto * (effPeso / wInfo.sumPeso)
+          if (wInfo.tara > 0) {
+            effTara = wInfo.tara
+          }
+          if (wInfo.sumPeso > 0 || wInfo.tara > 0) {
+            // SOMA DE TODOS OS RATEIOS DE PESO_NOTA_VAGAO DO VAGÃO + A TARA ÚNICA DO VAGÃO
+            pesoBrutoCalc = Math.round((wInfo.sumPeso + wInfo.tara) * 1000) / 1000
+          } else if (wInfo.bruto > 0) {
+            pesoBrutoCalc = wInfo.bruto
           } else if (effPeso > 0) {
-            pesoBrutoCalc = effPeso + (rec.tara || 0)
+            pesoBrutoCalc = effPeso + (effTara || 0)
           }
         } else if (effPeso > 0) {
           pesoBrutoCalc = effPeso + (rec.tara || 0)
@@ -1367,6 +1370,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           })
         }
 
+        const finalTaraStr = (effTara && effTara > 0)
+          ? effTara.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+          : rec.taraStr
+
         rec.keys.forEach((k) => {
           if (!keysMap.has(k)) {
             // CRÍTICO: Registra ESTRITAMENTE rec.pesoSelecionado.
@@ -1379,8 +1386,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
               pesoSelecionadoStr: rec.pesoSelecionadoStr,
               pesoNotaVagao: rec.pesoNotaVagao,
               pesoNotaVagaoStr: rec.pesoNotaVagaoStr,
-              tara: rec.tara,
-              taraStr: rec.taraStr,
+              tara: effTara,
+              taraStr: finalTaraStr,
               vagao: rec.vagao,
               pesoBruto: pesoBrutoCalc,
               pesoBrutoStr,
@@ -1720,7 +1727,48 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       const chaveCol = findColIdx(['CHAVE', 'CHAVE_DE_ACESSO', 'CHAVE DE ACESSO', 'CHAVE_ACESSO', 'NFE_CHAVE', 'CHAVENFE'])
       const transbordoExcelCol = findColIdx(['TRANSBORDO DO CTE', 'TRANSBORDO_DO_CTE', 'TRANSBORDO', 'CNPJ_TRANSBORDO', 'CNPJ TRANSBORDO', 'EXPEDIDOR', 'CNPJ_EXPEDIDOR'])
 
-      // Percorrer todas as linhas na sequência exata sem remover duplicadas
+      // 1. Passo: Mapear e acumular todos os rateios (PESO_NOTA_VAGAO) e capturar a TARA ÚNICA de cada vagão
+      const sheetWagonMap = new Map<string, { sumPesoNotaVagao: number; sumPesoSel: number; tara: number; bruto: number; count: number }>()
+
+      for (let r = headerRowIdx + 1; r < sheetJson.length; r++) {
+        const row = sheetJson[r]
+        if (!row || !Array.isArray(row)) continue
+        const hasAnyValue = row.some((c) => String(c !== undefined && c !== null ? c : '').trim() !== '')
+        if (!hasAnyValue) continue
+
+        const serieRaw = serieVagaoCol !== -1 && row[serieVagaoCol] !== undefined && row[serieVagaoCol] !== null ? String(row[serieVagaoCol]).trim() : ''
+        const vagaoRaw = vagaoCol !== -1 && row[vagaoCol] !== undefined && row[vagaoCol] !== null ? String(row[vagaoCol]).trim() : ''
+        let vId = ''
+        if (serieRaw && vagaoRaw) {
+          vId = vagaoRaw.toUpperCase().startsWith(serieRaw.toUpperCase()) ? vagaoRaw : `${serieRaw}${vagaoRaw}`
+        } else {
+          vId = serieRaw || vagaoRaw || ''
+        }
+        const vNorm = vId.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+        if (!vNorm) continue
+
+        const taraVal = taraCol !== -1 ? normalizeWeightKg(row[taraCol]) : 0
+        const taraNum = typeof taraVal === 'number' ? taraVal : (taraVal ? parseBRFloat(taraVal) : 0)
+
+        const pesoNotaVal = pesoNotaVagaoCol !== -1 ? normalizeWeightKg(row[pesoNotaVagaoCol]) : 0
+        const pesoNotaNum = typeof pesoNotaVal === 'number' ? pesoNotaVal : (pesoNotaVal ? parseBRFloat(pesoNotaVal) : 0)
+
+        const pesoSelVal = pesoSelecionadoCol !== -1 ? normalizeWeightKg(row[pesoSelecionadoCol]) : 0
+        const pesoSelNum = typeof pesoSelVal === 'number' ? pesoSelVal : (pesoSelVal ? parseBRFloat(pesoSelVal) : 0)
+
+        const brutoVal = brutoCol !== -1 ? normalizeWeightKg(row[brutoCol]) : 0
+        const brutoNum = typeof brutoVal === 'number' ? brutoVal : (brutoVal ? parseBRFloat(brutoVal) : 0)
+
+        const existing = sheetWagonMap.get(vNorm) || { sumPesoNotaVagao: 0, sumPesoSel: 0, tara: 0, bruto: 0, count: 0 }
+        if (pesoNotaNum > 0) existing.sumPesoNotaVagao += pesoNotaNum
+        if (pesoSelNum > 0) existing.sumPesoSel += pesoSelNum
+        if (taraNum > 0 && (existing.tara === 0 || taraNum > existing.tara)) existing.tara = taraNum
+        if (brutoNum > 0 && (existing.bruto === 0 || brutoNum > existing.bruto)) existing.bruto = brutoNum
+        existing.count += 1
+        sheetWagonMap.set(vNorm, existing)
+      }
+
+      // 2. Passo: Percorrer todas as linhas na sequência exata montando a digitação com PESO BRUTO REAL DO VAGÃO
       for (let r = headerRowIdx + 1; r < sheetJson.length; r++) {
         const row = sheetJson[r]
         if (!row || !Array.isArray(row)) continue
@@ -1765,8 +1813,14 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           vagaoFinal = serieRaw || vagaoRaw || ''
         }
 
-        // 3. TARA: multiplicar por 1000 se não estiver em KG
-        const taraFinal = taraCol !== -1 ? normalizeWeightKg(row[taraCol]) : ''
+        const vNorm = vagaoFinal.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+        const wagonInfo = vNorm ? sheetWagonMap.get(vNorm) : null
+
+        // 3. TARA: usar a tara única do vagão (se identificada) ou a da linha
+        const taraFinalRaw = taraCol !== -1 ? normalizeWeightKg(row[taraCol]) : ''
+        const taraNumRow = typeof taraFinalRaw === 'number' ? taraFinalRaw : (taraFinalRaw ? parseBRFloat(taraFinalRaw) : 0)
+        const taraFinalNum = (wagonInfo && wagonInfo.tara > 0) ? wagonInfo.tara : taraNumRow
+        const taraFinal = taraFinalNum > 0 ? taraFinalNum : taraFinalRaw
 
         // 5. PESO_SELECIONADO: multiplicar por 1000 se não estiver em KG
         const pesoSelecionadoFinal = pesoSelecionadoCol !== -1 ? normalizeWeightKg(row[pesoSelecionadoCol]) : ''
@@ -1774,13 +1828,20 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         // 6. PESO_NOTA_VAGAO: multiplicar por 1000 se não estiver em KG
         const pesoNotaVagaoFinal = pesoNotaVagaoCol !== -1 ? normalizeWeightKg(row[pesoNotaVagaoCol]) : ''
 
-        // 2. BRUTO: O BRUTO DEVE SER IGUAL A COLUNA TARA + PESO_NOTA_VAGAO
+        // 2. BRUTO: O BRUTO DEVE SER IGUAL À SOMA DE TODOS OS RATEIOS DA COLUNA PESO_NOTA_VAGAO + A TARA ÚNICA DO VAGÃO
         let brutoFinal: number | string = ''
-        const taraNum = typeof taraFinal === 'number' ? taraFinal : (taraFinal ? parseBRFloat(taraFinal) : 0)
-        const pesoNotaNum = typeof pesoNotaVagaoFinal === 'number' ? pesoNotaVagaoFinal : (pesoNotaVagaoFinal ? parseBRFloat(pesoNotaVagaoFinal) : 0)
+        const effWagonSumPeso = (wagonInfo && wagonInfo.sumPesoNotaVagao > 0)
+          ? wagonInfo.sumPesoNotaVagao
+          : (wagonInfo && wagonInfo.sumPesoSel > 0 ? wagonInfo.sumPesoSel : 0)
 
-        if (taraNum > 0 || pesoNotaNum > 0) {
-          brutoFinal = Math.round((taraNum + pesoNotaNum) * 1000) / 1000
+        const pesoNotaNumRow = typeof pesoNotaVagaoFinal === 'number' ? pesoNotaVagaoFinal : (pesoNotaVagaoFinal ? parseBRFloat(pesoNotaVagaoFinal) : 0)
+
+        if (wagonInfo && (wagonInfo.tara > 0 || effWagonSumPeso > 0)) {
+          brutoFinal = Math.round((wagonInfo.tara + effWagonSumPeso) * 1000) / 1000
+        } else if (taraNumRow > 0 || pesoNotaNumRow > 0) {
+          brutoFinal = Math.round((taraNumRow + pesoNotaNumRow) * 1000) / 1000
+        } else if (wagonInfo && wagonInfo.bruto > 0) {
+          brutoFinal = wagonInfo.bruto
         } else if (brutoCol !== -1 && row[brutoCol] !== undefined && row[brutoCol] !== null && String(row[brutoCol]).trim() !== '') {
           brutoFinal = normalizeWeightKg(row[brutoCol])
         }
@@ -2022,7 +2083,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
         'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
         'Tara (Excel)': matchInfo?.taraStr || 'N/A',
-        'Peso Bruto (Tara + Peso Nota Vagão)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
+        'Peso Bruto do Vagão (Soma Rateios + Tara)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
         'Quantidade Extraída (Nota)': qtdNota,
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
@@ -2083,7 +2144,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
         'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
         'Tara (Excel)': matchInfo?.taraStr || 'N/A',
-        'Peso Bruto (Tara + Peso Nota Vagão)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
+        'Peso Bruto do Vagão (Soma Rateios + Tara)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
         'Quantidade Extraída (Nota)': qtdNota,
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
