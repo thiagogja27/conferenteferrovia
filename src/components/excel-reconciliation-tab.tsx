@@ -80,11 +80,30 @@ export interface WagonSummary {
   linhas: string
 }
 
+export interface ExcelRowRecord {
+  id: string
+  sheetName: string
+  row: number
+  key?: string
+  vagao?: string
+  pesoSelecionado?: number | null
+  pesoSelecionadoStr?: string
+  pesoNotaVagao?: number | null
+  pesoNotaVagaoStr?: string
+  tara?: number | null
+  taraStr?: string
+  pesoBruto?: number | null
+  pesoBrutoStr?: string
+  rawValue?: string
+  hasData?: boolean
+}
+
 interface ExcelData {
   fileName: string
   totalRows: number
   keysMap: Map<string, ExcelMatchInfo>
   allKeysList: string[]
+  allRowsList: ExcelRowRecord[]
   sheets: string[]
   wagonSummaries?: WagonSummary[]
 }
@@ -308,12 +327,43 @@ export function ExcelReconciliationTab({
   ) => {
     const keysMap = new Map<string, ExcelMatchInfo>()
     const allKeysList: string[] = []
+    const allRowsList: ExcelRowRecord[] = []
     let totalRows = 0
     const allColsSet = new Set<string>()
 
     const globalWagonMap = new Map<string, { vagao: string; sheetName: string; sumPeso: number; tara: number; count: number; rows: number[] }>()
 
+    // Pré-análise: contar chaves de 44 dígitos e dados válidos por aba
+    const sheetKeyCounts = new Map<string, number>()
+    let totalKeysInWorkbook = 0
+
     workbook.SheetNames.forEach((sheetName) => {
+      const ws = workbook.Sheets[sheetName]
+      if (!ws) return
+      const sRows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' })
+      let count = 0
+      sRows.forEach((row) => {
+        if (!Array.isArray(row)) return
+        row.forEach((cell) => {
+          if (cell === undefined || cell === null) return
+          const cellStr = String(cell).trim()
+          if (cellStr.length < 40) return
+          const digits = cellStr.replace(/\D/g, '')
+          if (digits.length === 44 || (digits.length > 44 && cellStr.match(/\b\d{44}\b/))) {
+            count++
+          }
+        })
+      })
+      sheetKeyCounts.set(sheetName, count)
+      totalKeysInWorkbook += count
+    })
+
+    // Filtrar apenas abas relevantes: se o arquivo tem abas com chaves de 44 dígitos, ignorar abas auxiliares vazias
+    const targetSheetNames = totalKeysInWorkbook > 0
+      ? workbook.SheetNames.filter((s) => (sheetKeyCounts.get(s) || 0) > 0)
+      : workbook.SheetNames
+
+    targetSheetNames.forEach((sheetName) => {
       const worksheet = workbook.Sheets[sheetName]
       const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
       totalRows += rows.length
@@ -527,69 +577,112 @@ export function ExcelReconciliationTab({
           : undefined
 
         // Buscar Chaves de 44 dígitos
+        const potentialKeys: { key: string; cellStr: string }[] = []
         row.forEach((cell, colIndex) => {
           if (cell === undefined || cell === null) return
           const cellStr = String(cell).trim()
           if (cellStr.length < 40) return
 
           const cleanedForDigits = cellStr.replace(/\D/g, '')
-          const potentialKeys: string[] = []
 
           if (cleanedForDigits.length === 44) {
-            potentialKeys.push(cleanedForDigits)
+            potentialKeys.push({ key: cleanedForDigits, cellStr })
           } else if (cleanedForDigits.length > 44) {
             const matches = cellStr.match(/\b\d{44}\b/g)
             if (matches) {
-              matches.forEach(m => potentialKeys.push(m))
+              matches.forEach(m => potentialKeys.push({ key: m, cellStr }))
             } else {
               for (let i = 0; i <= cleanedForDigits.length - 44; i += 44) {
-                potentialKeys.push(cleanedForDigits.substring(i, i + 44))
+                potentialKeys.push({ key: cleanedForDigits.substring(i, i + 44), cellStr })
               }
             }
           }
+        })
 
-          potentialKeys.forEach((cleanKey) => {
-            if (cleanKey.length === 44 && !keysMap.has(cleanKey)) {
-              let pesoSelecionado: number | null = null
-              let pesoSelecionadoStr: string | undefined = undefined
+        let pesoSelecionado: number | null = null
+        let pesoSelecionadoStr: string | undefined = undefined
 
-              if (pesoColIndex >= 0 && row[pesoColIndex] !== undefined && row[pesoColIndex] !== null) {
-                const rawP = String(row[pesoColIndex]).trim()
-                const pNum = parseBRFloat(rawP)
-                if (pNum > 0) {
-                  pesoSelecionado = pNum
-                  pesoSelecionadoStr = rawP
+        if (pesoColIndex >= 0 && row[pesoColIndex] !== undefined && row[pesoColIndex] !== null) {
+          const rawP = String(row[pesoColIndex]).trim()
+          const pNum = parseBRFloat(rawP)
+          if (pNum > 0) {
+            pesoSelecionado = pNum
+            pesoSelecionadoStr = rawP
+          }
+        }
+
+        const pesoNotaVagaoStr = rowPesoNotaVagao
+          ? rowPesoNotaVagao.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+          : undefined
+        const taraFinalNum = effTara > 0 ? effTara : rowTara
+        const taraStr = taraFinalNum
+          ? taraFinalNum.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
+          : undefined
+
+        if (potentialKeys.length > 0) {
+          potentialKeys.forEach(({ key: cleanKey, cellStr }) => {
+            if (cleanKey.length === 44) {
+              if (!keysMap.has(cleanKey)) {
+                const matchInfo: ExcelMatchInfo = {
+                  row: rowNumber,
+                  rawValue: cellStr,
+                  sheetName,
+                  pesoSelecionado,
+                  pesoSelecionadoStr,
+                  pesoNotaVagao: rowPesoNotaVagao,
+                  pesoNotaVagaoStr,
+                  tara: taraFinalNum,
+                  taraStr,
+                  vagao: rowVagao,
+                  pesoBruto: calculatedBruto,
+                  pesoBrutoStr,
                 }
+                keysMap.set(cleanKey, matchInfo)
+                allKeysList.push(cleanKey)
               }
 
-              const pesoNotaVagaoStr = rowPesoNotaVagao
-                ? rowPesoNotaVagao.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
-                : undefined
-              const taraFinalNum = effTara > 0 ? effTara : rowTara
-              const taraStr = taraFinalNum
-                ? taraFinalNum.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
-                : undefined
-
-              const matchInfo: ExcelMatchInfo = {
-                row: rowNumber,
-                rawValue: cellStr,
+              allRowsList.push({
+                id: `${sheetName}_r${rowNumber}_${cleanKey}`,
                 sheetName,
+                row: rowNumber,
+                key: cleanKey,
+                vagao: rowVagao,
                 pesoSelecionado,
                 pesoSelecionadoStr,
                 pesoNotaVagao: rowPesoNotaVagao,
                 pesoNotaVagaoStr,
                 tara: taraFinalNum,
                 taraStr,
-                vagao: rowVagao,
                 pesoBruto: calculatedBruto,
                 pesoBrutoStr,
-              }
-
-              keysMap.set(cleanKey, matchInfo)
-              allKeysList.push(cleanKey)
+                rawValue: cellStr,
+                hasData: true,
+              })
             }
           })
-        })
+        } else {
+          // Linha do Excel sem chave de 44 dígitos, mas contendo dados (vagão, tara, peso, etc.)
+          const hasAnyUsefulData = Boolean(rowVagao || rowPesoNotaVagao || pesoSelecionado || rowTara || rowBruto || row.some(c => String(c || '').trim() !== ''))
+          if (hasAnyUsefulData) {
+            allRowsList.push({
+              id: `${sheetName}_r${rowNumber}_nokey`,
+              sheetName,
+              row: rowNumber,
+              key: undefined,
+              vagao: rowVagao,
+              pesoSelecionado,
+              pesoSelecionadoStr,
+              pesoNotaVagao: rowPesoNotaVagao,
+              pesoNotaVagaoStr,
+              tara: taraFinalNum,
+              taraStr,
+              pesoBruto: calculatedBruto,
+              pesoBrutoStr,
+              rawValue: String(row.filter(c => String(c || '').trim() !== '').join(' | ')),
+              hasData: true,
+            })
+          }
+        }
       })
     })
 
@@ -628,6 +721,7 @@ export function ExcelReconciliationTab({
       totalRows,
       keysMap,
       allKeysList,
+      allRowsList,
       sheets: workbook.SheetNames,
       wagonSummaries: wagonSummariesList,
     })
@@ -737,6 +831,15 @@ export function ExcelReconciliationTab({
       }
     }
   })
+
+  const excelRowsWithoutFiles = excelData
+    ? excelData.allRowsList.filter((r) => {
+        if (r.key) {
+          return !matchedExcelKeysSet.has(r.key) && !matchedExcelKeysSet.has('0' + r.key) && !(r.key.startsWith('0') && matchedExcelKeysSet.has(r.key.substring(1)))
+        }
+        return true
+      })
+    : []
 
   const excelKeysWithoutFiles = excelData
     ? excelData.allKeysList.filter((k) => !matchedExcelKeysSet.has(k))
@@ -1272,70 +1375,213 @@ export function ExcelReconciliationTab({
       XLSX.utils.book_append_sheet(wb, wsWagons, 'Consolidação por Vagão')
     }
 
-    // 4. ABA TOTAL DE ARQUIVOS (ORDENADOS CONFORME A ORDEM DAS CHAVES DA PLANILHA EXCEL)
-    const orderedAllResults = [...validFiles].sort((a, b) => {
-      const keyA = getNormalizedKey(a)
-      const keyB = getNormalizedKey(b)
-      const matchA = getExcelMatchInfo(keyA)
-      const matchB = getExcelMatchInfo(keyB)
+    // 4. ABA TOTAL DE ARQUIVOS (ORDENADOS CONFORME A ORDEM DAS LINHAS DA PLANILHA EXCEL)
+    let rowsTotalOrdered: any[] = []
 
-      if (matchA && matchB) {
-        return matchA.row - matchB.row
-      }
-      if (matchA && !matchB) return -1
-      if (!matchA && matchB) return 1
-      return keyA.localeCompare(keyB)
-    })
+    if (excelData && excelData.allRowsList && excelData.allRowsList.length > 0) {
+      // Indexar arquivos por chave
+      const filesByKey = new Map<string, any>()
+      validFiles.forEach((f) => {
+        const k = getNormalizedKey(f)
+        if (k) {
+          filesByKey.set(k, f)
+          if (k.length === 43) filesByKey.set('0' + k, f)
+          if (k.length === 44 && k.startsWith('0')) filesByKey.set(k.substring(1), f)
+        }
+      })
 
-    const rowsTotalOrdered = orderedAllResults.map((f) => {
-      const key = getNormalizedKey(f)
-      const matchInfo = getExcelMatchInfo(key)
-      const isMatched = !!matchInfo
-      const destCNPJ = f.nfeData?.destinatario?.cpfCnpj || ''
-      const emitCNPJ = f.nfeData?.emitente?.cnpj || ''
-      const vCNPJ = f.nfeData?.verificacaoCNPJ || verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
-      const qtdNota = getFileQuantidade(f)
-      const vWeight = confrontWeights(matchInfo, qtdNota)
-      const itemAudit = auditResultsMap[key || f.fileName]
-      const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
-        ? itemAudit.pesoCorrigidoDoc
-        : (overrideWeightsMap[key || f.fileName] !== undefined ? overrideWeightsMap[key || f.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
+      const matchedFilesSet = new Set<any>()
 
-      return {
-        'Posição / Linha Excel': matchInfo ? `Linha ${matchInfo.row} (${matchInfo.sheetName})` : 'Fora da Planilha Excel',
-        'Status Conferência Excel': isMatched ? 'CONSTA NA PLANILHA' : 'NÃO CONSTA NA PLANILHA',
-        'Vagão (Excel)': matchInfo?.vagao || 'N/A',
-        'Chave de Acesso': key,
-        'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
-        'Destinatário CNPJ': destCNPJ,
-        'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
-        'Validação CNPJ': vCNPJ.statusLabel,
-        'Nº Nota (nNF)': f.nfeData?.numero || '',
-        'Série': f.nfeData?.serie || '',
-        'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
-        'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
-        'Tara (Excel)': matchInfo?.taraStr || 'N/A',
-        'Peso Bruto do Vagão (Soma Rateios + Tara)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
-        'Quantidade Extraída (Nota)': qtdNota,
-        'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
-        'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
-        'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
-        'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA'
-          ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)'
-          : itemAudit?.status === 'DIVERGENCIA_REAL'
-            ? 'DIVERGÊNCIA REAL DE PESAGEM'
-            : itemAudit?.status === 'CONFERIDO_CORRETO'
-              ? 'PESO CONFERIDO CORRETO'
-              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
-        'Explicação IA': itemAudit?.explicacao || '',
-        'Valor Total (R$)': f.nfeData?.impostos?.valorTotal || 0,
-        'Emitente': f.nfeData?.emitente?.nome || '',
-        'CNPJ Emitente': emitCNPJ,
-        'Destinatário': f.nfeData?.destinatario?.nome || '',
-        'Nome do Arquivo': f.fileName,
-        'Tipo Documento': f.xmlContent ? 'XML' : 'PDF',
-      }
-    })
+      // 1. Percorrer TODAS as linhas da planilha Excel na sequência original
+      excelData.allRowsList.forEach((rowRec) => {
+        const fileMatch = rowRec.key ? filesByKey.get(rowRec.key) : null
+
+        if (fileMatch) {
+          matchedFilesSet.add(fileMatch)
+          const key = getNormalizedKey(fileMatch)
+          const matchInfo = getExcelMatchInfo(key) || {
+            row: rowRec.row,
+            rawValue: rowRec.rawValue || '',
+            sheetName: rowRec.sheetName,
+            pesoSelecionado: rowRec.pesoSelecionado,
+            pesoSelecionadoStr: rowRec.pesoSelecionadoStr,
+            pesoNotaVagao: rowRec.pesoNotaVagao,
+            pesoNotaVagaoStr: rowRec.pesoNotaVagaoStr,
+            tara: rowRec.tara,
+            taraStr: rowRec.taraStr,
+            vagao: rowRec.vagao,
+            pesoBruto: rowRec.pesoBruto,
+            pesoBrutoStr: rowRec.pesoBrutoStr,
+          }
+
+          const destCNPJ = fileMatch.nfeData?.destinatario?.cpfCnpj || ''
+          const emitCNPJ = fileMatch.nfeData?.emitente?.cnpj || ''
+          const vCNPJ = fileMatch.nfeData?.verificacaoCNPJ || verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
+          const qtdNota = getFileQuantidade(fileMatch)
+          const vWeight = confrontWeights(matchInfo, qtdNota)
+          const itemAudit = auditResultsMap[key || fileMatch.fileName]
+          const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
+            ? itemAudit.pesoCorrigidoDoc
+            : (overrideWeightsMap[key || fileMatch.fileName] !== undefined ? overrideWeightsMap[key || fileMatch.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
+
+          rowsTotalOrdered.push({
+            'Posição / Linha Excel': `Linha ${rowRec.row} (${rowRec.sheetName})`,
+            'Status Conferência Excel': 'CONSTA NA PLANILHA',
+            'Vagão (Excel)': rowRec.vagao || matchInfo?.vagao || 'N/A',
+            'Chave de Acesso': key || rowRec.key || '',
+            'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+            'Destinatário CNPJ': destCNPJ,
+            'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+            'Validação CNPJ': vCNPJ.statusLabel,
+            'Nº Nota (nNF)': fileMatch.nfeData?.numero || '',
+            'Série': fileMatch.nfeData?.serie || '',
+            'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
+            'Peso Nota Vagão (Excel)': rowRec.pesoNotaVagaoStr || matchInfo?.pesoNotaVagaoStr || 'N/A',
+            'Tara (Excel)': rowRec.taraStr || matchInfo?.taraStr || 'N/A',
+            'Peso Bruto do Vagão (Soma Rateios + Tara)': rowRec.pesoBrutoStr || matchInfo?.pesoBrutoStr || 'N/A',
+            'Quantidade Extraída (Nota)': qtdNota,
+            'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
+            'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
+            'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
+            'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA'
+              ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)'
+              : itemAudit?.status === 'DIVERGENCIA_REAL'
+                ? 'DIVERGÊNCIA REAL DE PESAGEM'
+                : itemAudit?.status === 'CONFERIDO_CORRETO'
+                  ? 'PESO CONFERIDO CORRETO'
+                  : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
+            'Explicação IA': itemAudit?.explicacao || '',
+            'Valor Total (R$)': fileMatch.nfeData?.impostos?.valorTotal || 0,
+            'Emitente': fileMatch.nfeData?.emitente?.nome || '',
+            'CNPJ Emitente': emitCNPJ,
+            'Destinatário': fileMatch.nfeData?.destinatario?.nome || '',
+            'Nome do Arquivo': fileMatch.fileName,
+            'Tipo Documento': fileMatch.xmlContent ? 'XML' : 'PDF',
+          })
+        } else {
+          // LINHA DA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE CARREGADO
+          const cleanKey = rowRec.key || ''
+          const cnpjFromKey = cleanKey.length === 44 ? cleanKey.substring(6, 20) : 'N/A'
+          const numFromKey = cleanKey.length === 44 ? (cleanKey.substring(25, 34).replace(/^0+/, '') || 'N/A') : 'N/A'
+          const serieFromKey = cleanKey.length === 44 ? (cleanKey.substring(22, 25).replace(/^0+/, '') || 'N/A') : 'N/A'
+
+          rowsTotalOrdered.push({
+            'Posição / Linha Excel': `Linha ${rowRec.row} (${rowRec.sheetName})`,
+            'Status Conferência Excel': cleanKey ? 'NÃO ENCONTRADO NOS ARQUIVOS (CONSTA APENAS NO EXCEL)' : 'SEM CHAVE NA LINHA DO EXCEL (NÃO ENCONTRADO NOS ARQUIVOS)',
+            'Vagão (Excel)': rowRec.vagao || 'N/A',
+            'Chave de Acesso': cleanKey || 'SEM CHAVE NA LINHA',
+            'CNPJ na Chave': cnpjFromKey,
+            'Destinatário CNPJ': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Confronto (Chave vs Destinatário)': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Validação CNPJ': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Nº Nota (nNF)': numFromKey !== 'N/A' ? numFromKey : 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Série': serieFromKey !== 'N/A' ? serieFromKey : 'N/A',
+            'Peso Selecionado (Excel)': rowRec.pesoSelecionadoStr || 'N/A',
+            'Peso Nota Vagão (Excel)': rowRec.pesoNotaVagaoStr || 'N/A',
+            'Tara (Excel)': rowRec.taraStr || 'N/A',
+            'Peso Bruto do Vagão (Soma Rateios + Tara)': rowRec.pesoBrutoStr || 'N/A',
+            'Quantidade Extraída (Nota)': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Confronto Peso (Excel vs Nota)': cleanKey ? 'ARQUIVO NÃO ENCONTRADO / AUSENTE' : 'SEM CHAVE / ARQUIVO AUSENTE',
+            'Diferença de Peso (Excel - Nota)': 'N/A',
+            'Quantidade Encontrada pela IA (Valor Real)': 'N/A (Sem arquivo)',
+            'Auditoria IA (Status / Causa)': cleanKey ? 'ARQUIVO NÃO CARREGADO / NOTA NÃO ENCONTRADA' : 'LINHA SEM CHAVE DE ACESSO NO EXCEL',
+            'Explicação IA': cleanKey
+              ? 'Esta linha consta na planilha Excel, porém o arquivo correspondente (PDF/XML) não foi carregado para conferência.'
+              : 'Linha presente na planilha Excel sem chave de acesso de 44 dígitos identificada.',
+            'Valor Total (R$)': 0,
+            'Emitente': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'CNPJ Emitente': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Destinatário': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Nome do Arquivo': 'ARQUIVO NÃO CARREGADO NO SISTEMA',
+            'Tipo Documento': 'N/A',
+          })
+        }
+      })
+
+      // 2. Adicionar arquivos carregados que NÃO constam na planilha Excel
+      validFiles.forEach((f) => {
+        if (!matchedFilesSet.has(f)) {
+          const key = getNormalizedKey(f)
+          const destCNPJ = f.nfeData?.destinatario?.cpfCnpj || ''
+          const emitCNPJ = f.nfeData?.emitente?.cnpj || ''
+          const vCNPJ = f.nfeData?.verificacaoCNPJ || verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
+          const qtdNota = getFileQuantidade(f)
+
+          rowsTotalOrdered.push({
+            'Posição / Linha Excel': 'Fora da Planilha Excel',
+            'Status Conferência Excel': 'NÃO CONSTA NA PLANILHA',
+            'Vagão (Excel)': 'N/A',
+            'Chave de Acesso': key,
+            'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+            'Destinatário CNPJ': destCNPJ,
+            'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+            'Validação CNPJ': vCNPJ.statusLabel,
+            'Nº Nota (nNF)': f.nfeData?.numero || '',
+            'Série': f.nfeData?.serie || '',
+            'Peso Selecionado (Excel)': 'N/A',
+            'Peso Nota Vagão (Excel)': 'N/A',
+            'Tara (Excel)': 'N/A',
+            'Peso Bruto do Vagão (Soma Rateios + Tara)': 'N/A',
+            'Quantidade Extraída (Nota)': qtdNota,
+            'Confronto Peso (Excel vs Nota)': 'NÃO CONSTA NA PLANILHA',
+            'Diferença de Peso (Excel - Nota)': 'N/A',
+            'Quantidade Encontrada pela IA (Valor Real)': 'N/A',
+            'Auditoria IA (Status / Causa)': 'ARQUIVO CARREGADO NÃO CONSTA NO EXCEL',
+            'Explicação IA': 'Arquivo presente nos documentos importados, porém a chave não foi localizada na planilha Excel.',
+            'Valor Total (R$)': f.nfeData?.impostos?.valorTotal || 0,
+            'Emitente': f.nfeData?.emitente?.nome || '',
+            'CNPJ Emitente': emitCNPJ,
+            'Destinatário': f.nfeData?.destinatario?.nome || '',
+            'Nome do Arquivo': f.fileName,
+            'Tipo Documento': f.xmlContent ? 'XML' : 'PDF',
+          })
+        }
+      })
+    } else {
+      // Caso não haja planilha Excel carregada
+      const orderedAllResults = [...validFiles].sort((a, b) => {
+        const keyA = getNormalizedKey(a)
+        const keyB = getNormalizedKey(b)
+        return keyA.localeCompare(keyB)
+      })
+
+      rowsTotalOrdered = orderedAllResults.map((f) => {
+        const key = getNormalizedKey(f)
+        const destCNPJ = f.nfeData?.destinatario?.cpfCnpj || ''
+        const emitCNPJ = f.nfeData?.emitente?.cnpj || ''
+        const vCNPJ = f.nfeData?.verificacaoCNPJ || verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
+        const qtdNota = getFileQuantidade(f)
+
+        return {
+          'Posição / Linha Excel': 'Fora da Planilha Excel',
+          'Status Conferência Excel': 'SEM PLANILHA EXCEL',
+          'Vagão (Excel)': 'N/A',
+          'Chave de Acesso': key,
+          'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+          'Destinatário CNPJ': destCNPJ,
+          'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+          'Validação CNPJ': vCNPJ.statusLabel,
+          'Nº Nota (nNF)': f.nfeData?.numero || '',
+          'Série': f.nfeData?.serie || '',
+          'Peso Selecionado (Excel)': 'N/A',
+          'Peso Nota Vagão (Excel)': 'N/A',
+          'Tara (Excel)': 'N/A',
+          'Peso Bruto do Vagão (Soma Rateios + Tara)': 'N/A',
+          'Quantidade Extraída (Nota)': qtdNota,
+          'Confronto Peso (Excel vs Nota)': 'SEM PLANILHA',
+          'Diferença de Peso (Excel - Nota)': 'N/A',
+          'Quantidade Encontrada pela IA (Valor Real)': 'N/A',
+          'Auditoria IA (Status / Causa)': 'Sem planilha Excel carregada',
+          'Explicação IA': '',
+          'Valor Total (R$)': f.nfeData?.impostos?.valorTotal || 0,
+          'Emitente': f.nfeData?.emitente?.nome || '',
+          'CNPJ Emitente': emitCNPJ,
+          'Destinatário': f.nfeData?.destinatario?.nome || '',
+          'Nome do Arquivo': f.fileName,
+          'Tipo Documento': f.xmlContent ? 'XML' : 'PDF',
+        }
+      })
+    }
     const wsTotalOrdered = createFormattedWorksheet(rowsTotalOrdered)
     XLSX.utils.book_append_sheet(wb, wsTotalOrdered, 'Total Arquivos (Ord. Excel)')
 
@@ -1432,19 +1678,26 @@ export function ExcelReconciliationTab({
       XLSX.utils.book_append_sheet(wb, wsUnmatched, 'Notas Ausentes no Excel')
     }
 
-    // 7. ABA CHAVES NA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE (SEMPRE GERADA)
+    // 7. ABA CHAVES / LINHAS NA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE (SEMPRE GERADA)
     if (excelData) {
-      const rowsExcelOnly = excelKeysWithoutFiles.map((key) => {
-        const matchInfo = getExcelMatchInfo(key)
+      const rowsExcelOnly = excelRowsWithoutFiles.map((rowRec) => {
+        const cleanKey = rowRec.key || ''
+        const matchInfo = cleanKey ? getExcelMatchInfo(cleanKey) : null
+        const isMissingFile = !!cleanKey
         return {
-          'Linha no Excel': matchInfo ? `Linha ${matchInfo.row}` : 'N/A',
-          'Aba no Excel': matchInfo?.sheetName || '',
-          'Chave de Acesso (Excel)': key,
-          'Vagão (Excel)': matchInfo?.vagao || 'N/A',
-          'Peso Selecionado (Excel)': matchInfo?.pesoSelecionadoStr || 'N/A',
-          'Conteúdo Original Célula': matchInfo?.rawValue || '',
-          'Status': 'FALTANDO ARQUIVO DE NOTA (PDF/XML)',
-          'Observação': 'Chave consta na planilha Excel, porém nenhum arquivo correspondente foi importado',
+          'Linha no Excel': `Linha ${rowRec.row}`,
+          'Aba no Excel': rowRec.sheetName,
+          'Chave de Acesso (Excel)': cleanKey || 'SEM CHAVE NA LINHA',
+          'Vagão (Excel)': rowRec.vagao || matchInfo?.vagao || 'N/A',
+          'Peso Selecionado (Excel)': rowRec.pesoSelecionadoStr || matchInfo?.pesoSelecionadoStr || 'N/A',
+          'Peso Nota Vagão (Excel)': rowRec.pesoNotaVagaoStr || matchInfo?.pesoNotaVagaoStr || 'N/A',
+          'Tara (Excel)': rowRec.taraStr || matchInfo?.taraStr || 'N/A',
+          'Peso Bruto do Vagão': rowRec.pesoBrutoStr || matchInfo?.pesoBrutoStr || 'N/A',
+          'Conteúdo Original Célula': rowRec.rawValue || matchInfo?.rawValue || '',
+          'Status': isMissingFile ? 'FALTANDO ARQUIVO DE NOTA (PDF/XML)' : 'LINHA NO EXCEL SEM CHAVE DE ACESSO',
+          'Observação': isMissingFile
+            ? 'Chave de 44 dígitos consta na planilha Excel, porém nenhum arquivo correspondente foi importado'
+            : 'Linha presente na planilha Excel sem chave de acesso de 44 dígitos identificada',
         }
       })
 
@@ -1456,6 +1709,9 @@ export function ExcelReconciliationTab({
           'Chave de Acesso (Excel)': '-',
           'Vagão (Excel)': '-',
           'Peso Selecionado (Excel)': '-',
+          'Peso Nota Vagão (Excel)': '-',
+          'Tara (Excel)': '-',
+          'Peso Bruto do Vagão': '-',
           'Conteúdo Original Célula': '-',
           'Status': 'TODAS AS CHAVES FORAM ENCONTRADAS (100% CONFERIDO)',
           'Observação': 'Todos os arquivos correspondentes às chaves da planilha Excel foram carregados com sucesso.',
@@ -1570,6 +1826,17 @@ export function ExcelReconciliationTab({
     const vWeight = confrontWeights(matchInfo, qtd)
     return isMatchedWithDivergence(matchInfo, vWeight)
   }).length
+
+  const hasPesoSelecionadoInExcel = Boolean(
+    excelData && (
+      (excelData.keysMap && Array.from(excelData.keysMap.values()).some((k) => k.pesoSelecionado !== undefined && k.pesoSelecionado !== null && k.pesoSelecionado > 0)) ||
+      validFiles.some((f) => {
+        const key = getNormalizedKey(f)
+        const matchInfo = getExcelMatchInfo(key)
+        return !!matchInfo && matchInfo.pesoSelecionado !== undefined && matchInfo.pesoSelecionado !== null && matchInfo.pesoSelecionado > 0
+      })
+    )
+  )
 
   return (
     <div className="space-y-6">
@@ -2042,7 +2309,7 @@ export function ExcelReconciliationTab({
                     {matchedWeightCount}
                   </span>
                   <span className="text-[10px] text-teal-600 dark:text-teal-400 font-semibold">
-                    Excel x Nota idênticos
+                    {!hasPesoSelecionadoInExcel ? 'Sem dados na peso selecionado' : 'Excel x Nota idênticos'}
                   </span>
                 </div>
 
@@ -2064,7 +2331,11 @@ export function ExcelReconciliationTab({
                     {divergentWeightCount}
                   </span>
                   <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold">
-                    {divergentWeightCount > 0 ? 'Exigem conferência' : 'Pesos alinhados'}
+                    {!hasPesoSelecionadoInExcel
+                      ? 'Sem dados na peso selecionado'
+                      : divergentWeightCount > 0
+                      ? 'Exigem conferência'
+                      : 'Pesos alinhados'}
                   </span>
                 </div>
 
@@ -2099,9 +2370,9 @@ export function ExcelReconciliationTab({
                     <FileQuestion className="h-3.5 w-3.5 text-indigo-600" />
                   </span>
                   <span className="text-lg font-extrabold text-indigo-800 dark:text-indigo-200 mt-0.5 block">
-                    {excelKeysWithoutFiles.length}
+                    {excelRowsWithoutFiles.length}
                   </span>
-                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400">chaves faltantes</span>
+                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400">itens faltantes</span>
                 </div>
               </div>
 
@@ -2161,7 +2432,7 @@ export function ExcelReconciliationTab({
                     Ausentes ({unmatchedResults.length})
                   </button>
 
-                  {excelKeysWithoutFiles.length > 0 && (
+                  {excelRowsWithoutFiles.length > 0 && (
                     <button
                       type="button"
                       onClick={() => setExcelFilter('excel_only')}
@@ -2172,7 +2443,7 @@ export function ExcelReconciliationTab({
                       }`}
                     >
                       <FileQuestion className="h-3.5 w-3.5" />
-                      No Excel sem Arquivo ({excelKeysWithoutFiles.length})
+                      No Excel sem Arquivo ({excelRowsWithoutFiles.length})
                     </button>
                   )}
                 </div>
@@ -2195,38 +2466,56 @@ export function ExcelReconciliationTab({
                   <div className="p-3 bg-indigo-100/50 dark:bg-indigo-950/40 border-b border-indigo-200 dark:border-indigo-900/50 flex items-center justify-between">
                     <p className="text-xs font-bold text-indigo-900 dark:text-indigo-200 flex items-center gap-2">
                       <FileQuestion className="h-4 w-4 text-indigo-600" />
-                      Chaves de Acesso na planilha Excel sem arquivo correspondente ({excelKeysWithoutFiles.length})
+                      Linhas / Chaves na planilha Excel sem arquivo correspondente ({excelRowsWithoutFiles.length})
                     </p>
                   </div>
                   <div className="divide-y divide-indigo-100 dark:divide-indigo-900/30 max-h-96 overflow-y-auto">
-                    {excelKeysWithoutFiles.map((key, idx) => {
-                      const matchInfo = getExcelMatchInfo(key)
+                    {excelRowsWithoutFiles.map((rowRec, idx) => {
+                      const cleanKey = rowRec.key || ''
+                      const matchInfo = cleanKey ? getExcelMatchInfo(cleanKey) : null
                       return (
                         <div key={idx} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                           <div className="space-y-0.5">
                             <div className="flex items-center gap-2 font-mono font-semibold text-zinc-800 dark:text-zinc-200">
-                              <span>{key}</span>
-                              <button
-                                type="button"
-                                onClick={() => copyToClipboard(key)}
-                                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors cursor-pointer"
-                                title="Copiar chave"
-                              >
-                                {copiedKey === key ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
-                              </button>
+                              {cleanKey ? (
+                                <>
+                                  <span>{cleanKey}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => copyToClipboard(cleanKey)}
+                                    className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+                                    title="Copiar chave"
+                                  >
+                                    {copiedKey === cleanKey ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+                                  </button>
+                                </>
+                              ) : (
+                                <span className="text-amber-700 dark:text-amber-400 font-sans font-bold">
+                                  Linha {rowRec.row} ({rowRec.sheetName}) — Sem Chave de Acesso no Excel
+                                </span>
+                              )}
                             </div>
                             <p className="text-[11px] text-zinc-500">
-                              Encontrada na <span className="font-semibold">{matchInfo?.sheetName || 'Planilha'}</span> (Linha {matchInfo?.row})
-                              {matchInfo?.vagao && <span className="ml-2 font-bold text-indigo-600">| Vagão: {matchInfo.vagao}</span>}
-                              {matchInfo?.pesoSelecionadoStr && (
+                              Encontrada na <span className="font-semibold">{rowRec.sheetName}</span> (Linha {rowRec.row})
+                              {rowRec.vagao && <span className="ml-2 font-bold text-indigo-600">| Vagão: {rowRec.vagao}</span>}
+                              {rowRec.pesoSelecionadoStr && (
                                 <span className="ml-2 font-medium text-emerald-700 dark:text-emerald-400">
-                                  | Peso Excel: {matchInfo.pesoSelecionadoStr}
+                                  | Peso Sel: {rowRec.pesoSelecionadoStr}
+                                </span>
+                              )}
+                              {rowRec.pesoNotaVagaoStr && (
+                                <span className="ml-2 font-medium text-sky-700 dark:text-sky-400">
+                                  | Rateio Vagão: {rowRec.pesoNotaVagaoStr}
                                 </span>
                               )}
                             </p>
                           </div>
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 self-start sm:self-auto">
-                            Arquivo Faltante / Não Processado
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold self-start sm:self-auto ${
+                            cleanKey
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                              : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                          }`}>
+                            {cleanKey ? 'Arquivo Faltante (PDF/XML)' : 'Sem Chave de 44 Dígitos'}
                           </span>
                         </div>
                       )

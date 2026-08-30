@@ -185,11 +185,30 @@ export interface WagonSummary {
   linhas: string
 }
 
+export interface ExcelRowRecord {
+  id: string
+  sheetName: string
+  row: number
+  key?: string
+  vagao?: string
+  pesoSelecionado?: number | null
+  pesoSelecionadoStr?: string
+  pesoNotaVagao?: number | null
+  pesoNotaVagaoStr?: string
+  tara?: number | null
+  taraStr?: string
+  pesoBruto?: number | null
+  pesoBrutoStr?: string
+  rawValue?: string
+  hasData?: boolean
+}
+
 interface ExcelData {
   fileName: string
   totalRows: number
   keysMap: Map<string, ExcelMatchInfo>
   allKeysList: string[]
+  allRowsList: ExcelRowRecord[]
   sheets: string[]
   wagonSummaries?: WagonSummary[]
 }
@@ -1063,12 +1082,43 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
   ) => {
     const keysMap = new Map<string, ExcelMatchInfo>()
     const allKeysList: string[] = []
+    const allRowsList: ExcelRowRecord[] = []
     let totalRows = 0
     const allColsSet = new Set<string>()
 
     const globalWagonMap = new Map<string, { vagao: string; sheetName: string; sumPeso: number; tara: number; count: number; rows: number[] }>()
 
+    // Pré-análise: contar chaves de 44 dígitos por aba
+    const sheetKeyCounts = new Map<string, number>()
+    let totalKeysInWorkbook = 0
+
     workbook.SheetNames.forEach((sheetName) => {
+      const ws = workbook.Sheets[sheetName]
+      if (!ws) return
+      const sRows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' })
+      let count = 0
+      sRows.forEach((row) => {
+        if (!Array.isArray(row)) return
+        row.forEach((cell) => {
+          if (cell === undefined || cell === null) return
+          const cellStr = String(cell).trim()
+          if (cellStr.length < 40) return
+          const digits = cellStr.replace(/\D/g, '')
+          if (digits.length === 44 || (digits.length > 44 && cellStr.match(/\b\d{44}\b/))) {
+            count++
+          }
+        })
+      })
+      sheetKeyCounts.set(sheetName, count)
+      totalKeysInWorkbook += count
+    })
+
+    // Filtrar apenas abas relevantes: se o arquivo tem abas com chaves de 44 dígitos, ignorar abas auxiliares vazias
+    const targetSheetNames = totalKeysInWorkbook > 0
+      ? workbook.SheetNames.filter((s) => (sheetKeyCounts.get(s) || 0) > 0)
+      : workbook.SheetNames
+
+    targetSheetNames.forEach((sheetName) => {
       const worksheet = workbook.Sheets[sheetName]
       const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false, defval: '' })
       totalRows += rows.length
@@ -1190,11 +1240,25 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         taraStr: string
         vagao: string
         brutoRow: number | null
+        hasData: boolean
       }
 
       const tempRowRecords: TempRowRecord[] = []
 
       rows.forEach((row, rowIndex) => {
+        if (!Array.isArray(row)) return
+        const hasContent = row.some(c => String(c !== undefined && c !== null ? c : '').trim() !== '')
+        if (!hasContent) return
+
+        // Pular cabeçalho principal nas primeiras linhas
+        if (rowIndex < 5) {
+          const isHeader = row.some((c) => {
+            const s = String(c || '').trim().toLowerCase()
+            return s === 'chave' || s === 'chave de acesso' || s === 'chave_de_acesso' || s === 'vagao' || s === 'vagão'
+          })
+          if (isHeader) return
+        }
+
         // REGRA ESTRITA: Extração exclusiva da coluna de Peso Selecionado.
         // Se a linha não tiver valor nesta coluna, NÃO busca em nenhuma outra coluna!
         let pesoSelecionado: number | null = null
@@ -1296,22 +1360,21 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           }
         })
 
-        if (rowKeys.length > 0) {
-          tempRowRecords.push({
-            rowIndex: rowIndex + 1,
-            sheetName,
-            keys: rowKeys,
-            rawValue: primaryRawValue || rowKeys[0],
-            pesoSelecionado,
-            pesoSelecionadoStr,
-            pesoNotaVagao,
-            pesoNotaVagaoStr,
-            tara,
-            taraStr,
-            vagao,
-            brutoRow,
-          })
-        }
+        tempRowRecords.push({
+          rowIndex: rowIndex + 1,
+          sheetName,
+          keys: rowKeys,
+          rawValue: primaryRawValue || (rowKeys.length > 0 ? rowKeys[0] : String(row.filter(c => String(c || '').trim() !== '').join(' | '))),
+          pesoSelecionado,
+          pesoSelecionadoStr,
+          pesoNotaVagao,
+          pesoNotaVagaoStr,
+          tara,
+          taraStr,
+          vagao,
+          brutoRow,
+          hasData: true,
+        })
       })
 
       // Agrupar por Vagão para calcular somatório do peso da nota no vagão e tara
@@ -1339,7 +1402,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         })
       })
 
-      // Processar cada registro e alimentar o keysMap
+      // Processar cada registro e alimentar keysMap e allRowsList
       tempRowRecords.forEach((rec) => {
         const effPeso = rec.pesoNotaVagao ?? rec.pesoSelecionado ?? 0
         let pesoBrutoCalc: number | null = null
@@ -1374,27 +1437,64 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           ? effTara.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })
           : rec.taraStr
 
-        rec.keys.forEach((k) => {
-          if (!keysMap.has(k)) {
-            // CRÍTICO: Registra ESTRITAMENTE rec.pesoSelecionado.
-            // Se for null, PERMANECE NULL. Nunca substitui por effPeso ou pesoNotaVagao!
-            keysMap.set(k, {
-              row: rec.rowIndex,
-              rawValue: rec.rawValue,
+        if (rec.keys.length > 0) {
+          rec.keys.forEach((k) => {
+            if (!keysMap.has(k)) {
+              keysMap.set(k, {
+                row: rec.rowIndex,
+                rawValue: rec.rawValue,
+                sheetName: rec.sheetName,
+                pesoSelecionado: rec.pesoSelecionado,
+                pesoSelecionadoStr: rec.pesoSelecionadoStr,
+                pesoNotaVagao: rec.pesoNotaVagao,
+                pesoNotaVagaoStr: rec.pesoNotaVagaoStr,
+                tara: effTara,
+                taraStr: finalTaraStr,
+                vagao: rec.vagao,
+                pesoBruto: pesoBrutoCalc,
+                pesoBrutoStr,
+              })
+              allKeysList.push(k)
+            }
+
+            allRowsList.push({
+              id: `${rec.sheetName}_r${rec.rowIndex}_${k}`,
               sheetName: rec.sheetName,
+              row: rec.rowIndex,
+              key: k,
+              vagao: rec.vagao,
               pesoSelecionado: rec.pesoSelecionado,
               pesoSelecionadoStr: rec.pesoSelecionadoStr,
               pesoNotaVagao: rec.pesoNotaVagao,
               pesoNotaVagaoStr: rec.pesoNotaVagaoStr,
               tara: effTara,
               taraStr: finalTaraStr,
-              vagao: rec.vagao,
               pesoBruto: pesoBrutoCalc,
               pesoBrutoStr,
+              rawValue: rec.rawValue,
+              hasData: true,
             })
-            allKeysList.push(k)
-          }
-        })
+          })
+        } else {
+          // Linha do Excel sem chave de 44 dígitos
+          allRowsList.push({
+            id: `${rec.sheetName}_r${rec.rowIndex}_nokey`,
+            sheetName: rec.sheetName,
+            row: rec.rowIndex,
+            key: undefined,
+            vagao: rec.vagao,
+            pesoSelecionado: rec.pesoSelecionado,
+            pesoSelecionadoStr: rec.pesoSelecionadoStr,
+            pesoNotaVagao: rec.pesoNotaVagao,
+            pesoNotaVagaoStr: rec.pesoNotaVagaoStr,
+            tara: effTara,
+            taraStr: finalTaraStr,
+            pesoBruto: pesoBrutoCalc,
+            pesoBrutoStr,
+            rawValue: rec.rawValue,
+            hasData: true,
+          })
+        }
       })
     })
 
@@ -1433,6 +1533,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       totalRows,
       keysMap,
       allKeysList,
+      allRowsList,
       sheets: workbook.SheetNames,
       wagonSummaries: wagonSummariesList,
     })
@@ -1574,6 +1675,15 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       }
     }
   })
+
+  const excelRowsWithoutFiles = excelData
+    ? excelData.allRowsList.filter((r) => {
+        if (r.key) {
+          return !matchedExcelKeysSet.has(r.key) && !matchedExcelKeysSet.has('0' + r.key) && !(r.key.startsWith('0') && matchedExcelKeysSet.has(r.key.substring(1)))
+        }
+        return true
+      })
+    : []
 
   const excelKeysWithoutFiles = excelData 
     ? excelData.allKeysList.filter(k => !matchedExcelKeysSet.has(k))
@@ -2040,70 +2150,213 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       XLSX.utils.book_append_sheet(wb, wsWagons, 'Consolidação por Vagão')
     }
 
-    // 4. ABA TOTAL DE ARQUIVOS (ORDENADOS CONFORME A ORDEM DAS CHAVES DA PLANILHA EXCEL)
-    const orderedAllResults = [...validConvertedResults].sort((a, b) => {
-      const keyA = getNormalizedKey(a)
-      const keyB = getNormalizedKey(b)
-      const matchA = getExcelMatchInfo(keyA)
-      const matchB = getExcelMatchInfo(keyB)
+    // 4. ABA TOTAL DE ARQUIVOS (ORDENADOS CONFORME A ORDEM DAS LINHAS DA PLANILHA EXCEL)
+    let rowsTotalOrdered: any[] = []
 
-      if (matchA && matchB) {
-        return matchA.row - matchB.row
-      }
-      if (matchA && !matchB) return -1
-      if (!matchA && matchB) return 1
-      return keyA.localeCompare(keyB)
-    })
+    if (excelData && excelData.allRowsList && excelData.allRowsList.length > 0) {
+      // Indexar arquivos por chave
+      const filesByKey = new Map<string, any>()
+      validConvertedResults.forEach((res) => {
+        const k = getNormalizedKey(res)
+        if (k) {
+          filesByKey.set(k, res)
+          if (k.length === 43) filesByKey.set('0' + k, res)
+          if (k.length === 44 && k.startsWith('0')) filesByKey.set(k.substring(1), res)
+        }
+      })
 
-    const rowsTotalOrdered = orderedAllResults.map((res) => {
-      const d = res.parsedData
-      const key = getNormalizedKey(res)
-      const matchInfo = getExcelMatchInfo(key)
-      const isMatched = !!matchInfo
-      const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
-      const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
-      const qtdNota = getResultQuantidade(res)
-      const vWeight = confrontWeights(matchInfo, qtdNota)
-      const itemAudit = auditResultsMap[key || res.fileName]
-      const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
-        ? itemAudit.pesoCorrigidoDoc
-        : (overrideWeightsMap[key || res.fileName] !== undefined ? overrideWeightsMap[key || res.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
+      const matchedFilesSet = new Set<any>()
 
-      return {
-        'Posição / Linha Excel': matchInfo ? `Linha ${matchInfo.row} (${matchInfo.sheetName})` : 'Fora da Planilha Excel',
-        'Status Conferência Excel': isMatched ? 'CONSTA NA PLANILHA' : 'NÃO CONSTA NA PLANILHA',
-        'Vagão (Excel)': matchInfo?.vagao || 'N/A',
-        'Chave de Acesso': key || d?.chave || '',
-        'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
-        'Destinatário CNPJ': destCNPJ,
-        'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
-        'Validação CNPJ': vCNPJ.statusLabel,
-        'Nº Nota (nNF)': d?.nNF || '',
-        'Série': d?.serie || '',
-        'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
-        'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
-        'Tara (Excel)': matchInfo?.taraStr || 'N/A',
-        'Peso Bruto do Vagão (Soma Rateios + Tara)': matchInfo?.pesoBrutoStr || (matchInfo?.tara && matchInfo?.pesoNotaVagao ? (matchInfo.tara + matchInfo.pesoNotaVagao).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }) : 'N/A'),
-        'Quantidade Extraída (Nota)': qtdNota,
-        'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
-        'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
-        'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
-        'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA' 
-          ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)' 
-          : itemAudit?.status === 'DIVERGENCIA_REAL' 
-            ? 'DIVERGÊNCIA REAL DE PESAGEM' 
-            : itemAudit?.status === 'CONFERIDO_CORRETO' 
-              ? 'PESO CONFERIDO CORRETO' 
-              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
-        'Explicação IA': itemAudit?.explicacao || '',
-        'Valor Total (R$)': d?.vNF || 0,
-        'Emitente': d?.emitNome || '',
-        'CNPJ Emitente': d?.emitCNPJ || '',
-        'Destinatário': d?.destNome || '',
-        'Nome do Arquivo': res.fileName,
-        'Tipo Documento': subMode === 'pdf-to-xml' ? 'PDF' : 'XML',
-      }
-    })
+      // 1. Percorrer TODAS as linhas da planilha Excel na sequência original
+      excelData.allRowsList.forEach((rowRec) => {
+        const resMatch = rowRec.key ? filesByKey.get(rowRec.key) : null
+
+        if (resMatch) {
+          matchedFilesSet.add(resMatch)
+          const d = resMatch.parsedData
+          const key = getNormalizedKey(resMatch)
+          const matchInfo = getExcelMatchInfo(key) || {
+            row: rowRec.row,
+            rawValue: rowRec.rawValue || '',
+            sheetName: rowRec.sheetName,
+            pesoSelecionado: rowRec.pesoSelecionado,
+            pesoSelecionadoStr: rowRec.pesoSelecionadoStr,
+            pesoNotaVagao: rowRec.pesoNotaVagao,
+            pesoNotaVagaoStr: rowRec.pesoNotaVagaoStr,
+            tara: rowRec.tara,
+            taraStr: rowRec.taraStr,
+            vagao: rowRec.vagao,
+            pesoBruto: rowRec.pesoBruto,
+            pesoBrutoStr: rowRec.pesoBrutoStr,
+          }
+
+          const destCNPJ = d?.destCNPJ || resMatch.nfeData?.destinatario?.cpfCnpj || ''
+          const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || resMatch.nfeData?.emitente?.cnpj || '', destCNPJ)
+          const qtdNota = getResultQuantidade(resMatch)
+          const vWeight = confrontWeights(matchInfo, qtdNota)
+          const itemAudit = auditResultsMap[key || resMatch.fileName]
+          const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
+            ? itemAudit.pesoCorrigidoDoc
+            : (overrideWeightsMap[key || resMatch.fileName] !== undefined ? overrideWeightsMap[key || resMatch.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
+
+          rowsTotalOrdered.push({
+            'Posição / Linha Excel': `Linha ${rowRec.row} (${rowRec.sheetName})`,
+            'Status Conferência Excel': 'CONSTA NA PLANILHA',
+            'Vagão (Excel)': rowRec.vagao || matchInfo?.vagao || 'N/A',
+            'Chave de Acesso': key || d?.chave || rowRec.key || '',
+            'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+            'Destinatário CNPJ': destCNPJ,
+            'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+            'Validação CNPJ': vCNPJ.statusLabel,
+            'Nº Nota (nNF)': d?.nNF || resMatch.nfeData?.numero || '',
+            'Série': d?.serie || resMatch.nfeData?.serie || '',
+            'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
+            'Peso Nota Vagão (Excel)': rowRec.pesoNotaVagaoStr || matchInfo?.pesoNotaVagaoStr || 'N/A',
+            'Tara (Excel)': rowRec.taraStr || matchInfo?.taraStr || 'N/A',
+            'Peso Bruto do Vagão (Soma Rateios + Tara)': rowRec.pesoBrutoStr || matchInfo?.pesoBrutoStr || 'N/A',
+            'Quantidade Extraída (Nota)': qtdNota,
+            'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
+            'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
+            'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
+            'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA' 
+              ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)' 
+              : itemAudit?.status === 'DIVERGENCIA_REAL' 
+                ? 'DIVERGÊNCIA REAL DE PESAGEM' 
+                : itemAudit?.status === 'CONFERIDO_CORRETO' 
+                  ? 'PESO CONFERIDO CORRETO' 
+                  : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
+            'Explicação IA': itemAudit?.explicacao || '',
+            'Valor Total (R$)': d?.vNF || 0,
+            'Emitente': d?.emitNome || '',
+            'CNPJ Emitente': d?.emitCNPJ || '',
+            'Destinatário': d?.destNome || '',
+            'Nome do Arquivo': resMatch.fileName,
+            'Tipo Documento': subMode === 'pdf-to-xml' ? 'PDF' : 'XML',
+          })
+        } else {
+          // LINHA DA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE CARREGADO
+          const cleanKey = rowRec.key || ''
+          const cnpjFromKey = cleanKey.length === 44 ? cleanKey.substring(6, 20) : 'N/A'
+          const numFromKey = cleanKey.length === 44 ? (cleanKey.substring(25, 34).replace(/^0+/, '') || 'N/A') : 'N/A'
+          const serieFromKey = cleanKey.length === 44 ? (cleanKey.substring(22, 25).replace(/^0+/, '') || 'N/A') : 'N/A'
+
+          rowsTotalOrdered.push({
+            'Posição / Linha Excel': `Linha ${rowRec.row} (${rowRec.sheetName})`,
+            'Status Conferência Excel': cleanKey ? 'NÃO ENCONTRADO NOS ARQUIVOS (CONSTA APENAS NO EXCEL)' : 'SEM CHAVE NA LINHA DO EXCEL (NÃO ENCONTRADO NOS ARQUIVOS)',
+            'Vagão (Excel)': rowRec.vagao || 'N/A',
+            'Chave de Acesso': cleanKey || 'SEM CHAVE NA LINHA',
+            'CNPJ na Chave': cnpjFromKey,
+            'Destinatário CNPJ': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Confronto (Chave vs Destinatário)': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Validação CNPJ': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Nº Nota (nNF)': numFromKey !== 'N/A' ? numFromKey : 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Série': serieFromKey !== 'N/A' ? serieFromKey : 'N/A',
+            'Peso Selecionado (Excel)': rowRec.pesoSelecionadoStr || 'N/A',
+            'Peso Nota Vagão (Excel)': rowRec.pesoNotaVagaoStr || 'N/A',
+            'Tara (Excel)': rowRec.taraStr || 'N/A',
+            'Peso Bruto do Vagão (Soma Rateios + Tara)': rowRec.pesoBrutoStr || 'N/A',
+            'Quantidade Extraída (Nota)': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Confronto Peso (Excel vs Nota)': cleanKey ? 'ARQUIVO NÃO ENCONTRADO / AUSENTE' : 'SEM CHAVE / ARQUIVO AUSENTE',
+            'Diferença de Peso (Excel - Nota)': 'N/A',
+            'Quantidade Encontrada pela IA (Valor Real)': 'N/A (Sem arquivo)',
+            'Auditoria IA (Status / Causa)': cleanKey ? 'ARQUIVO NÃO CARREGADO / NOTA NÃO ENCONTRADA' : 'LINHA SEM CHAVE DE ACESSO NO EXCEL',
+            'Explicação IA': cleanKey
+              ? 'Esta linha consta na planilha Excel, porém o arquivo correspondente (PDF/XML) não foi carregado para conferência.'
+              : 'Linha presente na planilha Excel sem chave de acesso de 44 dígitos identificada.',
+            'Valor Total (R$)': 0,
+            'Emitente': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'CNPJ Emitente': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Destinatário': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Nome do Arquivo': 'ARQUIVO NÃO CARREGADO NO SISTEMA',
+            'Tipo Documento': 'N/A',
+          })
+        }
+      })
+
+      // 2. Adicionar arquivos carregados que NÃO constam na planilha Excel
+      validConvertedResults.forEach((res) => {
+        if (!matchedFilesSet.has(res)) {
+          const d = res.parsedData
+          const key = getNormalizedKey(res)
+          const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
+          const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
+          const qtdNota = getResultQuantidade(res)
+
+          rowsTotalOrdered.push({
+            'Posição / Linha Excel': 'Fora da Planilha Excel',
+            'Status Conferência Excel': 'NÃO CONSTA NA PLANILHA',
+            'Vagão (Excel)': 'N/A',
+            'Chave de Acesso': key || d?.chave || '',
+            'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+            'Destinatário CNPJ': destCNPJ,
+            'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+            'Validação CNPJ': vCNPJ.statusLabel,
+            'Nº Nota (nNF)': d?.nNF || '',
+            'Série': d?.serie || '',
+            'Peso Selecionado (Excel)': 'N/A',
+            'Peso Nota Vagão (Excel)': 'N/A',
+            'Tara (Excel)': 'N/A',
+            'Peso Bruto do Vagão (Soma Rateios + Tara)': 'N/A',
+            'Quantidade Extraída (Nota)': qtdNota,
+            'Confronto Peso (Excel vs Nota)': 'NÃO CONSTA NA PLANILHA',
+            'Diferença de Peso (Excel - Nota)': 'N/A',
+            'Quantidade Encontrada pela IA (Valor Real)': 'N/A',
+            'Auditoria IA (Status / Causa)': 'ARQUIVO CARREGADO NÃO CONSTA NO EXCEL',
+            'Explicação IA': 'Arquivo presente nos documentos importados, porém a chave não foi localizada na planilha Excel.',
+            'Valor Total (R$)': d?.vNF || 0,
+            'Emitente': d?.emitNome || '',
+            'CNPJ Emitente': d?.emitCNPJ || '',
+            'Destinatário': d?.destNome || '',
+            'Nome do Arquivo': res.fileName,
+            'Tipo Documento': subMode === 'pdf-to-xml' ? 'PDF' : 'XML',
+          })
+        }
+      })
+    } else {
+      // Caso não haja planilha Excel carregada
+      const orderedAllResults = [...validConvertedResults].sort((a, b) => {
+        const keyA = getNormalizedKey(a)
+        const keyB = getNormalizedKey(b)
+        return keyA.localeCompare(keyB)
+      })
+
+      rowsTotalOrdered = orderedAllResults.map((res) => {
+        const d = res.parsedData
+        const key = getNormalizedKey(res)
+        const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
+        const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
+        const qtdNota = getResultQuantidade(res)
+
+        return {
+          'Posição / Linha Excel': 'Fora da Planilha Excel',
+          'Status Conferência Excel': 'SEM PLANILHA EXCEL',
+          'Vagão (Excel)': 'N/A',
+          'Chave de Acesso': key || d?.chave || '',
+          'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+          'Destinatário CNPJ': destCNPJ,
+          'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+          'Validação CNPJ': vCNPJ.statusLabel,
+          'Nº Nota (nNF)': d?.nNF || '',
+          'Série': d?.serie || '',
+          'Peso Selecionado (Excel)': 'N/A',
+          'Peso Nota Vagão (Excel)': 'N/A',
+          'Tara (Excel)': 'N/A',
+          'Peso Bruto do Vagão (Soma Rateios + Tara)': 'N/A',
+          'Quantidade Extraída (Nota)': qtdNota,
+          'Confronto Peso (Excel vs Nota)': 'SEM PLANILHA',
+          'Diferença de Peso (Excel - Nota)': 'N/A',
+          'Quantidade Encontrada pela IA (Valor Real)': 'N/A',
+          'Auditoria IA (Status / Causa)': 'Sem planilha Excel carregada',
+          'Explicação IA': '',
+          'Valor Total (R$)': d?.vNF || 0,
+          'Emitente': d?.emitNome || '',
+          'CNPJ Emitente': d?.emitCNPJ || '',
+          'Destinatário': d?.destNome || '',
+          'Nome do Arquivo': res.fileName,
+          'Tipo Documento': subMode === 'pdf-to-xml' ? 'PDF' : 'XML',
+        }
+      })
+    }
     const wsTotalOrdered = createFormattedWorksheet(rowsTotalOrdered)
     XLSX.utils.book_append_sheet(wb, wsTotalOrdered, 'Total Arquivos (Ord. Excel)')
 
@@ -2198,21 +2451,45 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     const wsUnmatched = createFormattedWorksheet(rowsUnmatched)
     XLSX.utils.book_append_sheet(wb, wsUnmatched, 'Notas Ausentes no Excel')
 
-    // 5. ABA CHAVES NA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE
-    if (excelKeysWithoutFiles.length > 0 && excelData) {
-      const rowsExcelOnly = excelKeysWithoutFiles.map((key) => {
-        const matchInfo = getExcelMatchInfo(key)
+    // 5. ABA CHAVES / LINHAS NA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE (SEMPRE GERADA)
+    if (excelData) {
+      const rowsExcelOnly = excelRowsWithoutFiles.map((rowRec) => {
+        const cleanKey = rowRec.key || ''
+        const matchInfo = cleanKey ? getExcelMatchInfo(cleanKey) : null
+        const isMissingFile = !!cleanKey
         return {
-          'Linha no Excel': matchInfo ? `Linha ${matchInfo.row}` : 'N/A',
-          'Aba no Excel': matchInfo?.sheetName || '',
-          'Chave de Acesso (Excel)': key,
-          'Vagão (Excel)': matchInfo?.vagao || 'N/A',
-          'Peso Selecionado (Excel)': matchInfo?.pesoSelecionadoStr || 'N/A',
-          'Conteúdo Original Célula': matchInfo?.rawValue || '',
-          'Status': 'FALTANDO ARQUIVO DE NOTA (PDF/XML)',
-          'Observação': 'Chave consta na planilha Excel, porém nenhum arquivo correspondente foi importado',
+          'Linha no Excel': `Linha ${rowRec.row}`,
+          'Aba no Excel': rowRec.sheetName,
+          'Chave de Acesso (Excel)': cleanKey || 'SEM CHAVE NA LINHA',
+          'Vagão (Excel)': rowRec.vagao || matchInfo?.vagao || 'N/A',
+          'Peso Selecionado (Excel)': rowRec.pesoSelecionadoStr || matchInfo?.pesoSelecionadoStr || 'N/A',
+          'Peso Nota Vagão (Excel)': rowRec.pesoNotaVagaoStr || matchInfo?.pesoNotaVagaoStr || 'N/A',
+          'Tara (Excel)': rowRec.taraStr || matchInfo?.taraStr || 'N/A',
+          'Peso Bruto do Vagão': rowRec.pesoBrutoStr || matchInfo?.pesoBrutoStr || 'N/A',
+          'Conteúdo Original Célula': rowRec.rawValue || matchInfo?.rawValue || '',
+          'Status': isMissingFile ? 'FALTANDO ARQUIVO DE NOTA (PDF/XML)' : 'LINHA NO EXCEL SEM CHAVE DE ACESSO',
+          'Observação': isMissingFile
+            ? 'Chave de 44 dígitos consta na planilha Excel, porém nenhum arquivo correspondente foi importado'
+            : 'Linha presente na planilha Excel sem chave de acesso de 44 dígitos identificada',
         }
       })
+
+      // Se todas as notas estiverem 100% presentes, exibe uma linha informativa clara
+      if (rowsExcelOnly.length === 0) {
+        rowsExcelOnly.push({
+          'Linha no Excel': 'Nenhuma pendência',
+          'Aba no Excel': '-',
+          'Chave de Acesso (Excel)': '-',
+          'Vagão (Excel)': '-',
+          'Peso Selecionado (Excel)': '-',
+          'Peso Nota Vagão (Excel)': '-',
+          'Tara (Excel)': '-',
+          'Peso Bruto do Vagão': '-',
+          'Conteúdo Original Célula': '-',
+          'Status': 'TODAS AS CHAVES FORAM ENCONTRADAS (100% CONFERIDO)',
+          'Observação': 'Todos os arquivos correspondentes às chaves da planilha Excel foram carregados com sucesso.',
+        })
+      }
       const wsExcelOnly = createFormattedWorksheet(rowsExcelOnly)
       XLSX.utils.book_append_sheet(wb, wsExcelOnly, 'Chaves Excel Sem Arquivo')
     }
@@ -2668,6 +2945,17 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                   return v.confrontoChaveXDest === 'DIVERGENTES'
                 }).length
 
+                const hasAnyPesoInExcel = Boolean(
+                  excelData && (
+                    (excelData.keysMap && Array.from(excelData.keysMap.values()).some((k) => k.pesoSelecionado !== undefined && k.pesoSelecionado !== null && k.pesoSelecionado > 0)) ||
+                    validConvertedResults.some((res) => {
+                      const k = getNormalizedKey(res)
+                      const m = getExcelMatchInfo(k)
+                      return m && m.pesoSelecionado !== undefined && m.pesoSelecionado !== null && m.pesoSelecionado > 0
+                    })
+                  )
+                )
+
                 return (
                   <div className="space-y-4">
                     {divergentCount > 0 && (
@@ -2743,7 +3031,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                           }).length}
                         </p>
                         <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-0.5">
-                          Excel x Nota idênticos
+                          {!hasAnyPesoInExcel ? 'Sem dados na peso selecionado' : 'Excel x Nota idênticos'}
                         </p>
                       </div>
 
@@ -2760,7 +3048,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                           }).length}
                         </p>
                         <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
-                          Peso Excel ≠ Qtd Nota
+                          {!hasAnyPesoInExcel ? 'Sem dados na peso selecionado' : 'Peso Excel ≠ Qtd Nota'}
                         </p>
                       </div>
 

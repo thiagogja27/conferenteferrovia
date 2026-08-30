@@ -409,6 +409,11 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
 
   const totalDivergenciasPeso = itemsComDivergenciaPeso.length
 
+  const hasAnyPesoExcel = useMemo(() => {
+    return excelVagoesList.some((v) => v.peso !== undefined && v.peso !== null && v.peso > 0) ||
+      comparisonItems.some((i) => i.pesoExcel !== undefined && i.pesoExcel !== null && i.pesoExcel > 0)
+  }, [excelVagoesList, comparisonItems])
+
   // Recalcula o resumo com base nos itens finais ajustados
   const resumo: ResumoComparacao = useMemo(() => {
     const totalMDF = allMdfVagoes.length
@@ -1291,7 +1296,11 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                   {totalDivergenciasPeso}
                 </div>
                 <p className="text-[10px] text-purple-600 dark:text-purple-300 font-medium">
-                  {totalDivergenciasPeso > 0 ? `${Math.abs(resumo.diferencaPesoTotal).toFixed(3)} t dif total` : 'Pesos alinhados'}
+                  {!hasAnyPesoExcel
+                    ? 'Sem dados na peso selecionado'
+                    : totalDivergenciasPeso > 0
+                    ? `${Math.abs(resumo.diferencaPesoTotal).toFixed(3)} t dif total`
+                    : 'Pesos alinhados'}
                 </p>
               </CardContent>
             </Card>
