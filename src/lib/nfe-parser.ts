@@ -141,7 +141,17 @@ function getTextContent(doc: Document, tagName: string, parent?: Element): strin
 }
 
 function parseNumber(value: string): number {
-  const num = parseFloat(value.replace(",", "."))
+  if (!value) return 0
+  const clean = value.trim()
+  if (clean.includes(',') && clean.includes('.')) {
+    const num = parseFloat(clean.replace(/\./g, '').replace(',', '.'))
+    return isNaN(num) ? 0 : num
+  }
+  if (clean.includes(',')) {
+    const num = parseFloat(clean.replace(',', '.'))
+    return isNaN(num) ? 0 : num
+  }
+  const num = parseFloat(clean)
   return isNaN(num) ? 0 : num
 }
 

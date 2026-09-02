@@ -991,7 +991,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       if (pesoL > 0) return pesoL
     }
 
-    // 2. Se não houver Peso Líquido, buscar a Quantidade de Produtos / Itens
+    // 2. Se não houver Peso Líquido, buscar a Quantidade de Produtos / Itens (Coluna QUANT)
     if (res.nfeData?.itens && res.nfeData.itens.length > 0) {
       const sumItens = res.nfeData.itens.reduce((acc, item) => acc + (Number(item.quantidade) || 0), 0)
       if (sumItens > 0) return sumItens
@@ -1015,6 +1015,49 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     if (d?.transpQVol !== undefined && d?.transpQVol !== null) {
       const volQtd = parseBRFloat(d.transpQVol)
       if (volQtd > 0) return volQtd
+    }
+
+    // 3. Fallback procurando linha da tabela de produtos / coluna QUANT no rawSnippet ou XML
+    const rawText = `${res.parsedData?.rawSnippet || ''} ${res.xmlContent || ''}`
+    if (rawText.length > 10) {
+      // Ex: "47.020,00 QUILOGRAMA 73.800,00 47.020,00"
+      const vol4ColMatch = rawText.match(/(?:QUANTIDADE\s+ESP[EÉ]CIE[\s\S]{1,160}?|\b)(\d{1,3}(?:\.\d{3})+,\d{2}|\b\d{2,6},\d{2}\b)\s+[A-Za-zÀ-Ú]+\s+(?:\d{1,3}(?:\.\d{3})+,\d{2}|\b\d{2,6},\d{2}\b)\s+(\d{1,3}(?:\.\d{3})+,\d{2}|\b\d{2,6},\d{2}\b)/i)
+      if (vol4ColMatch && vol4ColMatch[2]) {
+        const qVal = parseBRFloat(vol4ColMatch[2])
+        if (qVal > 0) return qVal
+      }
+
+      // Ex: "PESO LÍQUIDO 47.020,00" ou "PESO LIQUIDO: 47.020,00"
+      const pesoLMatch = rawText.match(/(?:PESO\s+(?:L[ÍI]QUIDO|LIQ)|P\.\s*L[ÍI]Q)[\s\S]{0,30}?(\d{1,3}(?:\.\d{3})+,\d{2}|\b\d{2,6},\d{2}\b)/i)
+      if (pesoLMatch) {
+        const qVal = parseBRFloat(pesoLMatch[1])
+        if (qVal > 0) return qVal
+      }
+
+      const quantTonMatch = rawText.match(/(?:5\d{3}|6\d{3})?\s*(?:TON|TONELADA|TO|T)\s+(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d+,\d{1,4}\b|\b\d{1,3}(?:\.\d{3})+\b)/i)
+      if (quantTonMatch) {
+        const qVal = parseBRFloat(quantTonMatch[1])
+        if (qVal > 0) return qVal
+      }
+
+      // XML tag <pesoL> ou <qCom>
+      const xmlPesoLMatch = rawText.match(/<pesoL>([^<]+)<\/pesoL>/i)
+      if (xmlPesoLMatch) {
+        const qVal = parseBRFloat(xmlPesoLMatch[1])
+        if (qVal > 0) return qVal
+      }
+
+      const xmlQComMatch = rawText.match(/<qCom>([^<]+)<\/qCom>/i)
+      if (xmlQComMatch) {
+        const qVal = parseBRFloat(xmlQComMatch[1])
+        if (qVal > 0) return qVal
+      }
+
+      const directQuantMatch = rawText.match(/(?:QUANT(?:IDADE|\.)?|QTD)\s*[:=-]?\s*(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d+,\d{1,4}\b|\b\d{1,3}(?:\.\d{3})+\b)/i)
+      if (directQuantMatch) {
+        const qVal = parseBRFloat(directQuantMatch[1])
+        if (qVal > 0) return qVal
+      }
     }
 
     return 0
@@ -1717,6 +1760,66 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     return true
   })
 
+  // Ações de Auditoria de Pesos em Lote com IA
+  const handleAuditAllNfeWeights = async () => {
+    const divergentItems = validConvertedResults.filter((res) => {
+      const k = getNormalizedKey(res)
+      const m = getExcelMatchInfo(k)
+      return m && confrontWeights(m, getResultQuantidade(res)).status === 'DIVERGENTE'
+    })
+
+    if (divergentItems.length === 0) return
+
+    setIsAuditingAllWeights(true)
+    try {
+      const payload: WeightAuditItemInput[] = divergentItems.map((res) => {
+        const k = getNormalizedKey(res)
+        const m = getExcelMatchInfo(k)
+        const d = res.parsedData
+        const qtdNota = getResultQuantidade(res)
+        const vWeight = confrontWeights(m, qtdNota)
+        const prodInfo = `QUANT: ${d?.prodQCom || qtdNota} | UN: ${d?.prodUCom || 'KG'} | PesoLiq: ${d?.transpPesoL || ''} | PesoBruto: ${d?.transpPesoB || ''} | Vol: ${d?.transpQVol || ''}`
+        const snippetFull = d?.rawSnippet ? `${prodInfo}\nTrecho DANFE:\n${d.rawSnippet}` : `${prodInfo}\nNF ${d?.nNF || ''} Emit: ${d?.emitNome || ''} Dest: ${d?.destNome || ''} Chave: ${k} DadosAdicionais: ${d?.infCpl || ''}`
+        return {
+          id: k || res.fileName,
+          identificador: d?.nNF ? `NF ${d.nNF}` : res.fileName,
+          numeroApenas: d?.nNF || '',
+          serie: d?.serie || '',
+          pesoMDF: overrideWeightsMap[k || res.fileName] !== undefined ? overrideWeightsMap[k || res.fileName] : qtdNota,
+          pesoExcel: vWeight.pesoExcel || undefined,
+          diferencaPeso: vWeight.diferenca || undefined,
+          trechoTextoDocumento: snippetFull,
+          linhaExcel: m?.row,
+          dadosExcelRaw: m?.rawValue,
+        }
+      })
+
+      const response = await auditarDivergenciasComIA(payload)
+      setAuditSummary(response)
+      setAuditResultsMap((prev) => {
+        const next = { ...prev }
+        response.resultados.forEach((r) => {
+          next[r.id] = r
+        })
+        return next
+      })
+    } catch (err) {
+      console.error('Erro na auditoria IA de NF-e:', err)
+    } finally {
+      setIsAuditingAllWeights(false)
+    }
+  }
+
+  const handleApplyAllNfeCorrections = () => {
+    const nextOverrides = { ...overrideWeightsMap }
+    Object.entries(auditResultsMap).forEach(([id, r]) => {
+      if (r.status === 'ERRO_LEITURA_SISTEMA' && r.pesoCorrigidoDoc !== undefined && r.pesoCorrigidoDoc !== null) {
+        nextOverrides[id] = r.pesoCorrigidoDoc
+      }
+    })
+    setOverrideWeightsMap(nextOverrides)
+  }
+
   // Helper para criar e formatar largura das colunas das abas do Excel
   const createFormattedWorksheet = (rows: any[]) => {
     const ws = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ 'Mensagem': 'Nenhum registro encontrado nesta categoria' }])
@@ -2197,7 +2300,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           const itemAudit = auditResultsMap[key || resMatch.fileName]
           const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
             ? itemAudit.pesoCorrigidoDoc
-            : (overrideWeightsMap[key || resMatch.fileName] !== undefined ? overrideWeightsMap[key || resMatch.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
+            : (overrideWeightsMap[key || resMatch.fileName] !== undefined ? overrideWeightsMap[key || resMatch.fileName] : qtdNota)
 
           rowsTotalOrdered.push({
             'Posição / Linha Excel': `Linha ${rowRec.row} (${rowRec.sheetName})`,
@@ -2224,7 +2327,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                 ? 'DIVERGÊNCIA REAL DE PESAGEM' 
                 : itemAudit?.status === 'CONFERIDO_CORRETO' 
                   ? 'PESO CONFERIDO CORRETO' 
-                  : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
+                  : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'PESO CORRETO / CONFERIDO'),
             'Explicação IA': itemAudit?.explicacao || '',
             'Valor Total (R$)': d?.vNF || 0,
             'Emitente': d?.emitNome || '',
@@ -2380,7 +2483,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       const itemAudit = auditResultsMap[key || res.fileName]
       const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
         ? itemAudit.pesoCorrigidoDoc
-        : (overrideWeightsMap[key || res.fileName] !== undefined ? overrideWeightsMap[key || res.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
+        : (overrideWeightsMap[key || res.fileName] !== undefined ? overrideWeightsMap[key || res.fileName] : qtdNota)
 
       return {
         'Linha no Excel': matchInfo ? `Linha ${matchInfo.row}` : 'N/A',
@@ -2408,7 +2511,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             ? 'DIVERGÊNCIA REAL DE PESAGEM' 
             : itemAudit?.status === 'CONFERIDO_CORRETO' 
               ? 'PESO CONFERIDO CORRETO' 
-              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
+              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'PESO CORRETO / CONFERIDO'),
         'Explicação IA': itemAudit?.explicacao || '',
         'Valor Total (R$)': d?.vNF || 0,
         'Emitente': d?.emitNome || '',
@@ -3079,57 +3182,6 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
                 if (divergentItems.length === 0) return null
 
-                const handleAuditAllNfeWeights = async () => {
-                  setIsAuditingAllWeights(true)
-                  try {
-                    const payload: WeightAuditItemInput[] = divergentItems.map((res) => {
-                      const k = getNormalizedKey(res)
-                      const m = getExcelMatchInfo(k)
-                      const d = res.parsedData
-                      const qtdNota = getResultQuantidade(res)
-                      const vWeight = confrontWeights(m, qtdNota)
-                      const prodInfo = `QUANT: ${d?.prodQCom || qtdNota} | UN: ${d?.prodUCom || 'KG'} | PesoLiq: ${d?.transpPesoL || ''} | PesoBruto: ${d?.transpPesoB || ''} | Vol: ${d?.transpQVol || ''}`
-                      const snippetFull = d?.rawSnippet ? `${prodInfo}\nTrecho DANFE:\n${d.rawSnippet}` : `${prodInfo}\nNF ${d?.nNF || ''} Emit: ${d?.emitNome || ''} Dest: ${d?.destNome || ''} Chave: ${k} DadosAdicionais: ${d?.infCpl || ''}`
-                      return {
-                        id: k || res.fileName,
-                        identificador: d?.nNF ? `NF ${d.nNF}` : res.fileName,
-                        numeroApenas: d?.nNF || '',
-                        serie: d?.serie || '',
-                        pesoMDF: overrideWeightsMap[k || res.fileName] !== undefined ? overrideWeightsMap[k || res.fileName] : qtdNota,
-                        pesoExcel: vWeight.pesoExcel || undefined,
-                        diferencaPeso: vWeight.diferenca || undefined,
-                        trechoTextoDocumento: snippetFull,
-                        linhaExcel: m?.row,
-                        dadosExcelRaw: m?.rawValue,
-                      }
-                    })
-
-                    const response = await auditarDivergenciasComIA(payload)
-                    setAuditSummary(response)
-                    setAuditResultsMap((prev) => {
-                      const next = { ...prev }
-                      response.resultados.forEach((r) => {
-                        next[r.id] = r
-                      })
-                      return next
-                    })
-                  } catch (err) {
-                    console.error('Erro na auditoria IA de NF-e:', err)
-                  } finally {
-                    setIsAuditingAllWeights(false)
-                  }
-                }
-
-                const handleApplyAllNfeCorrections = () => {
-                  const nextOverrides = { ...overrideWeightsMap }
-                  Object.entries(auditResultsMap).forEach(([id, r]) => {
-                    if (r.status === 'ERRO_LEITURA_SISTEMA' && r.pesoCorrigidoDoc !== undefined && r.pesoCorrigidoDoc !== null) {
-                      nextOverrides[id] = r.pesoCorrigidoDoc
-                    }
-                  })
-                  setOverrideWeightsMap(nextOverrides)
-                }
-
                 return (
                   <div className="rounded-xl border border-purple-200 dark:border-purple-900/60 bg-gradient-to-r from-purple-50/80 via-indigo-50/40 to-purple-50/80 dark:from-purple-950/30 dark:via-indigo-950/20 dark:to-purple-950/30 p-4 space-y-3 shadow-xs">
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -3285,15 +3337,48 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                   )}
                 </div>
 
-                <div className="relative w-full sm:w-64">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
-                  <input
-                    type="text"
-                    placeholder="Buscar chave, nº nota..."
-                    value={excelSearchQuery}
-                    onChange={(e) => setExcelSearchQuery(e.target.value)}
-                    className="w-full bg-zinc-50 border border-zinc-200 dark:bg-zinc-900 dark:border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
+                <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+                  {(() => {
+                    const divergentCount = validConvertedResults.filter((res) => {
+                      const k = getNormalizedKey(res)
+                      const m = getExcelMatchInfo(k)
+                      return m && confrontWeights(m, getResultQuantidade(res)).status === 'DIVERGENTE'
+                    }).length
+                    if (divergentCount === 0) return null
+
+                    return (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleAuditAllNfeWeights}
+                        disabled={isAuditingAllWeights}
+                        className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1.5 shadow-xs cursor-pointer h-8 px-3 shrink-0"
+                      >
+                        {isAuditingAllWeights ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Auditando {divergentCount} notas...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-3.5 w-3.5" />
+                            Auditar Todas com IA ({divergentCount})
+                          </>
+                        )}
+                      </Button>
+                    )
+                  })()}
+
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
+                    <input
+                      type="text"
+                      placeholder="Buscar chave, nº nota..."
+                      value={excelSearchQuery}
+                      onChange={(e) => setExcelSearchQuery(e.target.value)}
+                      className="w-full bg-zinc-50 border border-zinc-200 dark:bg-zinc-900 dark:border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -3350,6 +3435,49 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                 </div>
               ) : (
                 <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden divide-y divide-zinc-100 dark:divide-zinc-800">
+                  {excelFilter === 'weight_divergent' && (
+                    <div className="p-3 bg-amber-500/10 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="flex items-center gap-2">
+                        <Scale className="h-4 w-4 text-amber-600 shrink-0" />
+                        <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                          Exibindo todas as {filteredConvertedResults.length} notas com divergência de peso
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handleAuditAllNfeWeights}
+                          disabled={isAuditingAllWeights}
+                          className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1.5 shadow-xs cursor-pointer h-7 px-2.5"
+                        >
+                          {isAuditingAllWeights ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Auditando todas...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-3 w-3" />
+                              Auditar Todas com IA ({filteredConvertedResults.length})
+                            </>
+                          )}
+                        </Button>
+
+                        {auditSummary && auditSummary.totalErrosLeitura > 0 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleApplyAllNfeCorrections}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer h-7 px-2.5 flex items-center gap-1"
+                          >
+                            <CheckCheck className="h-3.5 w-3.5" />
+                            Aplicar Todas as Correções ({auditSummary.totalErrosLeitura})
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {filteredConvertedResults.map((res, idx) => {
                     const key = getNormalizedKey(res) || res.parsedData?.chave || res.nfeData?.chaveAcesso || ''
                     const matchInfo = getExcelMatchInfo(key)

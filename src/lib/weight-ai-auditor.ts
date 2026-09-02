@@ -67,15 +67,70 @@ export function auditarHeuristicaLocal(item: WeightAuditItemInput): WeightAuditI
     }
   }
 
-  // Caso Especial Prioritário: Campo QUANT / QUANTIDADE da DANFE
-  // Busca padrões diretos do campo QUANT como: QUANT 47.420,00 ou UN: TON QUANT: 47.420,00 ou quebras "47.420,0 0"
+  // Caso Especial Prioritário: Tabela de Produtos / Campo QUANT / QUANTIDADE da DANFE
+  // 1. Linha completa de produto DANFE: [CFOP] [UN] [QUANT] [VALOR_UNIT] [VALOR_TOTAL]
+  // Ex: "5504 TON 47,62 1.557,99 74.191,53" ou "5504 TON 47,62"
+  const danfeProdRowRegex = /(?:5\d{3}|6\d{3})\s+(TON|TONELADA|KG|KGS|SC|SAC|UN|UND|TO|T)\s+(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d+,\d{1,4}\b|\b\d{1,3}(?:\.\d{3})+\b)/i
+  const danfeProdRowMatch = cleanSnippet.match(danfeProdRowRegex)
+  if (danfeProdRowMatch) {
+    const unit = danfeProdRowMatch[1].toUpperCase()
+    const rawVal = danfeProdRowMatch[2]
+    const numVal = parseFloat(rawVal.replace(/\./g, '').replace(',', '.'))
+    if (numVal > 0) {
+      const valInTons = (unit.startsWith('TON') || unit === 'TO' || unit === 'T') 
+        ? numVal 
+        : (numVal >= 1000 ? Number((numVal / 1000).toFixed(3)) : numVal)
+      
+      const isMatchExcel = pesoExcel !== undefined && (Math.abs(valInTons - pesoExcel) <= 0.01 || (pesoExcel >= 1000 && Math.abs(valInTons * 1000 - pesoExcel) <= 1))
+      
+      return {
+        id: item.id,
+        identificador,
+        status: isMatchExcel ? 'ERRO_LEITURA_SISTEMA' : 'DIVERGENCIA_REAL',
+        veredito: `Valor Real no Campo QUANT: ${valInTons.toFixed(3)} t (${rawVal} ${unit})`,
+        pesoCorrigidoDoc: valInTons,
+        pesoExcel,
+        diferencaReal: pesoExcel !== undefined ? Number((valInTons - (pesoExcel >= 1000 ? pesoExcel / 1000 : pesoExcel)).toFixed(3)) : 0,
+        explicacao: `Localizado na coluna QUANT dos Dados dos Produtos/Serviços: ${rawVal} ${unit} (${valInTons.toFixed(3)} t)${isMatchExcel ? ', conferindo com a planilha Excel.' : ', divergindo do peso da planilha.'}`,
+        confianca: 'ALTA',
+        modoUtilizado: 'HEURISTICA_LOCAL',
+      }
+    }
+  }
+
+  // 2. Volumes de Transporte: QUANTIDADE | ESPÉCIE | PESO BRUTO | PESO LÍQUIDO
+  // Ex: "47.620,00 QUILOGRAMA 73.540,00 47.620,00"
+  const danfeVolRowRegex = /(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d{2,6},\d{1,4}\b)\s+(?:QUILOGRAMA|KG|TONELADA|TON|GRANEL|SACS?|VOLS?)\s+(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d{2,6},\d{1,4}\b)\s+(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d{2,6},\d{1,4}\b)/i
+  const danfeVolRowMatch = cleanSnippet.match(danfeVolRowRegex)
+  if (danfeVolRowMatch) {
+    const rawPesoL = danfeVolRowMatch[3]
+    const numPesoL = parseFloat(rawPesoL.replace(/\./g, '').replace(',', '.'))
+    if (numPesoL > 0) {
+      const pesoLInTons = numPesoL >= 1000 ? Number((numPesoL / 1000).toFixed(3)) : numPesoL
+      const isMatchExcel = pesoExcel !== undefined && (Math.abs(pesoLInTons - pesoExcel) <= 0.01 || (pesoExcel >= 1000 && Math.abs(pesoLInTons * 1000 - pesoExcel) <= 1))
+      
+      return {
+        id: item.id,
+        identificador,
+        status: isMatchExcel ? 'ERRO_LEITURA_SISTEMA' : 'DIVERGENCIA_REAL',
+        veredito: `Peso Líquido da DANFE: ${pesoLInTons.toFixed(3)} t (${rawPesoL} kg)`,
+        pesoCorrigidoDoc: pesoLInTons,
+        pesoExcel,
+        diferencaReal: pesoExcel !== undefined ? Number((pesoLInTons - (pesoExcel >= 1000 ? pesoExcel / 1000 : pesoExcel)).toFixed(3)) : 0,
+        explicacao: `Localizado na seção de Transporte/Peso Líquido da DANFE: ${rawPesoL} kg (${pesoLInTons.toFixed(3)} t)${isMatchExcel ? ', alinhado com a planilha Excel.' : '.'}`,
+        confianca: 'ALTA',
+        modoUtilizado: 'HEURISTICA_LOCAL',
+      }
+    }
+  }
+
+  // 3. Busca por rótulo QUANT / QUANTIDADE da DANFE
   const quantRegex = /(?:QUANT(?:IDADE|\.)?|QTD)\s*[:=-]?\s*(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d+,\d{1,4}\b|\b\d{1,3}(?:\.\d{3})+\b|\b\d+\b)/i
   const quantMatch = trechoTextoDocumento.match(quantRegex)
   if (quantMatch) {
     const rawQuantStr = quantMatch[1]
     const quantNum = parseFloat(rawQuantStr.replace(/\./g, '').replace(',', '.'))
     if (quantNum > 0) {
-      // Se a quantidade estiver em kg (ex: 47420 ou 47420.00) e o Excel estiver em toneladas (ex: 47.420)
       const quantInTons = quantNum >= 1000 ? Number((quantNum / 1000).toFixed(3)) : Number(quantNum.toFixed(3))
       if (pesoExcel !== undefined && Math.abs(quantInTons - pesoExcel) <= 0.01) {
         return {

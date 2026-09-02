@@ -170,7 +170,7 @@ app.post("/api/gemini/verify-weight-divergence", async (req, res) => {
         pesoDocumentoLido: it.pesoMDF !== undefined ? `${it.pesoMDF} t` : 'Não identificado',
         pesoExcelInformado: it.pesoExcel !== undefined ? `${it.pesoExcel} t` : 'Não informado',
         diferencaApontada: it.diferencaPeso !== undefined ? `${it.diferencaPeso} t` : 'N/A',
-        trechoDocumentoOriginal: it.trechoTextoDocumento ? it.trechoTextoDocumento.substring(0, 1000) : 'Sem trecho disponível',
+        trechoDocumentoOriginal: it.trechoTextoDocumento ? it.trechoTextoDocumento.substring(0, 4000) : 'Sem trecho disponível',
         linhaExcel: it.linhaExcel || 'N/A',
         dadosExcelRaw: it.dadosExcelRaw || {},
       }));
@@ -185,15 +185,17 @@ Sua missão fundamental é conferir TODAS as notas/vagões com divergência para
 DIRETRIZES FUNDAMENTAIS PARA O CAMPO "QUANT" / "QUANTIDADE":
 =======================================================
 1) CAMPO ALVO OBRIGATÓRIO: Olhe expressamente para a coluna "QUANT" (ou "QUANTIDADE" / "QTD") da tabela de Dados dos Produtos/Serviços da DANFE (onde constam colunas típicas como: CÓDIGO | DESCRIÇÃO | NCM | CST | CFOP | UN | QUANT | VALOR UNIT | VALOR TOTAL).
-2) QUEBRAS DE LINHA NO CAMPO QUANT: Em muitos layouts de DANFE, o último dígito decimal quebra para a linha de baixo (exemplo real: a coluna exibe "47.420,0" na primeira linha e "0" na linha de baixo -> o valor real da quantidade é 47.420,00 kg / 47.420 t). Se o sistema leu "47.42" ou truncou o zero, localize o valor integral "47.420".
-3) UNIDADE DE MEDIDA (UN):
-   - Se UN for KG ou QUILOS e QUANT for "47.420,00", o peso real em toneladas é 47.420 t.
-   - Se UN for TON, T ou TONELADAS e QUANT for "47.420,00" ou "47.420", o peso real é 47.420 t.
-4) DADOS DO TRANSPORTE: Verifique também o campo "PESO LÍQUIDO" e "PESO BRUTO" na seção de Transportador/Volumes Transportados para validar a consistência com o campo QUANT.
+   Exemplo Real da DANFE: "2P ACUCAR VHP 17011400 5504 TON 47,62 1.557,99 74.191,53" -> A quantidade real nesta nota é 47,62 TON (47.620 t).
+2) SE O SISTEMA LER 0 OU FALTAR VALOR: Se o sistema anterior leu 0 t mas o texto da nota ou XML contém a linha do produto (ex: "ACUCAR VHP ... TON 47,62" ou "47.620,00 QUILOGRAMA"), classifique obrigatoriamente como "ERRO_LEITURA_SISTEMA", localize a quantidade real (ex: 47.62 t) e preencha "pesoCorrigidoDoc": 47.62.
+3) QUEBRAS DE LINHA NO CAMPO QUANT: Em layouts de DANFE, o último dígito decimal pode quebrar para a linha de baixo (ex: "47.420,0" + "0" = 47.420,00 kg / 47.420 t).
+4) UNIDADE DE MEDIDA (UN):
+   - Se UN for TON, T ou TONELADAS e QUANT for "47,62" ou "47.620", o peso real é 47.620 t.
+   - Se UN for KG ou QUILOGRAMA e QUANT for "47.620,00", o peso real em toneladas é 47.620 t.
+5) DADOS DO TRANSPORTE: Verifique também "PESO LÍQUIDO" e "PESO BRUTO" na seção de Transportador/Volumes Transportados (ex: "47.620,00 QUILOGRAMA 73.540,00 47.620,00" -> 47.620 t líquido).
 
 Classificação de Status:
-1) "ERRO_LEITURA_SISTEMA": Se o algoritmo de extração cometeu uma falha ao ler o PDF/texto (por exemplo: perdeu o último decimal por quebra de linha na coluna QUANT como 47.420,0 + 0 = 47.420,00, leu unidade em kg em vez de toneladas, truncou 74.66 em vez de 74.660, ou cortou zeros à direita). Encontre no campo QUANT / Peso Líquido o valor REAL exato e preencha "pesoCorrigidoDoc" com a quantidade real em toneladas (t).
-2) "DIVERGENCIA_REAL": O documento fiscal declara expressamente no campo QUANT / Peso Líquido um valor X e a planilha Excel declara um peso Y diferente (divergência física/comercial real na pesagem ou digitação). Indique o peso real declarado no documento em "pesoCorrigidoDoc".
+1) "ERRO_LEITURA_SISTEMA": Se o algoritmo de extração cometeu uma falha ao ler o PDF/texto (por exemplo: leu 0 t em vez de 47.62 t, perdeu casas decimais, confundiu unidades ou quebrou linhas). Encontre no campo QUANT / Peso Líquido o valor REAL exato e preencha "pesoCorrigidoDoc" com a quantidade real em toneladas (t).
+2) "DIVERGENCIA_REAL": O documento fiscal declara expressamente no campo QUANT / Peso Líquido um valor X e a planilha Excel declara um peso Y diferente (divergência física/comercial real). Indique o peso real declarado no documento em "pesoCorrigidoDoc".
 3) "PESO_AUSENTE_NO_DOC": O documento realmente não contém quantidade nem peso declarado em nenhum campo.
 4) "CONFERIDO_CORRETO": Os pesos estão alinhados quando convertidos para a mesma unidade ou consideradas as casas decimais corretas.
 

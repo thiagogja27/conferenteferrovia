@@ -50,6 +50,8 @@ interface ProcessedFile {
   xmlContent: string
   nfeData: NFEData | null
   error: string | null
+  parsedData?: any
+  rawSnippet?: string
 }
 
 interface ExcelMatchInfo {
@@ -199,21 +201,130 @@ const parseBRFloat = (val: string | number | undefined | null): number => {
 }
 
 const getFileQuantidade = (f: ProcessedFile): number => {
+  // 1. Verificar Peso Líquido do Transportador
   if (f.nfeData?.transportador?.pesoLiquido && Number(f.nfeData.transportador.pesoLiquido) > 0) {
     return Number(f.nfeData.transportador.pesoLiquido)
   }
 
+  if (f.parsedData?.transpPesoL) {
+    const rawL = String(f.parsedData.transpPesoL).trim()
+    const numL = rawL.includes(',') ? parseFloat(rawL.replace(/\./g, '').replace(',', '.')) : parseFloat(rawL)
+    if (!isNaN(numL) && numL > 0) return numL
+  }
+
+  // 2. Verificar Itens / Dados dos Produtos (Coluna QUANT)
   if (f.nfeData?.itens && f.nfeData.itens.length > 0) {
     const sumItens = f.nfeData.itens.reduce((acc, item) => acc + (Number(item.quantidade) || 0), 0)
     if (sumItens > 0) return sumItens
   }
 
+  if (f.parsedData) {
+    if (f.parsedData.prodQCom !== undefined && f.parsedData.prodQCom !== null && !isNaN(Number(f.parsedData.prodQCom)) && Number(f.parsedData.prodQCom) > 0) {
+      return Number(f.parsedData.prodQCom)
+    }
+    if (f.parsedData.quantidade !== undefined && f.parsedData.quantidade !== null && !isNaN(Number(f.parsedData.quantidade)) && Number(f.parsedData.quantidade) > 0) {
+      return Number(f.parsedData.quantidade)
+    }
+  }
+
+  // 3. Verificar Quantidade de Volumes do Transporte
   if (f.nfeData?.transportador?.quantidade) {
     const transpQtd = Number(f.nfeData.transportador.quantidade) || 0
     if (transpQtd > 0) return transpQtd
   }
 
+  if (f.parsedData?.transpQVol) {
+    const rawV = String(f.parsedData.transpQVol).trim()
+    const numV = rawV.includes(',') ? parseFloat(rawV.replace(/\./g, '').replace(',', '.')) : parseFloat(rawV)
+    if (!isNaN(numV) && numV > 0) return numV
+  }
+
+  // 4. Fallback no texto bruto (rawSnippet / xmlContent) procurando a coluna QUANT, TON ou Peso Líquido
+  const textToSearch = `${f.rawSnippet || ''} ${f.xmlContent || ''}`
+  if (textToSearch.length > 10) {
+    // Ex: "47.020,00 QUILOGRAMA 73.800,00 47.020,00"
+    const vol4ColMatch = textToSearch.match(/(?:QUANTIDADE\s+ESP[EÉ]CIE[\s\S]{1,160}?|\b)(\d{1,3}(?:\.\d{3})+,\d{2}|\b\d{2,6},\d{2}\b)\s+[A-Za-zÀ-Ú]+\s+(?:\d{1,3}(?:\.\d{3})+,\d{2}|\b\d{2,6},\d{2}\b)\s+(\d{1,3}(?:\.\d{3})+,\d{2}|\b\d{2,6},\d{2}\b)/i)
+    if (vol4ColMatch && vol4ColMatch[2]) {
+      const qVal = parseFloat(vol4ColMatch[2].replace(/\./g, '').replace(',', '.'))
+      if (qVal > 0) return qVal
+    }
+
+    // Ex: "PESO LÍQUIDO 47.020,00" ou "PESO LIQUIDO: 47.020,00"
+    const pesoLMatch = textToSearch.match(/(?:PESO\s+(?:L[ÍI]QUIDO|LIQ)|P\.\s*L[ÍI]Q)[\s\S]{0,30}?(\d{1,3}(?:\.\d{3})+,\d{2}|\b\d{2,6},\d{2}\b)/i)
+    if (pesoLMatch) {
+      const qVal = parseFloat(pesoLMatch[1].replace(/\./g, '').replace(',', '.'))
+      if (qVal > 0) return qVal
+    }
+
+    // Ex: "5504 TON 47,02" ou "TON 47,02"
+    const quantTonMatch = textToSearch.match(/(?:5\d{3}|6\d{3})?\s*(?:TON|TONELADA|TO|T)\s+(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d+,\d{1,4}\b|\b\d{1,3}(?:\.\d{3})+\b)/i)
+    if (quantTonMatch) {
+      const qVal = parseFloat(quantTonMatch[1].replace(/\./g, '').replace(',', '.'))
+      if (qVal > 0) return qVal
+    }
+
+    // XML tag <pesoL> ou <qCom>
+    const xmlPesoLMatch = textToSearch.match(/<pesoL>([^<]+)<\/pesoL>/i)
+    if (xmlPesoLMatch) {
+      const qVal = parseFloat(xmlPesoLMatch[1].replace(/\./g, '').replace(',', '.'))
+      if (qVal > 0) return qVal
+    }
+
+    const xmlQComMatch = textToSearch.match(/<qCom>([^<]+)<\/qCom>/i)
+    if (xmlQComMatch) {
+      const qVal = parseFloat(xmlQComMatch[1].replace(/\./g, '').replace(',', '.'))
+      if (qVal > 0) return qVal
+    }
+
+    const quantDirectMatch = textToSearch.match(/(?:QUANT(?:IDADE|\.)?|QTD)\s*[:=-]?\s*(\d{1,3}(?:\.\d{3})+,\d{1,4}|\b\d+,\d{1,4}\b|\b\d{1,3}(?:\.\d{3})+\b)/i)
+    if (quantDirectMatch) {
+      const qVal = parseFloat(quantDirectMatch[1].replace(/\./g, '').replace(',', '.'))
+      if (qVal > 0) return qVal
+    }
+  }
+
   return 0
+}
+
+function buildAuditSnippet(f: ProcessedFile, qtdNota: number, key: string, matchInfo: any): string {
+  const parts: string[] = []
+  
+  parts.push(`NF: ${f.nfeData?.numero || ''} | Série: ${f.nfeData?.serie || ''} | Chave: ${key}`)
+  parts.push(`Emitente: ${f.nfeData?.emitente?.nome || ''} (CNPJ: ${f.nfeData?.emitente?.cnpj || ''})`)
+  parts.push(`Destinatário: ${f.nfeData?.destinatario?.nome || ''} (CNPJ: ${f.nfeData?.destinatario?.cpfCnpj || ''})`)
+  
+  if (f.nfeData?.itens && f.nfeData.itens.length > 0) {
+    parts.push(`--- DADOS DOS PRODUTOS / SERVIÇOS ---`)
+    f.nfeData.itens.forEach((it, idx) => {
+      parts.push(`Item ${idx + 1}: Código: ${it.codigo || ''} | Descrição: ${it.descricao || ''} | NCM: ${it.ncm || ''} | CFOP: ${it.cfop || ''} | UN: ${it.unidade || ''} | QUANT: ${it.quantidade} | Valor Unit: ${it.valorUnitario || ''} | Valor Total: ${it.valorTotal || ''}`)
+    })
+  } else if (f.parsedData) {
+    parts.push(`--- DADOS DOS PRODUTOS / SERVIÇOS ---`)
+    parts.push(`Código: ${f.parsedData.prodCodigo || ''} | Descrição: ${f.parsedData.prodNome || ''} | NCM: ${f.parsedData.prodNCM || ''} | CFOP: ${f.parsedData.prodCFOP || ''} | UN: ${f.parsedData.prodUCom || ''} | QUANT: ${f.parsedData.prodQCom || ''} | Valor Total: ${f.parsedData.prodVProd || ''}`)
+  }
+
+  parts.push(`--- TRANSPORTADOR / VOLUMES TRANSPORTADOS ---`)
+  parts.push(`Peso Líquido: ${f.nfeData?.transportador?.pesoLiquido || f.parsedData?.transpPesoL || '0'} | Peso Bruto: ${f.nfeData?.transportador?.pesoBruto || f.parsedData?.transpPesoB || '0'} | Quantidade Volumes: ${f.nfeData?.transportador?.quantidade || f.parsedData?.transpQVol || '0'} | Espécie: ${f.nfeData?.transportador?.especie || f.parsedData?.transpEsp || ''}`)
+
+  if (f.nfeData?.informacoesComplementares || f.parsedData?.infCpl) {
+    parts.push(`--- INFORMAÇÕES COMPLEMENTARES ---`)
+    parts.push(f.nfeData?.informacoesComplementares || f.parsedData?.infCpl || '')
+  }
+
+  if (f.rawSnippet) {
+    parts.push(`--- TRECHO BRUTO DA DANFE / DOCUMENTO ---`)
+    parts.push(f.rawSnippet.substring(0, 3000))
+  } else if (f.xmlContent) {
+    parts.push(`--- XML DO DOCUMENTO ---`)
+    parts.push(f.xmlContent.substring(0, 3000))
+  }
+
+  if (matchInfo) {
+    parts.push(`--- DADOS CONFRONTADOS NA PLANILHA EXCEL ---`)
+    parts.push(`Linha: ${matchInfo.row} | Vagão: ${matchInfo.vagao || 'N/A'} | Peso Selecionado no Excel: ${matchInfo.pesoSelecionadoStr || matchInfo.pesoSelecionado} | Peso Nota Vagão: ${matchInfo.pesoNotaVagaoStr || ''} | Tara: ${matchInfo.taraStr || ''} | Peso Bruto Excel: ${matchInfo.pesoBrutoStr || ''}`)
+  }
+
+  return parts.join('\n')
 }
 
 interface ExcelReconciliationTabProps {
@@ -309,6 +420,7 @@ export function ExcelReconciliationTab({
   // Estados para Auditoria de IA
   const [auditResultsMap, setAuditResultsMap] = useState<Record<string, WeightAuditItemResult>>({})
   const [overrideWeightsMap, setOverrideWeightsMap] = useState<Record<string, number>>({})
+  const [auditSummary, setAuditSummary] = useState<WeightAuditResponse | null>(null)
   const [isAuditingAllWeights, setIsAuditingAllWeights] = useState<boolean>(false)
   const [auditingKey, setAuditingKey] = useState<string | null>(null)
 
@@ -1422,7 +1534,7 @@ export function ExcelReconciliationTab({
           const itemAudit = auditResultsMap[key || fileMatch.fileName]
           const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
             ? itemAudit.pesoCorrigidoDoc
-            : (overrideWeightsMap[key || fileMatch.fileName] !== undefined ? overrideWeightsMap[key || fileMatch.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
+            : (overrideWeightsMap[key || fileMatch.fileName] !== undefined ? overrideWeightsMap[key || fileMatch.fileName] : qtdNota)
 
           rowsTotalOrdered.push({
             'Posição / Linha Excel': `Linha ${rowRec.row} (${rowRec.sheetName})`,
@@ -1449,7 +1561,7 @@ export function ExcelReconciliationTab({
                 ? 'DIVERGÊNCIA REAL DE PESAGEM'
                 : itemAudit?.status === 'CONFERIDO_CORRETO'
                   ? 'PESO CONFERIDO CORRETO'
-                  : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
+                  : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'PESO CORRETO / CONFERIDO'),
             'Explicação IA': itemAudit?.explicacao || '',
             'Valor Total (R$)': fileMatch.nfeData?.impostos?.valorTotal || 0,
             'Emitente': fileMatch.nfeData?.emitente?.nome || '',
@@ -1605,7 +1717,7 @@ export function ExcelReconciliationTab({
       const itemAudit = auditResultsMap[key || f.fileName]
       const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
         ? itemAudit.pesoCorrigidoDoc
-        : (overrideWeightsMap[key || f.fileName] !== undefined ? overrideWeightsMap[key || f.fileName] : (vWeight.status === 'DIVERGENTE' ? 'Pendente de Auditoria IA' : 'N/A (Peso Correto)'))
+        : (overrideWeightsMap[key || f.fileName] !== undefined ? overrideWeightsMap[key || f.fileName] : qtdNota)
 
       return {
         'Linha no Excel': matchInfo ? `Linha ${matchInfo.row}` : 'N/A',
@@ -1633,7 +1745,7 @@ export function ExcelReconciliationTab({
             ? 'DIVERGÊNCIA REAL DE PESAGEM'
             : itemAudit?.status === 'CONFERIDO_CORRETO'
               ? 'PESO CONFERIDO CORRETO'
-              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'Peso correto'),
+              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'PESO CORRETO / CONFERIDO'),
         'Explicação IA': itemAudit?.explicacao || '',
         'Valor Total (R$)': f.nfeData?.impostos?.valorTotal || 0,
         'Emitente': f.nfeData?.emitente?.nome || '',
@@ -1776,8 +1888,7 @@ export function ExcelReconciliationTab({
         const matchInfo = getExcelMatchInfo(key)
         const qtdNota = getFileQuantidade(f)
         const vWeight = confrontWeights(matchInfo, qtdNota)
-        const prodInfo = `PESO_LIQ: ${f.nfeData?.transportador?.pesoLiquido || qtdNota} | PESO_BRUTO: ${f.nfeData?.transportador?.pesoBruto || ''} | QTD_VOL: ${f.nfeData?.transportador?.quantidade || ''}`
-        const snippet = `${prodInfo}\nNF ${f.nfeData?.numero || ''} Emit: ${f.nfeData?.emitente?.nome || ''} Dest: ${f.nfeData?.destinatario?.nome || ''} Chave: ${key} DadosAdicionais: ${f.nfeData?.informacoesComplementares || ''}`
+        const snippet = buildAuditSnippet(f, qtdNota, key, matchInfo)
 
         return {
           id: key || f.fileName,
@@ -1794,6 +1905,7 @@ export function ExcelReconciliationTab({
       })
 
       const response: WeightAuditResponse = await auditarDivergenciasComIA(payload)
+      setAuditSummary(response)
       const newAuditMap: Record<string, WeightAuditItemResult> = { ...auditResultsMap }
       response.resultados.forEach((res) => {
         newAuditMap[res.id] = res
@@ -1805,6 +1917,18 @@ export function ExcelReconciliationTab({
     } finally {
       setIsAuditingAllWeights(false)
     }
+  }
+
+  const handleApplyAllNfeCorrections = () => {
+    const nextOverrides = { ...overrideWeightsMap }
+    let appliedCount = 0
+    Object.entries(auditResultsMap).forEach(([id, r]) => {
+      if (r.status === 'ERRO_LEITURA_SISTEMA' && r.pesoCorrigidoDoc !== undefined && r.pesoCorrigidoDoc !== null) {
+        nextOverrides[id] = r.pesoCorrigidoDoc
+        appliedCount++
+      }
+    })
+    setOverrideWeightsMap(nextOverrides)
   }
 
   const isMatchedWithDivergence = (matchInfo: ExcelMatchInfo | null, vWeight: any) => {
@@ -2220,39 +2344,79 @@ export function ExcelReconciliationTab({
 
               {/* Banner de Auditoria IA se houver divergências de peso */}
               {divergentWeightCount > 0 && (
-                <div className="p-4 rounded-xl border border-purple-200 dark:border-purple-900 bg-purple-50/50 dark:bg-purple-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300">
-                      <BrainCircuit className="h-5 w-5" />
+                <div className="p-4 rounded-xl border border-purple-200 dark:border-purple-900 bg-purple-50/70 dark:bg-purple-950/30 flex flex-col gap-3 shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 shrink-0">
+                        <BrainCircuit className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-purple-950 dark:text-purple-100 flex items-center gap-2">
+                          <span>{divergentWeightCount} Divergência{divergentWeightCount > 1 ? 's' : ''} de Peso Detectada{divergentWeightCount > 1 ? 's' : ''}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-200 text-purple-900 dark:bg-purple-800 dark:text-purple-100 font-bold">
+                            Auditoria em Lote
+                          </span>
+                        </h4>
+                        <p className="text-[11px] text-purple-800/80 dark:text-purple-300/80 mt-0.5">
+                          A IA analisa o texto/DANFE de <strong>todas as {divergentWeightCount} notas com divergência</strong> em uma única execução para localizar os valores reais no campo QUANT / Peso Líquido.
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-purple-950 dark:text-purple-100">
-                        {divergentWeightCount} Divergência{divergentWeightCount > 1 ? 's' : ''} de Peso Detectada{divergentWeightCount > 1 ? 's' : ''}
-                      </h4>
-                      <p className="text-[11px] text-purple-800/80 dark:text-purple-300/80 mt-0.5">
-                        Utilize a Auditoria com IA para analisar os textos originais das notas fiscais e identificar erros de digitação vs divergências reais.
-                      </p>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        onClick={handleRunAiAuditAll}
+                        disabled={isAuditingAllWeights}
+                        size="sm"
+                        className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        {isAuditingAllWeights ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Auditando todas as {divergentWeightCount} notas...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-3.5 w-3.5" />
+                            Auditar Todas as {divergentWeightCount} com IA
+                          </>
+                        )}
+                      </Button>
                     </div>
                   </div>
 
-                  <Button
-                    onClick={handleRunAiAuditAll}
-                    disabled={isAuditingAllWeights}
-                    size="sm"
-                    className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs gap-1.5 cursor-pointer shrink-0"
-                  >
-                    {isAuditingAllWeights ? (
-                      <>
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Auditando com IA...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="h-3.5 w-3.5" />
-                        Auditar Todas as Divergências com IA
-                      </>
-                    )}
-                  </Button>
+                  {auditSummary && (
+                    <div className="pt-2 border-t border-purple-200/80 dark:border-purple-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className="font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1">
+                          <BrainCircuit className="h-3.5 w-3.5 text-purple-600" />
+                          Veredito da IA:
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-semibold text-[11px]">
+                          {auditSummary.totalErrosLeitura} Erros de Leitura (Valor Real Encontrado)
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-semibold text-[11px]">
+                          {auditSummary.totalDivergenciasReais} Divergências Reais
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-semibold text-[11px]">
+                          {auditSummary.totalConferidos} Pesos Corretos
+                        </span>
+                      </div>
+
+                      {auditSummary.totalErrosLeitura > 0 && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handleApplyAllNfeCorrections}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer h-7 px-3 flex items-center gap-1 self-start sm:self-auto"
+                        >
+                          <CheckCheck className="h-3.5 w-3.5" />
+                          Aplicar Valores Reais ({auditSummary.totalErrosLeitura})
+                        </Button>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2448,15 +2612,39 @@ export function ExcelReconciliationTab({
                   )}
                 </div>
 
-                <div className="relative w-full sm:w-64">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
-                  <input
-                    type="text"
-                    placeholder="Filtrar chave, nº nota, vagão..."
-                    value={excelSearchQuery}
-                    onChange={(e) => setExcelSearchQuery(e.target.value)}
-                    className="w-full bg-zinc-50 border border-zinc-200 dark:bg-zinc-900 dark:border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
+                <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+                  {divergentWeightCount > 0 && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleRunAiAuditAll}
+                      disabled={isAuditingAllWeights}
+                      className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1.5 shadow-xs cursor-pointer h-8 px-3 shrink-0"
+                    >
+                      {isAuditingAllWeights ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Auditando {divergentWeightCount} notas...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-3.5 w-3.5" />
+                          Auditar Todas com IA ({divergentWeightCount})
+                        </>
+                      )}
+                    </Button>
+                  )}
+
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
+                    <input
+                      type="text"
+                      placeholder="Filtrar chave, nº nota, vagão..."
+                      value={excelSearchQuery}
+                      onChange={(e) => setExcelSearchQuery(e.target.value)}
+                      className="w-full bg-zinc-50 border border-zinc-200 dark:bg-zinc-900 dark:border-zinc-800 rounded-lg pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -2531,6 +2719,49 @@ export function ExcelReconciliationTab({
                 </div>
               ) : (
                 <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden divide-y divide-zinc-100 dark:divide-zinc-800">
+                  {excelFilter === 'weight_divergent' && (
+                    <div className="p-3 bg-amber-500/10 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-900/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="flex items-center gap-2">
+                        <Scale className="h-4 w-4 text-amber-600 shrink-0" />
+                        <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                          Exibindo todas as {filteredResults.length} notas com divergência de peso
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handleRunAiAuditAll}
+                          disabled={isAuditingAllWeights}
+                          className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1.5 shadow-xs cursor-pointer h-7 px-2.5"
+                        >
+                          {isAuditingAllWeights ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Auditando todas...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-3 w-3" />
+                              Auditar Todas com IA ({divergentWeightCount})
+                            </>
+                          )}
+                        </Button>
+
+                        {auditSummary && auditSummary.totalErrosLeitura > 0 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleApplyAllNfeCorrections}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer h-7 px-2.5 flex items-center gap-1"
+                          >
+                            <CheckCheck className="h-3.5 w-3.5" />
+                            Aplicar Todas as Correções ({auditSummary.totalErrosLeitura})
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {filteredResults.map((f, idx) => {
                     const key = getNormalizedKey(f)
                     const matchInfo = getExcelMatchInfo(key)
@@ -2743,8 +2974,7 @@ export function ExcelReconciliationTab({
                                         const itemId = key || f.fileName
                                         setAuditingKey(itemId)
                                         try {
-                                          const prodInfo = `PESO_LIQ: ${f.nfeData?.transportador?.pesoLiquido || qtdNota} | PESO_BRUTO: ${f.nfeData?.transportador?.pesoBruto || ''}`
-                                          const snippet = `${prodInfo}\nNF ${f.nfeData?.numero || ''} Emit: ${f.nfeData?.emitente?.nome || ''} Dest: ${f.nfeData?.destinatario?.nome || ''} Chave: ${key}`
+                                          const snippet = buildAuditSnippet(f, qtdNota, key, matchInfo)
                                           const singlePayload: WeightAuditItemInput[] = [{
                                             id: itemId,
                                             identificador: f.nfeData?.numero ? `NF ${f.nfeData.numero}` : f.fileName,

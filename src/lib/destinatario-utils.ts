@@ -54,6 +54,12 @@ export function sanitizeDestinatarioNome(
   const combined = `${nome} ${rawCnpj || ''} ${fullText || ''}`.toUpperCase()
 
   // 2. Normalização corporativa de grandes clientes do setor agro / trading / usinas
+  if (combined.includes('TIETE') || combined.includes('TIETÊ') || /51\.?843\.?514/i.test(combined)) {
+    return 'TIETE AGROINDUSTRIAL S.A.'
+  }
+  if (combined.includes('ALCOESTE') || /43\.?545\.?284/i.test(combined)) {
+    return 'ALCOESTE BIOENERGIA FERNANDOPOLIS S/A'
+  }
   if (combined.includes('CARGILL') || /02\.?387\.?241/i.test(combined)) {
     return 'CARGILL AGRICOLA SA'
   }
