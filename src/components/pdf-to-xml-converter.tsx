@@ -397,6 +397,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
   const excelInputRef = useRef<HTMLInputElement>(null)
+  const activeProcessSessionRef = useRef<number>(0)
+  const isCancelledRef = useRef<boolean>(false)
 
   // Função auxiliar para converter arquivos para Base64 de forma assíncrona
   const fileToBase64 = (file: File): Promise<string> => {
@@ -542,7 +544,37 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     }
   }
 
+  const cancelAndClearProcessing = useCallback((clearResults = true) => {
+    // 1. Invalida imediatamente a sessão ativa de processamento
+    activeProcessSessionRef.current += 1
+    isCancelledRef.current = true
+    setIsProcessingAll(false)
+    setProcessingProgress(null)
+
+    // 2. Limpa o valor físico dos inputs para que possam disparar onChange novamente
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+    if (folderInputRef.current) {
+      folderInputRef.current.value = ''
+    }
+
+    // 3. Cancela síntese de voz pendente
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
+
+    // 4. Limpa lista de resultados se solicitado
+    if (clearResults) {
+      setResults([])
+    }
+  }, [])
+
   const processPDFs = useCallback(async (selectedFiles: FileList | File[]) => {
+    const currentSession = ++activeProcessSessionRef.current
+    isCancelledRef.current = false
+    const isAborted = () => isCancelledRef.current || activeProcessSessionRef.current !== currentSession
+
     const fileArray = Array.from(selectedFiles)
     // Filtrar apenas arquivos .pdf e .zip válidos, ignorando qualquer outro tipo de arquivo (imagens, excel, doc, etc.)
     const validSelection = fileArray.filter(f => {
@@ -561,16 +593,20 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     const pdfFiles: File[] = []
 
     for (const file of validSelection) {
+      if (isAborted()) return
       const lowerName = file.name.toLowerCase()
       if (lowerName.endsWith('.zip')) {
         try {
           const zip = new JSZip()
           const zipContents = await zip.loadAsync(file)
+          if (isAborted()) return
           for (const [relativePath, zipEntry] of Object.entries(zipContents.files)) {
+            if (isAborted()) return
             if (!zipEntry.dir && !relativePath.includes('__MACOSX') && !relativePath.startsWith('.')) {
               const cleanName = relativePath.split('/').pop() || relativePath
               if (cleanName.toLowerCase().endsWith('.pdf')) {
                 const blob = await zipEntry.async('blob')
+                if (isAborted()) return
                 const pdfFile = new File([blob], cleanName, { type: 'application/pdf' })
                 ;(pdfFile as any).originalPath = relativePath
                 ;(pdfFile as any).filePath = relativePath
@@ -591,6 +627,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         pdfFiles.push(file)
       }
     }
+
+    if (isAborted()) return
 
     if (pdfFiles.length === 0) {
       setIsProcessingAll(false)
@@ -619,9 +657,14 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
     const worker = async () => {
       while (queue.length > 0) {
+        if (isAborted()) {
+          queue.length = 0
+          break
+        }
         const item = queue.shift()
         if (!item) break
         const resList = await convertSinglePDF(item.file)
+        if (isAborted()) break
         resultsMap.set(item.idx, resList)
         completedCount++
 
@@ -633,12 +676,15 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             currentResults.push(initialResults[i])
           }
         }
+        if (isAborted()) break
         setResults([...currentResults])
         setProcessingProgress({ current: completedCount, total: pdfFiles.length })
       }
     }
 
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY_LIMIT, pdfFiles.length) }, worker))
+
+    if (isAborted()) return
 
     const finalResults: PDFConversionResult[] = []
     for (let i = 0; i < pdfFiles.length; i++) {
@@ -657,6 +703,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
   // MODO 2: CONVERTER XML PARA PDF (DANFE) E CONFERIR CHAVES
   // =========================================================================
   const processXMLs = useCallback(async (selectedFiles: FileList | File[]) => {
+    const currentSession = ++activeProcessSessionRef.current
+    isCancelledRef.current = false
+    const isAborted = () => isCancelledRef.current || activeProcessSessionRef.current !== currentSession
+
     const fileArray = Array.from(selectedFiles)
     // Filtrar estritamente apenas .xml, .pdf e .zip, ignorando qualquer outro arquivo sem tentar lê-lo
     const validFiles = fileArray.filter(f => {
@@ -683,21 +733,26 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     const rawItems: RawItem[] = []
 
     for (const file of validFiles) {
+      if (isAborted()) return
       const lowerName = file.name.toLowerCase()
       const origPath = (file as any).originalPath || (file as any).filePath || file.webkitRelativePath || file.name
       if (lowerName.endsWith('.zip')) {
         try {
           const zip = new JSZip()
           const zipContents = await zip.loadAsync(file)
+          if (isAborted()) return
           for (const [relativePath, zipEntry] of Object.entries(zipContents.files)) {
+            if (isAborted()) return
             if (!zipEntry.dir && !relativePath.includes('__MACOSX') && !relativePath.startsWith('.')) {
               const cleanName = relativePath.split('/').pop() || relativePath
               const entryLower = cleanName.toLowerCase()
               if (entryLower.endsWith('.xml')) {
                 const xmlText = await zipEntry.async('string')
+                if (isAborted()) return
                 rawItems.push({ fileName: cleanName, filePath: relativePath, originalPath: relativePath, fileType: 'xml', contentOrBlob: xmlText })
               } else if (entryLower.endsWith('.pdf')) {
                 const blob = await zipEntry.async('blob')
+                if (isAborted()) return
                 rawItems.push({ fileName: cleanName, filePath: relativePath, originalPath: relativePath, fileType: 'pdf', contentOrBlob: blob })
               }
             }
@@ -709,10 +764,13 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         rawItems.push({ fileName: file.name, filePath: origPath, originalPath: origPath, fileType: 'pdf', contentOrBlob: file })
       } else if (lowerName.endsWith('.xml')) {
         const xmlText = await file.text()
+        if (isAborted()) return
         rawItems.push({ fileName: file.name, filePath: origPath, originalPath: origPath, fileType: 'xml', contentOrBlob: xmlText })
       }
       // Outros formatos são ignorados silenciosamente sem tentar ler como XML
     }
+
+    if (isAborted()) return
 
     if (rawItems.length === 0) {
       setIsProcessingAll(false)
@@ -740,6 +798,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
     const worker = async () => {
       while (queue.length > 0) {
+        if (isAborted()) {
+          queue.length = 0
+          break
+        }
         const queueItem = queue.shift()
         if (!queueItem) break
         const { item, idx } = queueItem
@@ -812,6 +874,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           }
         }
 
+        if (isAborted()) break
         resultsMap.set(idx, itemRes)
         completedCount++
 
@@ -823,12 +886,15 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             currentResults.push(initialResults[i])
           }
         }
+        if (isAborted()) break
         setResults([...currentResults])
         setProcessingProgress({ current: completedCount, total: rawItems.length })
       }
     }
 
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY_LIMIT, rawItems.length) }, worker))
+
+    if (isAborted()) return
 
     const finalResults: PDFConversionResult[] = []
     for (let i = 0; i < rawItems.length; i++) {
@@ -1112,7 +1178,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
   }
 
   const handleClear = () => {
-    setResults([])
+    cancelAndClearProcessing(true)
   }
 
   // =========================================================================
@@ -2836,6 +2902,20 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                 </div>
 
                 <div className="flex items-center gap-2 self-end sm:self-auto">
+                  {(isProcessingAll || processingCount > 0) && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => cancelAndClearProcessing(true)}
+                      className="gap-1.5 font-bold cursor-pointer"
+                      title="Interromper imediatamente todo o processamento em andamento e limpar"
+                    >
+                      <X className="h-4 w-4" />
+                      Parar Processamento
+                    </Button>
+                  )}
+
                   {successCount > 0 && (
                     <>
                       <Button onClick={handleDownloadAllExcel} size="sm" variant="outline" className="gap-2 border-green-200 dark:border-green-900/40 text-green-600 hover:bg-green-50/55 dark:hover:bg-green-950/20 font-medium cursor-pointer">
@@ -2856,7 +2936,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                       )}
                     </>
                   )}
-                  <Button onClick={handleClear} variant="outline" size="sm" title="Limpar lista" className="cursor-pointer">
+                  <Button onClick={handleClear} variant="outline" size="sm" title="Limpar lista e cancelar processamento" className="cursor-pointer">
                     Limpar
                   </Button>
                 </div>

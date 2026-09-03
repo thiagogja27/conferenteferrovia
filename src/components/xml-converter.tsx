@@ -184,7 +184,10 @@ export function XMLConverter() {
   const [activeTab, setActiveTab] = useState<string>('list')
   const [converterMode, setConverterMode] = useState<'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'documentation'>('xml-to-pdf')
   const [processFileType, setProcessFileType] = useState<'all' | 'xml' | 'pdf'>('all')
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
+  const activeProcessSessionRef = useRef<number>(0)
+  const isCancelledRef = useRef<boolean>(false)
 
   const [listFilterTerm, setListFilterTerm] = useState('')
   const [showWorkflowGuide, setShowWorkflowGuide] = useState(true)
@@ -473,9 +476,47 @@ export function XMLConverter() {
     otherFiles: { path: string; content: Blob }[]
   }
 
-  const processZipFile = async (zipFile: File, typeFilter: 'all' | 'xml' | 'pdf' = processFileType): Promise<ZipFileData> => {
+  const cancelAndClearProcessing = useCallback((clearResults = true) => {
+    // 1. Invalida imediatamente a sessão de processamento em andamento
+    activeProcessSessionRef.current += 1
+    isCancelledRef.current = true
+    setIsProcessing(false)
+
+    // 2. Limpa o valor físico dos inputs para que possam disparar onChange novamente
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+    if (folderInputRef.current) {
+      folderInputRef.current.value = ''
+    }
+
+    // 3. Cancela qualquer sintetizador de voz que esteja alertando em paralelo
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
+
+    // 4. Limpa a lista de arquivos da interface
+    if (clearResults) {
+      setFiles([])
+      setOtherZipFiles([])
+      setExpandedIndex(null)
+    }
+  }, [])
+
+  const processZipFile = async (
+    zipFile: File,
+    typeFilter: 'all' | 'xml' | 'pdf' = processFileType,
+    sessionId?: number
+  ): Promise<ZipFileData> => {
+    const isAborted = () =>
+      isCancelledRef.current || (sessionId !== undefined && activeProcessSessionRef.current !== sessionId)
+
+    if (isAborted()) return { files: [], otherFiles: [] }
+
     const zip = new JSZip()
     const contents = await zip.loadAsync(zipFile)
+    if (isAborted()) return { files: [], otherFiles: [] }
+
     const results: ProcessedFile[] = []
     const otherFiles: { path: string; content: Blob }[] = []
 
@@ -486,41 +527,60 @@ export function XMLConverter() {
     const pdfQueue: { fileName: string; filePath: string; pdfBlob: Blob }[] = []
 
     for (const filePath of allFiles) {
+      if (isAborted()) break
       const fileName = filePath.split('/').pop() || filePath
       const lowerPath = filePath.toLowerCase()
       
       if (lowerPath.endsWith('.xml')) {
         if (typeFilter === 'pdf') continue // Ignora XML se o filtro for apenas PDF
         const fileContent = await contents.files[filePath].async('string')
+        if (isAborted()) break
         const result = await processXMLContent(fileName, filePath, fileContent)
+        if (isAborted()) break
         results.push(result)
       } else if (lowerPath.endsWith('.pdf')) {
         if (typeFilter === 'xml') continue // Ignora PDF se o filtro for apenas XML
         const pdfBlob = await contents.files[filePath].async('blob')
+        if (isAborted()) break
         pdfQueue.push({ fileName, filePath, pdfBlob })
       } else {
         const content = await contents.files[filePath].async('blob')
+        if (isAborted()) break
         otherFiles.push({ path: filePath, content })
       }
     }
 
-    if (pdfQueue.length > 0) {
+    if (pdfQueue.length > 0 && !isAborted()) {
       const CONCURRENCY_LIMIT = 6
       const pdfWorker = async () => {
         while (pdfQueue.length > 0) {
+          if (isAborted()) {
+            pdfQueue.length = 0
+            break
+          }
           const item = pdfQueue.shift()
           if (!item) break
           const pdfResults = await convertPDFToXMLAndParse(item.fileName, item.filePath, item.pdfBlob)
+          if (isAborted()) break
           results.push(...pdfResults)
         }
       }
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY_LIMIT, pdfQueue.length) }, pdfWorker))
     }
 
+    if (isAborted()) {
+      return { files: [], otherFiles: [] }
+    }
+
     return { files: results, otherFiles }
   }
 
   const processFiles = useCallback(async (selectedFiles: FileList | File[], overrideFileType?: 'all' | 'xml' | 'pdf') => {
+    // Registra nova sessão de processamento e cancela qualquer anterior
+    const currentSession = ++activeProcessSessionRef.current
+    isCancelledRef.current = false
+    const isAborted = () => isCancelledRef.current || activeProcessSessionRef.current !== currentSession
+
     const typeFilter = overrideFileType || processFileType
     setIsProcessing(true)
     setFiles([])
@@ -539,11 +599,13 @@ export function XMLConverter() {
     const directResults: ProcessedFile[] = []
 
     for (const file of Array.from(selectedFiles)) {
+      if (isAborted()) return
       const fileName = file.name.toLowerCase()
 
       if (fileName.endsWith('.zip')) {
         try {
-          const zipData = await processZipFile(file, typeFilter)
+          const zipData = await processZipFile(file, typeFilter, currentSession)
+          if (isAborted()) return
           directResults.push(...zipData.files)
           allOtherFiles.push(...zipData.otherFiles)
         } catch (err) {
@@ -552,6 +614,7 @@ export function XMLConverter() {
       } else if (fileName.endsWith('.xml')) {
         if (typeFilter === 'pdf') continue // Filtro apenas PDF ativo
         const content = await file.text()
+        if (isAborted()) return
         const origPath = (file as any).originalPath || (file as any).filePath || file.webkitRelativePath || file.name
         workItems.push({
           fileName: file.name,
@@ -571,6 +634,8 @@ export function XMLConverter() {
       }
     }
 
+    if (isAborted()) return
+
     if (workItems.length === 0 && directResults.length === 0) {
       setIsProcessing(false)
       if (typeFilter === 'xml') {
@@ -589,8 +654,10 @@ export function XMLConverter() {
 
     // Process XMLs and unsupported immediately
     for (const item of workItems) {
+      if (isAborted()) return
       if (item.type === 'xml') {
         const res = await processXMLContent(item.fileName, item.filePath, item.contentOrBlob as string)
+        if (isAborted()) return
         results.push(res)
       } else if (item.type === 'unsupported') {
         results.push({
@@ -602,21 +669,30 @@ export function XMLConverter() {
         })
       }
     }
+
+    if (isAborted()) return
     setFiles([...results])
 
     // Process PDFs concurrently in batches of 6 with live updates
     if (pdfQueue.length > 0) {
       const worker = async () => {
         while (pdfQueue.length > 0) {
+          if (isAborted()) {
+            pdfQueue.length = 0
+            break
+          }
           const item = pdfQueue.shift()
           if (!item) break
           const pdfResults = await convertPDFToXMLAndParse(item.fileName, item.filePath, item.contentOrBlob as File | Blob)
+          if (isAborted()) break
           results.push(...pdfResults)
           setFiles([...results])
         }
       }
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY_LIMIT, pdfQueue.length) }, worker))
     }
+
+    if (isAborted()) return
 
     setOtherZipFiles(allOtherFiles)
     setIsProcessing(false)
@@ -647,6 +723,8 @@ export function XMLConverter() {
     if (selectedFiles && selectedFiles.length > 0) {
       processFiles(selectedFiles, processFileType)
     }
+    // Limpar o valor do input imediatamente para permitir selecionar novamente os mesmos arquivos
+    e.target.value = ''
   }
 
   const handleDrop = useCallback(
@@ -823,9 +901,7 @@ export function XMLConverter() {
   };
 
   const handleClear = () => {
-    setFiles([])
-    setOtherZipFiles([])
-    setExpandedIndex(null)
+    cancelAndClearProcessing(true)
   }
 
   const formatCurrency = (value: number) => {
@@ -1084,31 +1160,50 @@ export function XMLConverter() {
               onDrop={handleDrop}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
-              className={`relative flex min-h-[190px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed transition-all p-6 text-center ${
-                isDragOver
-                  ? 'border-indigo-500 bg-indigo-500/10 scale-[1.01]'
-                  : 'border-zinc-300 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-900/30 hover:border-indigo-400 hover:bg-zinc-50 dark:hover:bg-zinc-900/60'
+              className={`relative flex min-h-[190px] flex-col items-center justify-center rounded-2xl border-2 border-dashed transition-all p-6 text-center ${
+                isProcessing
+                  ? 'border-indigo-400 bg-indigo-50/40 dark:bg-indigo-950/20'
+                  : isDragOver
+                  ? 'border-indigo-500 bg-indigo-500/10 scale-[1.01] cursor-pointer'
+                  : 'border-zinc-300 dark:border-zinc-700 bg-zinc-50/50 dark:bg-zinc-900/30 hover:border-indigo-400 hover:bg-zinc-50 dark:hover:bg-zinc-900/60 cursor-pointer'
               }`}
             >
-              <input
-                type='file'
-                accept={
-                  processFileType === 'xml'
-                    ? '.xml,.zip'
-                    : processFileType === 'pdf'
-                    ? '.pdf,.zip'
-                    : '.xml,.pdf,.zip'
-                }
-                multiple
-                onChange={handleFileChange}
-                className='absolute inset-0 cursor-pointer opacity-0'
-              />
+              {!isProcessing && (
+                <input
+                  ref={fileInputRef}
+                  type='file'
+                  accept={
+                    processFileType === 'xml'
+                      ? '.xml,.zip'
+                      : processFileType === 'pdf'
+                      ? '.pdf,.zip'
+                      : '.xml,.pdf,.zip'
+                  }
+                  multiple
+                  onChange={handleFileChange}
+                  className='absolute inset-0 cursor-pointer opacity-0'
+                />
+              )}
               {isProcessing ? (
-                <>
+                <div className="flex flex-col items-center justify-center text-center z-30 pointer-events-auto">
                   <Loader2 className='mb-3 h-10 w-10 animate-spin text-indigo-600 dark:text-indigo-400' />
                   <p className='text-sm font-bold text-foreground'>Processando e conferindo arquivos...</p>
-                  <p className='text-xs text-muted-foreground mt-1'>Auditando Chaves de Acesso, Terminais e Transbordos</p>
-                </>
+                  <p className='text-xs text-muted-foreground mt-1 mb-4'>Auditando Chaves de Acesso, Terminais e Transbordos</p>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      cancelAndClearProcessing(true)
+                    }}
+                    className="cursor-pointer gap-1.5 shadow-sm font-bold text-xs"
+                  >
+                    <X className="h-4 w-4" />
+                    Parar e Limpar Processamento
+                  </Button>
+                </div>
               ) : (
                 <>
                   <div className='mb-3 flex items-center gap-2'>
@@ -1171,9 +1266,15 @@ export function XMLConverter() {
             </div>
 
             {/* Barra de Ações Rápidas quando há arquivos */}
-            {files.length > 0 && (
+            {(files.length > 0 || isProcessing) && (
               <div className='mt-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-xl bg-zinc-100/70 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800'>
                 <div className='flex items-center gap-3 text-xs font-semibold flex-wrap'>
+                  {isProcessing && (
+                    <span className='flex items-center gap-1.5 text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800 animate-pulse'>
+                      <Loader2 className='h-3.5 w-3.5 animate-spin' />
+                      Processando...
+                    </span>
+                  )}
                   {successCount > 0 && (
                     <span className='flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800'>
                       <CheckCircle2 className='h-3.5 w-3.5' />
@@ -1195,7 +1296,19 @@ export function XMLConverter() {
                 </div>
 
                 <div className='flex items-center gap-2 flex-wrap'>
-                  {successCount > 0 && (
+                  {isProcessing && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => cancelAndClearProcessing(true)}
+                      className="gap-1.5 font-bold cursor-pointer"
+                    >
+                      <X className="h-4 w-4" />
+                      Parar Processamento
+                    </Button>
+                  )}
+                  {successCount > 0 && !isProcessing && (
                     <>
                       <Button onClick={handleDownloadExcel} size='sm' className='gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer'>
                         <FileSpreadsheet className='h-4 w-4' />
