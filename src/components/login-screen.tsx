@@ -90,6 +90,19 @@ export function LoginScreen({ isModal = false, onClose }: LoginScreenProps) {
           </h1>
         </div>
 
+        {mode === 'login' && (
+          <div className="mb-5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100">
+            <p className="mb-2 font-semibold text-amber-300">Acesso temporário</p>
+            <p>
+              E-mail:{' '}
+              <span className="select-text font-medium text-zinc-100">portaria_balanca@tegporto.com.br</span>
+            </p>
+            <p>
+              Senha: <span className="select-text font-medium text-zinc-100">@Bal120826</span>
+            </p>
+          </div>
+        )}
+
         {/* Mensagens de Alerta / Sucesso */}
         {errorMessage && (
           <div className="mb-4 p-3 rounded-xl bg-rose-950/50 border border-rose-800 text-rose-200 text-xs flex items-center gap-2">
