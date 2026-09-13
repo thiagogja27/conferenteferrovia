@@ -149,6 +149,18 @@ export function getFirebaseConfig(): FirebaseRealtimeConfig | null {
     }
   }
 
+  // Fallback para variáveis de ambiente em Next.js
+  const nextEnv = typeof process !== 'undefined' ? process.env : undefined
+  const nextEnvDbUrl = nextEnv?.NEXT_PUBLIC_FIREBASE_DATABASE_URL
+  if (nextEnvDbUrl) {
+    return {
+      databaseURL: nextEnvDbUrl,
+      apiKey: nextEnv?.NEXT_PUBLIC_FIREBASE_API_KEY,
+      projectId: nextEnv?.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+      authDomain: nextEnv?.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    }
+  }
+
   return null
 }
 
