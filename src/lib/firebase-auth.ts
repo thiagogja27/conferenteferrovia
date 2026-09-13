@@ -42,11 +42,16 @@ export function getFirebaseAuth(): Auth | null {
     if (existingApps.length > 0) {
       app = getApp()
     } else {
+      const apiKey = config?.apiKey || import.meta.env.VITE_FIREBASE_API_KEY || import.meta.env.NEXT_PUBLIC_FIREBASE_API_KEY
+      const authDomain = config?.authDomain || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || import.meta.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+      const projectId = config?.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID || import.meta.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
+      const databaseURL = config?.databaseURL || import.meta.env.VITE_FIREBASE_DATABASE_URL || import.meta.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL
+
       app = initializeApp({
-        apiKey: config?.apiKey || import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyDemoDummyKeyForAuthSetup',
-        authDomain: config?.authDomain || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || `${config?.projectId || 'vlic-telemetry'}.firebaseapp.com`,
-        projectId: config?.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID || 'vlic-telemetry',
-        databaseURL: config?.databaseURL || import.meta.env.VITE_FIREBASE_DATABASE_URL,
+        apiKey,
+        authDomain: authDomain || (projectId ? `${projectId}.firebaseapp.com` : undefined),
+        projectId,
+        databaseURL,
       })
     }
 
