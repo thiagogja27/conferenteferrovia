@@ -33,6 +33,7 @@ import {
   type WeightAuditItemResult,
   type WeightAuditResponse,
 } from '@/lib/weight-ai-auditor'
+import { logRealtimeActivity, logInputedFiles } from '@/lib/firebase-realtime'
 import {
   TrainTrack,
   FileSpreadsheet,
@@ -253,6 +254,14 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
       } else {
         setSelectedWeightColumn('')
       }
+
+      logInputedFiles([{
+        fileName: excelFileName || 'Planilha_Escala_Vagoes.xlsx',
+        fileType: 'EXCEL_PLANILHA',
+        itemsCount: jsonData.length,
+        divergencesCount: 0,
+        status: 'PROCESSADO',
+      }])
     } catch (err: any) {
       console.error('Erro ao carregar dados da aba:', err)
       setExcelError('Erro ao ler linhas da aba selecionada.')
@@ -663,6 +672,12 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
 
     const tremPref = mdfeList[0]?.trem?.prefixo || 'TREM'
     XLSX.writeFile(wb, `Conciliacao_Vagoes_MDFe_${tremPref}_${Date.now()}.xlsx`)
+    logRealtimeActivity(
+      'reconcile_mdf',
+      'Exportou Conciliação MDF-e x Excel',
+      `Exportou planilha de conciliação do trem ${tremPref} com ${resumo.totalMDF} vagões (${resumo.totalConferidos} conferidos com sucesso).`,
+      { vagoesCount: resumo.totalMDF, conferidosCount: resumo.totalConferidos }
+    )
   }
 
   // -------------------------------------------------------------
@@ -684,6 +699,12 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
     navigator.clipboard.writeText(textToCopy)
     setCopiedWagons(true)
     setTimeout(() => setCopiedWagons(false), 2500)
+    logRealtimeActivity(
+      'divergence_found',
+      'Extração de Divergências de Vagões',
+      `Identificou e copiou ${faltamExcel.length} vagão(ões) faltante(s) no Excel e ${faltamMdf.length} faltante(s) no MDF-e.`,
+      { divergentCount: faltamExcel.length + faltamMdf.length }
+    )
   }
 
   const handleCopyKey = (key: string) => {

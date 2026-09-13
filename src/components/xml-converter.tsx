@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -21,6 +21,11 @@ import { MapPanel } from '@/components/map-panel'
 import { ExcelReconciliationTab } from '@/components/excel-reconciliation-tab'
 import { MDFExcelComparator } from '@/components/mdf-excel-comparator'
 import { DocumentationPanel } from '@/components/documentation-panel'
+import { RealtimeMonitor } from '@/components/realtime-monitor'
+import { UserProfileHeader } from '@/components/user-profile-header'
+import { LoginScreen } from '@/components/login-screen'
+import { useAuth } from '@/context/auth-context'
+import { logRealtimeActivity, updatePresence, logInputedFiles } from '@/lib/firebase-realtime'
 import {
   FileText,
   Upload,
@@ -56,6 +61,9 @@ import {
   Check,
   CheckCheck,
   Eye,
+  Radio,
+  User,
+  Lock,
 } from 'lucide-react'
 import JSZip from 'jszip'
 import * as XLSX from 'xlsx'
@@ -176,13 +184,16 @@ async function getAllFilesFromDataTransfer(
 }
 
 export function XMLConverter() {
+  const { user } = useAuth()
+  const isRealtimeAdmin = user?.email?.toLowerCase().trim() === 'thiago_gja27@hotmail.com'
+
   const [files, setFiles] = useState<ProcessedFile[]>([])
   const [otherZipFiles, setOtherZipFiles] = useState<{ path: string; content: Blob }[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<string>('list')
-  const [converterMode, setConverterMode] = useState<'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'documentation'>('xml-to-pdf')
+  const [converterMode, setConverterMode] = useState<'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'documentation' | 'realtime-monitor'>('xml-to-pdf')
   const [processFileType, setProcessFileType] = useState<'all' | 'xml' | 'pdf'>('all')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -193,6 +204,13 @@ export function XMLConverter() {
   const [showWorkflowGuide, setShowWorkflowGuide] = useState(true)
   const [selectedXmlModal, setSelectedXmlModal] = useState<{ fileName: string; content: string } | null>(null)
   const [copiedXml, setCopiedXml] = useState(false)
+
+  // Proteção de rota interna para o Monitor Realtime (apenas thiago_gja27@hotmail.com)
+  useEffect(() => {
+    if (converterMode === 'realtime-monitor' && !isRealtimeAdmin) {
+      setConverterMode('xml-to-pdf')
+    }
+  }, [converterMode, isRealtimeAdmin])
 
   const handleCopyXml = (content: string) => {
     navigator.clipboard.writeText(content)
@@ -237,6 +255,12 @@ export function XMLConverter() {
       a.download = `notas_fiscais_xmls_${Date.now()}.zip`
       a.click()
       URL.revokeObjectURL(url)
+      logRealtimeActivity(
+        'export_zip',
+        'Download de Lote de XMLs (ZIP)',
+        `Exportou pacote compactado ZIP com ${successfulFiles.length} arquivos XML de NF-e.`,
+        { filesCount: successfulFiles.length }
+      )
     } catch (err) {
       console.error('Erro ao gerar ZIP de XMLs:', err)
       alert('Erro ao gerar arquivo ZIP com os XMLs.')
@@ -716,6 +740,54 @@ export function XMLConverter() {
     if (results.length === 1 && results[0].nfeData) {
       setExpandedIndex(0)
     }
+
+    if (results.length > 0) {
+      const validNotes = results.filter((r) => r.nfeData !== null)
+      const totalVal = validNotes.reduce((acc, f) => acc + (f.nfeData?.impostos?.valorTotal || 0), 0)
+      const totalDiv = validNotes.filter((f) => {
+        const n = f.nfeData
+        if (!n?.chaveAcesso || !n.emitente?.cnpj || !n.destinatario?.cpfCnpj) return false
+        return verifyChaveCNPJ(n.chaveAcesso, n.emitente.cnpj, n.destinatario.cpfCnpj).confrontoChaveXDest === 'DIVERGENTES'
+      }).length
+
+      logRealtimeActivity(
+        'upload_nfe',
+        `Carregou ${results.length} nota(s) fiscal(is)`,
+        `Processou ${results.length} arquivo(s) (${validNotes.length} válido(s), total de R$ ${totalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}). ${totalDiv > 0 ? `Detectadas ${totalDiv} divergência(s) Chave x CNPJ.` : 'Nenhuma divergência.'}`,
+        {
+          filesCount: results.length,
+          totalValor: totalVal,
+          divergentCount: totalDiv,
+        }
+      )
+
+      if (totalDiv > 0) {
+        logRealtimeActivity(
+          'divergence_found',
+          `Alerta: ${totalDiv} Divergência(s) Chave x Destinatário`,
+          `O lote atual contém ${totalDiv} nota(s) fiscal(is) com divergência de CNPJ na Chave de Acesso.`,
+          { divergentCount: totalDiv }
+        )
+      }
+
+      // Registra os arquivos na telemetria de auditoria
+      const filesToRecord = results.map((r) => {
+        const isXml = r.fileName.toLowerCase().endsWith('.xml')
+        const n = r.nfeData
+        const hasDiv = Boolean(n?.chaveAcesso && n?.emitente?.cnpj && n?.destinatario?.cpfCnpj && verifyChaveCNPJ(n.chaveAcesso, n.emitente.cnpj, n.destinatario.cpfCnpj).confrontoChaveXDest === 'DIVERGENTES')
+        const fileType: 'XML_NFE' | 'PDF_DANFE' = isXml ? 'XML_NFE' : 'PDF_DANFE'
+        const status: 'COM_DIVERGENCIA' | 'CONFERIDO' = (hasDiv || r.error) ? 'COM_DIVERGENCIA' : 'CONFERIDO'
+        return {
+          fileName: r.fileName,
+          fileType,
+          itemsCount: 1,
+          totalValor: n?.impostos?.valorTotal || 0,
+          divergencesCount: hasDiv ? 1 : 0,
+          status,
+        }
+      })
+      logInputedFiles(filesToRecord)
+    }
   }, [checkAndSpeakDivergencesXML, processFileType])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -812,6 +884,12 @@ export function XMLConverter() {
       a.download = `notas_fiscais_convertidas_${Date.now()}.zip`;
       a.click();
       URL.revokeObjectURL(url);
+      logRealtimeActivity(
+        'export_zip',
+        'Download de Lote de PDFs (ZIP)',
+        `Gerou e baixou arquivo compactado ZIP contendo ${successfulFiles.length} DANFEs convertidas.`,
+        { filesCount: successfulFiles.length }
+      );
     } catch (err) {
       console.error('[v0] Erro ao gerar ZIP:', err);
       alert('Erro ao gerar o arquivo ZIP. Verifique o console para mais detalhes.');
@@ -898,6 +976,12 @@ export function XMLConverter() {
     }
 
     XLSX.writeFile(workbook, `relatorio_nfe_${Date.now()}.xlsx`);
+    logRealtimeActivity(
+      'export_excel',
+      'Exportação de Relatório em Excel',
+      `Exportou relatório analítico contendo ${successfulFiles.length} notas fiscais em planilha Excel (.xlsx).`,
+      { filesCount: successfulFiles.length }
+    );
   };
 
   const handleClear = () => {
@@ -959,22 +1043,36 @@ export function XMLConverter() {
   return (
     <div className='min-h-screen bg-background p-4 md:p-8'>
       <div className={`mx-auto transition-all ${converterMode === 'mdf-x-excel' ? 'max-w-6xl xl:max-w-7xl' : 'max-w-5xl lg:max-w-6xl'}`}>
-        {/* Header Principal */}
-        <div className='mb-6 text-center'>
-          <div className='inline-flex items-center justify-center rounded-2xl bg-indigo-600/10 dark:bg-indigo-500/20 p-3 mb-3 text-indigo-600 dark:text-indigo-400 shadow-xs'>
-            <FileText className='h-8 w-8' />
+        {/* Header Principal com Perfil do Operador Firebase */}
+        <div className='mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 pb-4 border-b border-zinc-200/80 dark:border-zinc-800'>
+          <div className='flex items-center gap-3 text-center sm:text-left'>
+            <div className='inline-flex items-center justify-center rounded-2xl bg-indigo-600/10 dark:bg-indigo-500/20 p-2.5 text-indigo-600 dark:text-indigo-400 shadow-xs shrink-0'>
+              <FileText className='h-7 w-7' />
+            </div>
+            <div>
+              <h1 className='text-xl sm:text-2xl font-extrabold tracking-tight text-foreground flex items-center justify-center sm:justify-start gap-2'>
+                Sistema de Conferência Fiscal
+              </h1>
+              <p className='text-xs text-zinc-500 dark:text-zinc-400'>
+                NF-e, DANFE, MDF-e x Vagões & Monitoramento Realtime
+              </p>
+            </div>
           </div>
-          <h1 className='text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground'>
-            Sistema de Conferência Fiscal
-          </h1>
+
+          <div className='flex items-center gap-2'>
+            <UserProfileHeader />
+          </div>
         </div>
 
         {/* Seletor de Módulos (Menu Principal Intuitivo e Unificado) */}
         <div className="mb-6">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-zinc-100/80 dark:bg-zinc-900 p-1.5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800">
+          <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRealtimeAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-2.5 bg-zinc-100/80 dark:bg-zinc-900 p-1.5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800`}>
             <button
-              onClick={() => setConverterMode('xml-to-pdf')}
-              className={`flex flex-col items-start p-3.5 rounded-xl transition-all text-left cursor-pointer border ${
+              onClick={() => {
+                setConverterMode('xml-to-pdf')
+                updatePresence('Painel de Conferência (NF-e)')
+              }}
+              className={`flex flex-col items-start p-3 rounded-xl transition-all text-left cursor-pointer border ${
                 converterMode === 'xml-to-pdf'
                   ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-indigo-300 dark:border-indigo-600 shadow-xs'
                   : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
@@ -984,16 +1082,19 @@ export function XMLConverter() {
                 <div className={`p-1.5 rounded-lg ${converterMode === 'xml-to-pdf' ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
                   <FileCode className="h-4 w-4" />
                 </div>
-                <span className="text-xs font-bold truncate">Painel de Conferência (NF-e XML / PDF)</span>
+                <span className="text-xs font-bold truncate">Painel Conferência</span>
               </div>
               <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
-                Conferência, DANFE, Chaves x Dest, Pesos e Conversão
+                NF-e, DANFE, Chaves
               </span>
             </button>
 
             <button
-              onClick={() => setConverterMode('mdf-x-excel')}
-              className={`flex flex-col items-start p-3.5 rounded-xl transition-all text-left cursor-pointer border ${
+              onClick={() => {
+                setConverterMode('mdf-x-excel')
+                updatePresence('MDF x EXCEL (Vagões)')
+              }}
+              className={`flex flex-col items-start p-3 rounded-xl transition-all text-left cursor-pointer border ${
                 converterMode === 'mdf-x-excel'
                   ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-amber-300 dark:border-amber-600 shadow-xs'
                   : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
@@ -1003,16 +1104,52 @@ export function XMLConverter() {
                 <div className={`p-1.5 rounded-lg ${converterMode === 'mdf-x-excel' ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
                   <TrainTrack className="h-4 w-4" />
                 </div>
-                <span className="text-xs font-bold truncate">MDF x EXCEL (Vagões)</span>
+                <span className="text-xs font-bold truncate">MDF x Vagões</span>
               </div>
               <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
-                Conciliação Manifesto x Excel de Vagões
+                Conciliação Manifesto
               </span>
             </button>
 
+            {isRealtimeAdmin && (
+              <button
+                onClick={() => {
+                  setConverterMode('realtime-monitor')
+                  updatePresence('Monitoramento em Tempo Real')
+                }}
+                className={`flex flex-col items-start p-3 rounded-xl transition-all text-left cursor-pointer border ${
+                  converterMode === 'realtime-monitor'
+                    ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-purple-400 dark:border-purple-600 shadow-xs ring-1 ring-purple-400/30'
+                    : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 mb-1 w-full">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <div className={`p-1.5 rounded-lg shrink-0 ${converterMode === 'realtime-monitor' ? 'bg-purple-100 text-purple-600 dark:bg-purple-950 dark:text-purple-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
+                      <Radio className="h-4 w-4" />
+                    </div>
+                    <span className="text-xs font-bold truncate">Monitor Realtime</span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">Ao Vivo</span>
+                  </div>
+                </div>
+                <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+                  Presença e Auditoria
+                </span>
+              </button>
+            )}
+
             <button
-              onClick={() => setConverterMode('documentation')}
-              className={`flex flex-col items-start p-3.5 rounded-xl transition-all text-left cursor-pointer border ${
+              onClick={() => {
+                setConverterMode('documentation')
+                updatePresence('Guia de Uso & Regras')
+              }}
+              className={`flex flex-col items-start p-3 rounded-xl transition-all text-left cursor-pointer border ${
                 converterMode === 'documentation'
                   ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-emerald-300 dark:border-emerald-600 shadow-xs'
                   : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
@@ -1022,10 +1159,10 @@ export function XMLConverter() {
                 <div className={`p-1.5 rounded-lg ${converterMode === 'documentation' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
                   <BookOpen className="h-4 w-4" />
                 </div>
-                <span className="text-xs font-bold truncate">Guia de Uso & Regras</span>
+                <span className="text-xs font-bold truncate">Guia de Uso</span>
               </div>
               <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
-                Manual, Transbordos (Pradópolis) e Dicas
+                Manual e Dicas
               </span>
             </button>
           </div>
@@ -2088,6 +2225,13 @@ export function XMLConverter() {
         <div className={converterMode === 'documentation' ? 'block' : 'hidden'}>
           <DocumentationPanel />
         </div>
+
+        {/* Módulo de Monitoramento em Tempo Real (Firebase Realtime Database) - Apenas para thiago_gja27@hotmail.com */}
+        {isRealtimeAdmin && (
+          <div className={converterMode === 'realtime-monitor' ? 'block' : 'hidden'}>
+            <RealtimeMonitor />
+          </div>
+        )}
       </div>
 
       {/* Modal de Visualização de XML */}

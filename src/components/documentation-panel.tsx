@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useAuth } from '@/context/auth-context'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   BookOpen,
@@ -25,10 +26,15 @@ import {
   Check,
   Filter,
   TrainTrack,
+  Radio,
+  Flame,
+  Database,
 } from 'lucide-react'
 
 export function DocumentationPanel() {
-  const [activeTopic, setActiveTopic] = useState<'mdf-x-excel' | 'excel-conferencia' | 'pdf-to-xml' | 'conferencia-geral' | 'faq'>('mdf-x-excel')
+  const { user } = useAuth()
+  const isRealtimeAdmin = user?.email?.toLowerCase().trim() === 'thiago_gja27@hotmail.com'
+  const [activeTopic, setActiveTopic] = useState<'mdf-x-excel' | 'excel-conferencia' | 'pdf-to-xml' | 'conferencia-geral' | 'realtime-monitor' | 'faq'>('mdf-x-excel')
   const [searchDocQuery, setSearchDocQuery] = useState('')
 
   return (
@@ -123,6 +129,21 @@ export function DocumentationPanel() {
               4. Audit. CNPJ, Áudio, Dashboard e Mapa
             </button>
 
+            {isRealtimeAdmin && (
+              <button
+                type="button"
+                onClick={() => setActiveTopic('realtime-monitor')}
+                className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
+                  activeTopic === 'realtime-monitor'
+                    ? 'bg-purple-600 text-white shadow-xs font-bold'
+                    : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
+                }`}
+              >
+                <Radio className="h-4 w-4 text-purple-300" />
+                5. Monitoramento em Tempo Real (Firebase)
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => setActiveTopic('faq')}
@@ -133,7 +154,7 @@ export function DocumentationPanel() {
               }`}
             >
               <HelpCircle className="h-4 w-4" />
-              5. Perguntas Frequentes & Dicas
+              6. Perguntas Frequentes & Dicas
             </button>
           </div>
         </CardContent>
@@ -556,6 +577,117 @@ export function DocumentationPanel() {
                       <MapPin className="h-3.5 w-3.5" /> Mapa Logístico
                     </strong>
                     <p className="text-zinc-600 dark:text-zinc-400">Visualização geográfica dos pontos de entrega, transbordos e terminais logísticos (TEG, TEAG, etc).</p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* CONTEÚDO TÓPICO: MONITORAMENTO EM TEMPO REAL (FIREBASE) */}
+      {isRealtimeAdmin && activeTopic === 'realtime-monitor' && (
+        <div className="space-y-4">
+          <Card className="border-purple-200 dark:border-purple-900/60 shadow-xs">
+            <CardHeader className="bg-purple-50/70 dark:bg-purple-950/40 rounded-t-xl pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg font-bold text-purple-900 dark:text-purple-100 flex items-center gap-2">
+                    <Radio className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                    Monitoramento em Tempo Real via Firebase Realtime Database
+                  </CardTitle>
+                  <CardDescription className="text-xs text-purple-700/80 dark:text-purple-300/80 mt-1">
+                    Como acompanhar operadores conectados, uploads, divergências e exportações em tempo real.
+                  </CardDescription>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Online / Realtime
+                </span>
+              </div>
+            </CardHeader>
+
+            <CardContent className="pt-6 space-y-6 text-xs text-zinc-700 dark:text-zinc-300">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="p-3.5 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/30 dark:bg-purple-950/20">
+                  <div className="flex items-center gap-2 font-bold text-sm text-purple-900 dark:text-purple-200 mb-1">
+                    <Flame className="h-4 w-4 text-amber-500" />
+                    1. Conexão com seu Banco
+                  </div>
+                  <p className="text-zinc-600 dark:text-zinc-400 leading-relaxed text-[11px]">
+                    Cole a URL do seu Firebase Realtime Database na aba de monitoramento ou configure a variável <code>VITE_FIREBASE_DATABASE_URL</code> no arquivo <code>.env</code>.
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/30 dark:bg-blue-950/20">
+                  <div className="flex items-center gap-2 font-bold text-sm text-blue-900 dark:text-blue-200 mb-1">
+                    <Radio className="h-4 w-4 text-blue-500" />
+                    2. Presença de Operadores
+                  </div>
+                  <p className="text-zinc-600 dark:text-zinc-400 leading-relaxed text-[11px]">
+                    Cada usuário que abre a aplicação registra presença com status, módulo em uso, IP e horário. O heartbeat atualiza automaticamente a cada 20 segundos.
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/30 dark:bg-emerald-950/20">
+                  <div className="flex items-center gap-2 font-bold text-sm text-emerald-900 dark:text-emerald-200 mb-1">
+                    <ShieldCheck className="h-4 w-4 text-emerald-500" />
+                    3. Registro de Auditoria
+                  </div>
+                  <p className="text-zinc-600 dark:text-zinc-400 leading-relaxed text-[11px]">
+                    Uploads de notas, detecção de divergências Chave x CNPJ, conciliações de vagões e exportações de relatórios em Excel são gravados instantaneamente.
+                  </p>
+                </div>
+              </div>
+
+              {/* Regras do Firebase */}
+              <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/80 dark:bg-zinc-900/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-sm text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                    <Database className="h-4 w-4 text-purple-600" />
+                    Regras de Segurança Recomendadas no Firebase Console
+                  </h4>
+                  <span className="text-[11px] text-zinc-500">Realtime Database &gt; Rules</span>
+                </div>
+                <p className="text-zinc-600 dark:text-zinc-400 text-[11px]">
+                  Para permitir que os computadores da operação escrevam eventos e o seu painel visualize tudo em tempo real, defina as regras no Firebase Realtime Database:
+                </p>
+                <div className="bg-zinc-950 text-emerald-400 p-3 rounded-lg font-mono text-[11px] overflow-x-auto">
+                  {`{
+  "rules": {
+    "vlic_telemetry": {
+      ".read": true,
+      ".write": true
+    }
+  }
+}`}
+                </div>
+                <p className="text-[10px] text-zinc-500 italic">
+                  * Você também pode restringir a leitura para o seu usuário autenticado ou para a rede interna da empresa se desejar.
+                </p>
+              </div>
+
+              {/* Estrutura dos Dados no Firebase */}
+              <div className="space-y-2">
+                <h4 className="font-bold text-sm text-zinc-900 dark:text-zinc-100">
+                  Estrutura dos Nós Salvos no seu Firebase Realtime Database:
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                  <div className="p-3 bg-white dark:bg-zinc-800/80 rounded-lg border">
+                    <strong className="text-purple-600 dark:text-purple-400 block font-mono mb-1">
+                      vlic_telemetry/presence/{'{sessionId}'}
+                    </strong>
+                    <p className="text-zinc-600 dark:text-zinc-400">
+                      Armazena <code>operatorName</code>, <code>currentModule</code>, <code>isOnline</code>, <code>lastSeen</code> e identificador do dispositivo. Utiliza <code>onDisconnect()</code> do Firebase para marcar offline quando a aba é fechada.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-white dark:bg-zinc-800/80 rounded-lg border">
+                    <strong className="text-purple-600 dark:text-purple-400 block font-mono mb-1">
+                      vlic_telemetry/activities/{'{eventId}'}
+                    </strong>
+                    <p className="text-zinc-600 dark:text-zinc-400">
+                      Histórico contendo tipo da ação (<code>upload_nfe</code>, <code>divergence_found</code>, <code>export_excel</code>, etc.), título descritivo, resumo dos dados processados, operador e timestamp ISO.
+                    </p>
                   </div>
                 </div>
               </div>
