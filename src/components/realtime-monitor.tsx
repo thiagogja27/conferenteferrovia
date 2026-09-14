@@ -39,7 +39,9 @@ import {
   ShieldCheck,
   Flame,
   Activity,
+  Radio,
 } from 'lucide-react'
+import { ConferenceMirrorDashboard } from '@/components/conference-mirror-dashboard'
 import {
   ResponsiveContainer,
   BarChart,
@@ -62,7 +64,6 @@ import {
   subscribeToPresence,
   onConnectionStatusChange,
   logRealtimeActivity,
-  seedDemoTelemetryData,
   clearAllTelemetryHistory,
   formatDateBR,
   formatTimeBR,
@@ -83,7 +84,7 @@ export function RealtimeMonitor() {
   const [operatorInput, setOperatorInput] = useState(currentOperator)
 
   // Abas de Navegação do Monitor
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'files' | 'timeline' | 'operators'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'mirror' | 'dashboard' | 'files' | 'timeline' | 'operators'>('mirror')
 
   // Filtros de Auditoria
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'yesterday' | '7days' | '30days'>('all')
@@ -628,47 +629,62 @@ export function RealtimeMonitor() {
         </div>
       </div>
 
-      {/* 4 Abas Principais de Visualização */}
-      <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-2">
+      {/* 5 Abas Principais de Visualização */}
+      <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-2 overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('mirror')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
+            activeTab === 'mirror'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+        >
+          <Radio className="h-4 w-4 animate-pulse text-emerald-300" />
+          <span>Espelho da Conferência</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500 text-white font-bold ml-0.5">
+            Ao Vivo & Histórico
+          </span>
+        </button>
+
         <button
           onClick={() => setActiveTab('dashboard')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
             activeTab === 'dashboard'
               ? 'bg-indigo-600 text-white shadow-xs'
               : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
           }`}
         >
           <BarChart3 className="h-4 w-4" />
-          Dashboard de Produtividade
+          Produtividade Geral
         </button>
 
         <button
           onClick={() => setActiveTab('files')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
             activeTab === 'files'
               ? 'bg-indigo-600 text-white shadow-xs'
               : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
           }`}
         >
           <FileSpreadsheet className="h-4 w-4" />
-          Arquivos Inputados por Data ({filteredInputFiles.length})
+          Arquivos Inputados ({filteredInputFiles.length})
         </button>
 
         <button
           onClick={() => setActiveTab('timeline')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
             activeTab === 'timeline'
               ? 'bg-indigo-600 text-white shadow-xs'
               : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
           }`}
         >
           <Clock className="h-4 w-4" />
-          Linha do Tempo de Uso ({filteredActivities.length})
+          Linha do Tempo ({filteredActivities.length})
         </button>
 
         <button
           onClick={() => setActiveTab('operators')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
             activeTab === 'operators'
               ? 'bg-indigo-600 text-white shadow-xs'
               : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
@@ -678,6 +694,11 @@ export function RealtimeMonitor() {
           Presença dos Funcionários ({operators.length})
         </button>
       </div>
+
+      {/* ABA 0: ESPELHO DO PAINEL DE CONFERÊNCIA (TEMPO REAL & CONSULTAS HISTÓRICAS) */}
+      {activeTab === 'mirror' && (
+        <ConferenceMirrorDashboard />
+      )}
 
       {/* ABA 1: DASHBOARD DE CONFERÊNCIAS & PRODUTIVIDADE */}
       {activeTab === 'dashboard' && (

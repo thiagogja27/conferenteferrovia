@@ -186,8 +186,12 @@ function loadSavedLocalActivities(): RealtimeActivity[] {
     const raw = localStorage.getItem(STORAGE_KEY_ACTIVITIES)
     if (raw) {
       const parsed: RealtimeActivity[] = JSON.parse(raw)
-      // Filtra quaisquer registros com prefixo de demonstração 'demo_'
-      return parsed.filter((a) => !a.id.startsWith('demo_'))
+      // Filtra estritamente quaisquer registros fictícios com prefixo 'demo_'
+      const real = parsed.filter((a) => a && !a.id.startsWith('demo_') && !a.id.includes('sample'))
+      if (real.length !== parsed.length) {
+        localStorage.setItem(STORAGE_KEY_ACTIVITIES, JSON.stringify(real))
+      }
+      return real
     }
   } catch (e) {
     console.warn('Erro ao ler atividades salvas:', e)
@@ -200,8 +204,12 @@ function loadSavedLocalInputFiles(): InputedFileRecord[] {
     const raw = localStorage.getItem(STORAGE_KEY_INPUT_FILES)
     if (raw) {
       const parsed: InputedFileRecord[] = JSON.parse(raw)
-      // Filtra quaisquer registros com prefixo de demonstração 'demo_'
-      return parsed.filter((f) => !f.id.startsWith('demo_'))
+      // Filtra estritamente quaisquer registros fictícios com prefixo 'demo_'
+      const real = parsed.filter((f) => f && !f.id.startsWith('demo_') && !f.id.includes('sample'))
+      if (real.length !== parsed.length) {
+        localStorage.setItem(STORAGE_KEY_INPUT_FILES, JSON.stringify(real))
+      }
+      return real
     }
   } catch (e) {
     console.warn('Erro ao ler arquivos inputados salvos:', e)
@@ -720,286 +728,7 @@ export function clearAllTelemetryHistory(): void {
   localSubscribersInputFiles.forEach((cb) => cb([]))
 }
 
-// Gera dados realistas de auditoria dos últimos 7 dias para prova de uso à chefia
+// Operação estritamente baseada em dados reais (sem dados fictícios)
 export function seedDemoTelemetryData(): void {
-  const now = Date.now()
-  const oneDay = 86400000
-
-  const operatorsList = [
-    'Thiago (Supervisor)',
-    'Carlos Silva (Conferente)',
-    'Mariana Costa (Auditoria)',
-    'Rafael Santos (Operador)',
-    'Beatriz Lima (Conferente)',
-  ]
-
-  const sampleEvents: {
-    dayOffset: number
-    hourOffset: number
-    opIdx: number
-    type: RealtimeActivity['type']
-    title: string
-    desc: string
-    file?: {
-      name: string
-      type: InputedFileRecord['fileType']
-      items: number
-      valor: number
-      divs: number
-      status: InputedFileRecord['status']
-    }
-  }[] = [
-    {
-      dayOffset: 0,
-      hourOffset: 0.5,
-      opIdx: 0,
-      type: 'session_start',
-      title: 'Início de Turno & Autenticação',
-      desc: 'Supervisor Thiago iniciou auditoria de telemetria e conferência de pátio.',
-    },
-    {
-      dayOffset: 0,
-      hourOffset: 1.2,
-      opIdx: 1,
-      type: 'upload_nfe',
-      title: 'Conferência de Lote: 38 NF-e (Grãos)',
-      desc: 'Processou 38 arquivos XML válidos (R$ 1.480.250,00). 0 divergências encontradas.',
-      file: {
-        name: 'LOTE_GRAOS_MOEGA_TREM_T402.zip',
-        type: 'ZIP_LOTE',
-        items: 38,
-        valor: 1480250.0,
-        divs: 0,
-        status: 'CONFERIDO',
-      },
-    },
-    {
-      dayOffset: 0,
-      hourOffset: 2.1,
-      opIdx: 2,
-      type: 'convert_pdf',
-      title: 'Conversão de DANFE PDF para XML',
-      desc: 'Converteu e auditou espelho de DANFE PDF de carga pesada.',
-      file: {
-        name: 'DANFE_CARREGAMENTO_PORTO_SANTOS_0944.pdf',
-        type: 'PDF_DANFE',
-        items: 1,
-        valor: 89400.0,
-        divs: 0,
-        status: 'CONFERIDO',
-      },
-    },
-    {
-      dayOffset: 0,
-      hourOffset: 3.5,
-      opIdx: 3,
-      type: 'reconcile_mdf',
-      title: 'Conciliação MDF-e x Planilha de Vagões',
-      desc: 'Confrontou 86 vagões do trem P104 com a planilha operacional da ferrovia.',
-      file: {
-        name: 'Conciliacao_Vagoes_Trem_P104_09h30.xlsx',
-        type: 'EXCEL_PLANILHA',
-        items: 86,
-        valor: 0,
-        divs: 0,
-        status: 'CONFERIDO',
-      },
-    },
-    {
-      dayOffset: 1,
-      hourOffset: 2,
-      opIdx: 4,
-      type: 'upload_nfe',
-      title: 'Conferência de Lote: 52 NF-e (Fertilizantes)',
-      desc: 'Auditou 52 notas fiscais eletrônicas de adubos e insumos (R$ 2.340.100,00).',
-      file: {
-        name: 'XMLS_FERTILIZANTES_TERMINAL_2.zip',
-        type: 'ZIP_LOTE',
-        items: 52,
-        valor: 2340100.0,
-        divs: 0,
-        status: 'CONFERIDO',
-      },
-    },
-    {
-      dayOffset: 1,
-      hourOffset: 3.8,
-      opIdx: 1,
-      type: 'divergence_found',
-      title: 'Alerta Fiscal: 2 Divergências Chave x Destinatário',
-      desc: 'Detectou e barrou 2 notas com CNPJ destino diferente do gravado na chave eletrônica.',
-      file: {
-        name: 'NF_DIVERGENTE_CARGA_SOJA_88321.xml',
-        type: 'XML_NFE',
-        items: 1,
-        valor: 112000.0,
-        divs: 1,
-        status: 'COM_DIVERGENCIA',
-      },
-    },
-    {
-      dayOffset: 1,
-      hourOffset: 5.0,
-      opIdx: 1,
-      type: 'export_excel',
-      title: 'Exportação de Relatório de Auditoria Fiscal',
-      desc: 'Exportou relatório completo em Excel com apontamento de divergências e chaves conferidas.',
-    },
-    {
-      dayOffset: 2,
-      hourOffset: 1.5,
-      opIdx: 2,
-      type: 'upload_mdfe',
-      title: 'Carga de Manifesto MDF-e Eletrônico',
-      desc: 'Carregou manifesto MDF-e 352609000100 com 94 vagões acoplados.',
-      file: {
-        name: 'MDFE_352609000100_TREM_T301.xml',
-        type: 'XML_MDFE',
-        items: 94,
-        valor: 3890000.0,
-        divs: 0,
-        status: 'CONFERIDO',
-      },
-    },
-    {
-      dayOffset: 2,
-      hourOffset: 3.2,
-      opIdx: 3,
-      type: 'reconcile_mdf',
-      title: 'Conciliação de Pátio: Trem T301',
-      desc: 'Confrontou 94 vagões do MDF-e com 94 vagões da planilha da escala.',
-      file: {
-        name: 'ESCALA_VAGOES_TREM_T301_SETEMBRO.xlsx',
-        type: 'EXCEL_PLANILHA',
-        items: 94,
-        valor: 0,
-        divs: 0,
-        status: 'CONFERIDO',
-      },
-    },
-    {
-      dayOffset: 3,
-      hourOffset: 2.4,
-      opIdx: 4,
-      type: 'upload_nfe',
-      title: 'Conferência de 64 NF-e (Celulose & Papel)',
-      desc: 'Lote Suzano Celulose conferido na íntegra (R$ 3.120.000,00). 100% de conformidade.',
-      file: {
-        name: 'LOTE_SUZANO_CELULOSE_64_NOTAS.zip',
-        type: 'ZIP_LOTE',
-        items: 64,
-        valor: 3120000.0,
-        divs: 0,
-        status: 'CONFERIDO',
-      },
-    },
-    {
-      dayOffset: 4,
-      hourOffset: 1.8,
-      opIdx: 1,
-      type: 'upload_nfe',
-      title: 'Conferência de 45 NF-e (Combustíveis & Óleo)',
-      desc: 'Processou notas fiscais de tanques ferroviários (R$ 4.750.000,00).',
-      file: {
-        name: 'COMBUSTIVEIS_VAGOES_TANQUE_TREM_C10.zip',
-        type: 'ZIP_LOTE',
-        items: 45,
-        valor: 4750000.0,
-        divs: 0,
-        status: 'CONFERIDO',
-      },
-    },
-    {
-      dayOffset: 5,
-      hourOffset: 2.0,
-      opIdx: 2,
-      type: 'reconcile_mdf',
-      title: 'Conciliação MDF-e x Vagões Carga Seca',
-      desc: 'Validou 78 vagões na moega de descarga.',
-      file: {
-        name: 'PLANILHA_CONFERENCIA_MOEGA_78_VAGOES.xlsx',
-        type: 'EXCEL_PLANILHA',
-        items: 78,
-        valor: 0,
-        divs: 0,
-        status: 'CONFERIDO',
-      },
-    },
-    {
-      dayOffset: 6,
-      hourOffset: 3.1,
-      opIdx: 3,
-      type: 'upload_nfe',
-      title: 'Conferência de Lote: 30 NF-e (Minério de Ferro)',
-      desc: 'Conferência de documentação fiscal de composição de minério (R$ 1.980.000,00).',
-      file: {
-        name: 'NOTAS_MINERIO_TREM_M90.zip',
-        type: 'ZIP_LOTE',
-        items: 30,
-        valor: 1980000.0,
-        divs: 0,
-        status: 'CONFERIDO',
-      },
-    },
-  ]
-
-  const newActivities: RealtimeActivity[] = []
-  const newFiles: InputedFileRecord[] = []
-
-  sampleEvents.forEach((ev, idx) => {
-    const eventTime = now - (ev.dayOffset * oneDay) - (ev.hourOffset * 3600000)
-    const op = operatorsList[ev.opIdx] || operatorsList[0]
-
-    const act: RealtimeActivity = {
-      id: 'demo_act_' + eventTime + '_' + idx,
-      sessionId: 'sess_demo_' + ev.opIdx,
-      operatorName: op,
-      type: ev.type,
-      title: ev.title,
-      description: ev.desc,
-      timestamp: eventTime,
-      dateFormatted: formatDateBR(eventTime),
-      timeFormatted: formatTimeBR(eventTime),
-      metadata: ev.file ? { fileName: ev.file.name, itemsCount: ev.file.items, valor: ev.file.valor } : undefined,
-    }
-    newActivities.push(act)
-
-    if (ev.file) {
-      newFiles.push({
-        id: 'demo_file_' + eventTime + '_' + idx,
-        sessionId: 'sess_demo_' + ev.opIdx,
-        operatorName: op,
-        fileName: ev.file.name,
-        fileType: ev.file.type,
-        fileSize: 1024 * (ev.file.items * 12 + 45),
-        itemsCount: ev.file.items,
-        totalValor: ev.file.valor,
-        divergencesCount: ev.file.divs,
-        status: ev.file.status,
-        timestamp: eventTime,
-        dateFormatted: formatDateBR(eventTime),
-        timeFormatted: formatTimeBR(eventTime),
-      })
-    }
-  })
-
-  // Salva no estado local e persiste
-  newActivities.forEach((act) => {
-    if (!localActivities.some((a) => a.id === act.id)) {
-      localActivities.push(act)
-    }
-  })
-  localActivities.sort((a, b) => b.timestamp - a.timestamp)
-  persistLocalActivities()
-
-  newFiles.forEach((f) => {
-    if (!localInputFiles.some((item) => item.id === f.id)) {
-      localInputFiles.push(f)
-    }
-  })
-  localInputFiles.sort((a, b) => b.timestamp - a.timestamp)
-  persistLocalInputFiles()
-
-  localSubscribersActivities.forEach((cb) => cb([...localActivities]))
-  localSubscribersInputFiles.forEach((cb) => cb([...localInputFiles]))
+  // Mantido para compatibilidade. O sistema opera exclusivamente com dados reais gerados durante as operações.
 }

@@ -27,6 +27,10 @@ import { LoginScreen } from '@/components/login-screen'
 import { useAuth } from '@/context/auth-context'
 import { logRealtimeActivity, updatePresence, logInputedFiles } from '@/lib/firebase-realtime'
 import {
+  buildConferenceDashboardSnapshot,
+  publishConferenceDashboard,
+} from '@/lib/conference-dashboard-sync'
+import {
   FileText,
   Upload,
   Download,
@@ -787,8 +791,21 @@ export function XMLConverter() {
         }
       })
       logInputedFiles(filesToRecord)
+
+      // Transmite espelho do dashboard da conferência para o Monitor Realtime
+      try {
+        const snap = buildConferenceDashboardSnapshot(
+          results,
+          user?.displayName || undefined,
+          undefined,
+          user?.email || undefined
+        )
+        publishConferenceDashboard(snap)
+      } catch (err) {
+        console.warn('Erro ao transmitir snapshot do dashboard para realtime:', err)
+      }
     }
-  }, [checkAndSpeakDivergencesXML, processFileType])
+  }, [checkAndSpeakDivergencesXML, processFileType, user])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files

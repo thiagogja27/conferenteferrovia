@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useMemo } from "react"
+import React, { useState, useMemo, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -53,8 +53,13 @@ import {
   TrainFront,
   TrainTrack,
   Folder,
+  Radio,
 } from "lucide-react"
 import * as XLSX from "xlsx"
+import {
+  buildConferenceDashboardSnapshot,
+  publishConferenceDashboard,
+} from "@/lib/conference-dashboard-sync"
 import {
   extractVagoesFromDocument,
   extractFolderName,
@@ -330,6 +335,20 @@ export function Dashboard({ files }: DashboardProps) {
     type: "success" | "info" | "warning"
     message: string
   } | null>(null)
+
+  // Transmite espelho automaticamente em tempo real para o Monitor Realtime
+  const [lastMirrorSyncTime, setLastMirrorSyncTime] = useState<string | null>(null)
+  useEffect(() => {
+    if (files && files.length > 0) {
+      try {
+        const snap = buildConferenceDashboardSnapshot(files, undefined, logisticsOverrides, undefined)
+        publishConferenceDashboard(snap)
+        setLastMirrorSyncTime(snap.timeFormatted)
+      } catch (e) {
+        console.warn('Erro ao sincronizar espelho do dashboard:', e)
+      }
+    }
+  }, [files, logisticsOverrides])
 
   const stats = useMemo(() => {
     const validFiles = files.filter(
@@ -967,6 +986,31 @@ export function Dashboard({ files }: DashboardProps) {
           </Button>
         </div>
       )}
+
+      {/* Banner de transmissão em tempo real para o Monitor Realtime */}
+      <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center justify-between gap-3 text-xs text-emerald-950 dark:text-emerald-200">
+        <div className="flex items-center gap-2">
+          <Radio className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0 animate-pulse" />
+          <span>
+            <strong>Espelho em Tempo Real Ativo:</strong> Este dashboard está sendo transmitido instantaneamente para a aba <strong>"Espelho da Conferência"</strong> no <strong>Monitor Realtime</strong> {lastMirrorSyncTime && `(última transmissão às ${lastMirrorSyncTime})`}.
+          </span>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            if (files && files.length > 0) {
+              const snap = buildConferenceDashboardSnapshot(files, undefined, logisticsOverrides, undefined)
+              publishConferenceDashboard(snap)
+              setLastMirrorSyncTime(snap.timeFormatted)
+            }
+          }}
+          className="h-7 text-[11px] bg-white dark:bg-emerald-900 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 font-semibold cursor-pointer shrink-0"
+        >
+          Sincronizar Espelho Agora
+        </Button>
+      </div>
 
       {/* Banner explicativo de interação */}
       <div className="p-3.5 bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/80 rounded-xl flex items-center justify-between gap-3 text-xs text-indigo-900 dark:text-indigo-200">
