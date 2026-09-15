@@ -43,6 +43,7 @@ import {
   type WeightAuditItemResult,
   type WeightAuditResponse,
 } from '@/lib/weight-ai-auditor'
+import { logRealtimeActivity } from '@/lib/firebase-realtime'
 
 interface ProcessedFile {
   fileName: string
@@ -1864,6 +1865,16 @@ export function ExcelReconciliationTab({
     }
 
     XLSX.writeFile(wb, `relatorio_conferencia_chaves_${new Date().toISOString().slice(0, 10)}.xlsx`)
+
+    logRealtimeActivity(
+      'reconcile_mdf',
+      'Conferência de Chaves Exportada',
+      `Relatório de conferência fiscal exportado com ${validFiles.length} nota(s) verificada(s) e ${divergentWeightRows.length} divergência(s) de peso.`,
+      {
+        filesCount: validFiles.length,
+        divergentCount: divergentWeightRows.length,
+      }
+    )
   }
 
   // Executar auditoria de divergências de peso com IA em lote

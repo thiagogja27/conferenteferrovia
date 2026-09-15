@@ -432,6 +432,34 @@ export async function logRealtimeActivity(
   } else {
     pushLocalActivity(activity)
   }
+
+  // Notificação assíncrona para WhatsApp (CallMeBot / Webhook)
+  try {
+    let waType: 'login' | 'conference' | 'divergence' | null = null
+    if (type === 'session_start') {
+      waType = 'login'
+    } else if (type === 'reconcile_mdf' || type === 'export_excel' || type === 'export_zip') {
+      waType = 'conference'
+    } else if (type === 'divergence_found') {
+      waType = 'divergence'
+    }
+
+    if (waType) {
+      import('./whatsapp-notifications')
+        .then(({ notifyWhatsAppEvent }) => {
+          notifyWhatsAppEvent({
+            type: waType!,
+            title,
+            description,
+            operatorName,
+            metadata,
+          }).catch(() => {})
+        })
+        .catch(() => {})
+    }
+  } catch {
+    // Ignora silenciosamente para não interromper fluxo principal
+  }
 }
 
 function pushLocalActivity(activity: RealtimeActivity) {

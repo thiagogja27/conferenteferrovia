@@ -40,8 +40,10 @@ import {
   Flame,
   Activity,
   Radio,
+  MessageSquare,
 } from 'lucide-react'
 import { ConferenceMirrorDashboard } from '@/components/conference-mirror-dashboard'
+import { WhatsAppNotificationSettings } from '@/components/whatsapp-notification-settings'
 import {
   ResponsiveContainer,
   BarChart,
@@ -74,7 +76,11 @@ import {
 
 const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4']
 
-export function RealtimeMonitor() {
+interface RealtimeMonitorProps {
+  onNotify?: (message: string, type?: 'success' | 'warning' | 'error') => void
+}
+
+export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
   const [activities, setActivities] = useState<RealtimeActivity[]>([])
   const [inputFiles, setInputFiles] = useState<InputedFileRecord[]>([])
   const [operators, setOperators] = useState<OperatorPresence[]>([])
@@ -84,7 +90,9 @@ export function RealtimeMonitor() {
   const [operatorInput, setOperatorInput] = useState(currentOperator)
 
   // Abas de Navegação do Monitor
-  const [activeTab, setActiveTab] = useState<'mirror' | 'dashboard' | 'files' | 'timeline' | 'operators'>('mirror')
+  const [activeTab, setActiveTab] = useState<
+    'mirror' | 'dashboard' | 'files' | 'timeline' | 'operators' | 'whatsapp'
+  >('mirror')
 
   // Filtros de Auditoria
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'yesterday' | '7days' | '30days'>('all')
@@ -693,6 +701,21 @@ export function RealtimeMonitor() {
           <Users className="h-4 w-4" />
           Presença dos Funcionários ({operators.length})
         </button>
+
+        <button
+          onClick={() => setActiveTab('whatsapp')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
+            activeTab === 'whatsapp'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+        >
+          <MessageSquare className="h-4 w-4 text-emerald-400" />
+          <span>Alertas WhatsApp</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 font-bold ml-0.5">
+            Ativo
+          </span>
+        </button>
       </div>
 
       {/* ABA 0: ESPELHO DO PAINEL DE CONFERÊNCIA (TEMPO REAL & CONSULTAS HISTÓRICAS) */}
@@ -1235,6 +1258,11 @@ export function RealtimeMonitor() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* ABA 5: CONFIGURAÇÕES E DISPAROS DO WHATSAPP (CALLMEBOT / WEBHOOK) */}
+      {activeTab === 'whatsapp' && (
+        <WhatsAppNotificationSettings onNotify={onNotify} />
       )}
 
       {/* MODAL DE IMPRESSÃO / RELATÓRIO EXECUTIVO OFICIAL (PDF) */}

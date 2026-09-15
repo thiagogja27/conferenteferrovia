@@ -32,7 +32,7 @@ import {
 } from 'recharts'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { getDatabaseInstance } from '@/lib/firebase-realtime'
+import { getDatabaseInstance, getOperatorName } from '@/lib/firebase-realtime'
 import { ref, onValue, push, remove } from 'firebase/database'
 import {
   RumoFileEntry,
@@ -43,6 +43,7 @@ import {
   buildRumoExcelBase64,
 } from '@/lib/rumo-pdf-parser'
 import { extractPdfTextWithPdfJs } from '@/lib/client-pdf-parser'
+import { notifyWhatsAppEvent } from '@/lib/whatsapp-notifications'
 
 const RUMO_STORAGE_KEY = 'rumo_conversor_historico_v1'
 
@@ -292,6 +293,20 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
       if (onNotify) {
         onNotify(`Composição Rumo extraída com sucesso!`, 'success')
       }
+
+      // Notifica via WhatsApp se habilitado
+      notifyWhatsAppEvent({
+        type: 'rumo',
+        title: 'Composição Rumo Processada',
+        description: `Arquivo "${file.name}" convertido com sucesso: ${extractionResult.aoaData.length - 1} vagões e ${extractionResult.desmembreCount} desmembres.`,
+        operatorName: getOperatorName(),
+        metadata: {
+          trainName: extractionResult.trainName || extractionResult.prefixo || 'Trem',
+          prefixo: extractionResult.prefixo,
+          totalVagoes: extractionResult.aoaData.length - 1,
+          desmembreCount: extractionResult.desmembreCount,
+        },
+      }).catch(() => {})
     } catch (err: any) {
       console.error('Erro no processamento do PDF Rumo:', err)
       setErrorMessage(err.message || 'Erro inesperado ao converter PDF.')
