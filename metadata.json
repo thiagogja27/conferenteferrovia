@@ -1,6 +1,6 @@
 {
   "name": "VLIC - Conversor & Visualizador de NF-e",
-  "description": "Conversor e analisador de notas fiscais (XML/PDF), conciliação MDF-e x Excel para vagões ferroviários, autenticação de operadores no Firebase e telemetria em tempo real com Firebase Realtime Database.",
+  "description": "Conversor e analisador de notas fiscais (XML/PDF), conversor de resumo de composições ferroviárias Rumo para Excel (.xlsx), conciliação MDF-e x Excel para vagões ferroviários e telemetria em tempo real com Firebase.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

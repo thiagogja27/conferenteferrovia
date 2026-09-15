@@ -150,31 +150,32 @@ export function ConferenceMirrorDashboard() {
         (h.title && h.title.toLowerCase().includes(q)) ||
         (h.operatorName && h.operatorName.toLowerCase().includes(q)) ||
         (h.dateFormatted && h.dateFormatted.includes(q)) ||
-        h.vagoesPorTransbordo.some((t) => t.fullName.toLowerCase().includes(q)) ||
-        h.destinatarios.some((d) => d.fullName.toLowerCase().includes(q))
+        (Array.isArray(h.vagoesPorTransbordo) && h.vagoesPorTransbordo.some((t) => t?.fullName && t.fullName.toLowerCase().includes(q))) ||
+        (Array.isArray(h.destinatarios) && h.destinatarios.some((d) => d?.fullName && d.fullName.toLowerCase().includes(q)))
       )
     })
   }, [historyList, historyOperatorFilter, historySearchQuery])
 
   // Notas filtradas da tabela principal do snapshot ativo
   const filteredNotes = useMemo(() => {
-    if (!activeSnapshot || !activeSnapshot.notes) return []
+    if (!activeSnapshot || !Array.isArray(activeSnapshot.notes)) return []
     return activeSnapshot.notes.filter((n) => {
+      if (!n) return false
       if (divergenceFilter === 'divergent' && !n.isDivergentCNPJ) return false
       if (divergenceFilter === 'ok' && n.isDivergentCNPJ) return false
 
       if (!tableSearchQuery.trim()) return true
       const q = tableSearchQuery.toLowerCase()
       return (
-        n.numero.toLowerCase().includes(q) ||
-        n.chave.toLowerCase().includes(q) ||
-        n.emitNome.toLowerCase().includes(q) ||
-        n.destNome.toLowerCase().includes(q) ||
-        n.produto.toLowerCase().includes(q) ||
-        n.terminal.toLowerCase().includes(q) ||
-        n.transbordo.toLowerCase().includes(q) ||
-        n.allVagoesStr.toLowerCase().includes(q) ||
-        n.destCNPJ.toLowerCase().includes(q) ||
+        (n.numero && n.numero.toLowerCase().includes(q)) ||
+        (n.chave && n.chave.toLowerCase().includes(q)) ||
+        (n.emitNome && n.emitNome.toLowerCase().includes(q)) ||
+        (n.destNome && n.destNome.toLowerCase().includes(q)) ||
+        (n.produto && n.produto.toLowerCase().includes(q)) ||
+        (n.terminal && n.terminal.toLowerCase().includes(q)) ||
+        (n.transbordo && n.transbordo.toLowerCase().includes(q)) ||
+        (n.allVagoesStr && n.allVagoesStr.toLowerCase().includes(q)) ||
+        (n.destCNPJ && n.destCNPJ.toLowerCase().includes(q)) ||
         (n.placa && n.placa.toLowerCase().includes(q))
       )
     })
@@ -182,27 +183,27 @@ export function ConferenceMirrorDashboard() {
 
   // Manipulador de clique interativo nos gráficos
   const handleChartClick = (category: string, item: any) => {
-    if (!activeSnapshot || !activeSnapshot.notes) return
+    if (!activeSnapshot || !Array.isArray(activeSnapshot.notes)) return
 
     let matchingNotes: ConferenceNoteSummary[] = []
-    const itemName = item.fullName || item.name || ''
+    const itemName = item?.fullName || item?.name || ''
 
     if (category === 'Produto') {
-      matchingNotes = activeSnapshot.notes.filter((n) => n.produto === item.fullName || n.produto === item.name)
+      matchingNotes = activeSnapshot.notes.filter((n) => n.produto === item?.fullName || n.produto === item?.name)
     } else if (category === 'Destinatário') {
       matchingNotes = activeSnapshot.notes.filter((n) => {
-        if (item.destCNPJ && n.destCNPJ) {
+        if (item?.destCNPJ && n.destCNPJ) {
           return n.destCNPJ === item.destCNPJ
         }
-        return n.destNome === item.destNome || n.destNome === item.name
+        return n.destNome === item?.destNome || n.destNome === item?.name
       })
     } else if (category === 'Terminal de Entrega') {
-      matchingNotes = activeSnapshot.notes.filter((n) => n.terminal === item.fullName || n.terminal === item.name)
+      matchingNotes = activeSnapshot.notes.filter((n) => n.terminal === item?.fullName || n.terminal === item?.name)
     } else if (category === 'Transbordo') {
-      matchingNotes = activeSnapshot.notes.filter((n) => n.transbordo === item.fullName || n.transbordo === item.name)
+      matchingNotes = activeSnapshot.notes.filter((n) => n.transbordo === item?.fullName || n.transbordo === item?.name)
     } else if (category === 'Vagões no Transbordo') {
       matchingNotes = activeSnapshot.notes.filter(
-        (n) => (n.transbordo === item.transbordo || n.transbordo === item.fullName) && n.vagoes.length > 0
+        (n) => (n.transbordo === item?.transbordo || n.transbordo === item?.fullName) && Array.isArray(n.vagoes) && n.vagoes.length > 0
       )
     }
 
@@ -220,7 +221,7 @@ export function ConferenceMirrorDashboard() {
   // Exportação para Excel (.xlsx) das notas do modal de drilldown
   const exportModalToExcel = () => {
     if (!selectedGroup) return
-    const exportData = selectedGroup.notes.map((n) => ({
+    const exportData = (selectedGroup.notes || []).map((n) => ({
       Número: n.numero,
       Série: n.serie,
       'Data Emissão': n.dataEmissao,
@@ -243,14 +244,14 @@ export function ConferenceMirrorDashboard() {
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Notas do Gráfico')
-    const cleanName = selectedGroup.fullName.replace(/[/\\?%*:|"<>]/g, '_').substring(0, 20)
-    XLSX.writeFile(wb, `espelho_notas_${selectedGroup.category.toLowerCase()}_${cleanName}.xlsx`)
+    const cleanName = (selectedGroup.fullName || 'grupo').replace(/[/\\?%*:|"<>]/g, '_').substring(0, 20)
+    XLSX.writeFile(wb, `espelho_notas_${(selectedGroup.category || 'dados').toLowerCase()}_${cleanName}.xlsx`)
   }
 
   // Exportação completa da sessão de dashboard ativa
   const exportFullSessionToExcel = () => {
     if (!activeSnapshot) return
-    const exportData = activeSnapshot.notes.map((n) => ({
+    const exportData = (activeSnapshot.notes || []).map((n) => ({
       Número: n.numero,
       Série: n.serie,
       'Data Emissão': n.dataEmissao,
@@ -275,19 +276,20 @@ export function ConferenceMirrorDashboard() {
 
     // Aba de resumo por transbordo/vagões
     const wsVagoes = XLSX.utils.json_to_sheet(
-      activeSnapshot.vagoesPorTransbordo.map((v) => ({
-        Transbordo: v.fullName,
-        'Total Vagões': v.totalVagoes,
-        'Vagões Identificados': v.vagoesList.join(', '),
-        'Total Notas': v.totalNotas,
-        'Peso Total (kg)': v.pesoTotalKg,
-        'Valor Total (R$)': v.valorTotal,
+      (activeSnapshot.vagoesPorTransbordo || []).map((v) => ({
+        Transbordo: v.fullName || '',
+        'Total Vagões': v.totalVagoes || 0,
+        'Vagões Identificados': Array.isArray(v.vagoesList) ? v.vagoesList.join(', ') : '',
+        'Total Notas': v.totalNotas || 0,
+        'Peso Total (kg)': v.pesoTotalKg || 0,
+        'Valor Total (R$)': v.valorTotal || 0,
       }))
     )
     XLSX.utils.book_append_sheet(wb, wsVagoes, 'Resumo Vagões Transbordo')
 
-    const dateStr = activeSnapshot.dateFormatted.replace(/\//g, '-')
-    XLSX.writeFile(wb, `espelho_dashboard_conferencia_${dateStr}_${activeSnapshot.timeFormatted.replace(/:/g, '')}.xlsx`)
+    const dateStr = (activeSnapshot.dateFormatted || '').replace(/\//g, '-')
+    const timeStr = (activeSnapshot.timeFormatted || '').replace(/:/g, '')
+    XLSX.writeFile(wb, `espelho_dashboard_conferencia_${dateStr}_${timeStr}.xlsx`)
   }
 
   return (
@@ -643,10 +645,10 @@ export function ConferenceMirrorDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-                  {activeSnapshot.destinatarios.length}
+                  {Array.isArray(activeSnapshot.destinatarios) ? activeSnapshot.destinatarios.length : 0}
                 </div>
                 <p className="text-[11px] text-zinc-500 mt-1">
-                  {activeSnapshot.missingDestinatarioCount > 0 ? (
+                  {(activeSnapshot.missingDestinatarioCount || 0) > 0 ? (
                     <span className="text-amber-600 font-semibold">
                       {activeSnapshot.missingDestinatarioCount} não informado(s)
                     </span>
@@ -667,10 +669,10 @@ export function ConferenceMirrorDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-                  {activeSnapshot.terminais.length}
+                  {Array.isArray(activeSnapshot.terminais) ? activeSnapshot.terminais.length : 0}
                 </div>
                 <p className="text-[11px] text-zinc-500 mt-1">
-                  {activeSnapshot.missingTerminalCount > 0 ? (
+                  {(activeSnapshot.missingTerminalCount || 0) > 0 ? (
                     <span className="text-amber-600 font-semibold">
                       {activeSnapshot.missingTerminalCount} não informado(s)
                     </span>
@@ -691,10 +693,10 @@ export function ConferenceMirrorDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-                  {activeSnapshot.transbordos.length}
+                  {Array.isArray(activeSnapshot.transbordos) ? activeSnapshot.transbordos.length : 0}
                 </div>
                 <p className="text-[11px] text-zinc-500 mt-1">
-                  {activeSnapshot.missingTransbordoCount > 0 ? (
+                  {(activeSnapshot.missingTransbordoCount || 0) > 0 ? (
                     <span className="text-amber-600 font-semibold">
                       {activeSnapshot.missingTransbordoCount} não informado(s)
                     </span>
@@ -709,7 +711,8 @@ export function ConferenceMirrorDashboard() {
             <Card
               className="cursor-pointer hover:border-amber-400 transition-all shadow-xs"
               onClick={() => {
-                const notesWithWagons = activeSnapshot.notes.filter((n) => n.vagoes.length > 0)
+                const allNotes = Array.isArray(activeSnapshot.notes) ? activeSnapshot.notes : []
+                const notesWithWagons = allNotes.filter((n) => Array.isArray(n.vagoes) && n.vagoes.length > 0)
                 if (notesWithWagons.length > 0) {
                   setSelectedGroup({
                     category: activeSnapshot.isDerivedFromFolders ? 'Pastas (Vagões)' : 'Vagões Ferroviários',
@@ -735,10 +738,10 @@ export function ConferenceMirrorDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
-                  {activeSnapshot.totalVagoesUnicos}
+                  {activeSnapshot.totalVagoesUnicos || 0}
                 </div>
                 <p className="text-[11px] text-zinc-500 mt-1">
-                  {activeSnapshot.vagoesPorTransbordo.length > 0
+                  {Array.isArray(activeSnapshot.vagoesPorTransbordo) && activeSnapshot.vagoesPorTransbordo.length > 0
                     ? `${activeSnapshot.vagoesPorTransbordo.length} transbordo(s)`
                     : 'Sem vagões'}
                 </p>
@@ -747,7 +750,7 @@ export function ConferenceMirrorDashboard() {
           </div>
 
           {/* Banner de Auditoria de Divergências Fiscais se houver */}
-          {activeSnapshot.totalDivergenciasCNPJ > 0 && (
+          {(activeSnapshot.totalDivergenciasCNPJ || 0) > 0 && (
             <div className="p-3.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 rounded-xl flex items-center justify-between gap-3 text-xs text-red-900 dark:text-red-200">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
@@ -777,7 +780,7 @@ export function ConferenceMirrorDashboard() {
                   <div>
                     <CardTitle className="text-base font-bold flex items-center gap-2 text-zinc-900 dark:text-zinc-100 flex-wrap">
                       <span>Quantidade de Vagões por Transbordo</span>
-                      {activeSnapshot.totalVagoesUnicos > 0 && (
+                      {(activeSnapshot.totalVagoesUnicos || 0) > 0 && (
                         <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
                           {activeSnapshot.totalVagoesUnicos} vagão(ões) único(s)
                         </span>
@@ -798,7 +801,7 @@ export function ConferenceMirrorDashboard() {
             </CardHeader>
 
             <CardContent className="pt-4 space-y-5">
-              {activeSnapshot.vagoesPorTransbordo.length === 0 ? (
+              {!Array.isArray(activeSnapshot.vagoesPorTransbordo) || activeSnapshot.vagoesPorTransbordo.length === 0 ? (
                 <div className="py-8 px-4 text-center rounded-xl bg-zinc-50/50 dark:bg-zinc-900/50 border border-dashed border-zinc-200 dark:border-zinc-800">
                   <TrainTrack className="h-8 w-8 text-zinc-400 mx-auto mb-2 opacity-60" />
                   <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
@@ -811,7 +814,7 @@ export function ConferenceMirrorDashboard() {
                   <div className="lg:col-span-6 h-[280px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart
-                        data={activeSnapshot.vagoesPorTransbordo}
+                        data={activeSnapshot.vagoesPorTransbordo || []}
                         layout="vertical"
                         onClick={(state: any) => {
                           if (state && state.activePayload && state.activePayload.length > 0) {
@@ -841,7 +844,7 @@ export function ConferenceMirrorDashboard() {
                                   <div className="text-zinc-600 dark:text-zinc-400 text-[11px]">
                                     {data.totalNotas} nota(s) vinculada(s) • {data.pesoTotalFormatted} • {data.valorTotalFormatted}
                                   </div>
-                                  {data.vagoesList && data.vagoesList.length > 0 && (
+                                  {Array.isArray(data.vagoesList) && data.vagoesList.length > 0 && (
                                     <div className="pt-1 border-t border-zinc-100 dark:border-zinc-800">
                                       <span className="text-[10px] text-zinc-400 uppercase font-semibold block mb-1">
                                         Vagões:
@@ -874,7 +877,7 @@ export function ConferenceMirrorDashboard() {
                           className="cursor-pointer hover:opacity-80 transition-opacity"
                           onClick={(entry) => handleChartClick('Vagões no Transbordo', entry)}
                         >
-                          {activeSnapshot.vagoesPorTransbordo.map((entry, index) => (
+                          {(activeSnapshot.vagoesPorTransbordo || []).map((entry, index) => (
                             <Cell key={`vag-trans-cell-${index}`} fill={entry.color || '#f59e0b'} />
                           ))}
                         </Bar>
@@ -887,12 +890,12 @@ export function ConferenceMirrorDashboard() {
                     <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center justify-between">
                       <span>Detalhamento por Ponto de Transbordo</span>
                       <span className="text-[11px] text-zinc-400">
-                        {activeSnapshot.vagoesPorTransbordo.length} local(is)
+                        {(activeSnapshot.vagoesPorTransbordo || []).length} local(is)
                       </span>
                     </div>
 
                     <div className="max-h-[250px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                      {activeSnapshot.vagoesPorTransbordo.map((trans, idx) => (
+                      {(activeSnapshot.vagoesPorTransbordo || []).map((trans, idx) => (
                         <div
                           key={idx}
                           onClick={() => handleChartClick('Vagões no Transbordo', trans)}
@@ -922,7 +925,7 @@ export function ConferenceMirrorDashboard() {
                           </div>
 
                           <div className="flex flex-wrap gap-1 pt-1 border-t border-zinc-100 dark:border-zinc-800">
-                            {trans.vagoesList.map((vag, vIdx) => (
+                            {(trans.vagoesList || []).map((vag, vIdx) => (
                               <span
                                 key={vIdx}
                                 className="inline-flex items-center px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 text-[10px] font-mono font-medium border border-zinc-200 dark:border-zinc-700"
@@ -959,7 +962,7 @@ export function ConferenceMirrorDashboard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
-                        data={activeSnapshot.produtos}
+                        data={activeSnapshot.produtos || []}
                         cx="50%"
                         cy="50%"
                         labelLine={false}
@@ -970,7 +973,7 @@ export function ConferenceMirrorDashboard() {
                         className="cursor-pointer"
                         onClick={(entry) => handleChartClick('Produto', entry)}
                       >
-                        {activeSnapshot.produtos.map((entry, index) => (
+                        {(activeSnapshot.produtos || []).map((entry, index) => (
                           <Cell
                             key={`cell-prod-${index}`}
                             fill={PIE_COLORS[index % PIE_COLORS.length]}
@@ -979,7 +982,7 @@ export function ConferenceMirrorDashboard() {
                           />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value, _, props) => [`${value} nota(s)`, props.payload.fullName]} />
+                      <Tooltip formatter={(value, _, props) => [`${value} nota(s)`, props.payload?.fullName || '']} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -992,7 +995,7 @@ export function ConferenceMirrorDashboard() {
                 <CardTitle className="text-sm font-bold flex items-center justify-between">
                   <span className="flex items-center gap-2">
                     Notas por Destinatário
-                    {activeSnapshot.missingDestinatarioCount > 0 && (
+                    {(activeSnapshot.missingDestinatarioCount || 0) > 0 && (
                       <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                         {activeSnapshot.missingDestinatarioCount} Não Informado
                       </span>
@@ -1007,7 +1010,7 @@ export function ConferenceMirrorDashboard() {
                 <div className="h-[250px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
-                      data={activeSnapshot.destinatarios}
+                      data={activeSnapshot.destinatarios || []}
                       layout="vertical"
                       onClick={(state: any) => {
                         if (state && state.activePayload && state.activePayload.length > 0) {
@@ -1050,7 +1053,7 @@ export function ConferenceMirrorDashboard() {
                         className="cursor-pointer hover:opacity-80 transition-opacity"
                         onClick={(entry) => handleChartClick('Destinatário', entry)}
                       >
-                        {activeSnapshot.destinatarios.map((entry, index) => (
+                        {(activeSnapshot.destinatarios || []).map((entry, index) => (
                           <Cell
                             key={`dest-cell-${index}`}
                             fill={entry.isMissing ? '#f59e0b' : entry.color || '#2563eb'}
@@ -1069,7 +1072,7 @@ export function ConferenceMirrorDashboard() {
                 <CardTitle className="text-sm font-bold flex items-center justify-between">
                   <span className="flex items-center gap-2">
                     Notas por Terminal de Entrega
-                    {activeSnapshot.missingTerminalCount > 0 && (
+                    {(activeSnapshot.missingTerminalCount || 0) > 0 && (
                       <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                         {activeSnapshot.missingTerminalCount} Não Informado
                       </span>
@@ -1084,7 +1087,7 @@ export function ConferenceMirrorDashboard() {
                 <div className="h-[250px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
-                      data={activeSnapshot.terminais}
+                      data={activeSnapshot.terminais || []}
                       layout="vertical"
                       onClick={(state: any) => {
                         if (state && state.activePayload && state.activePayload.length > 0) {
@@ -1095,13 +1098,13 @@ export function ConferenceMirrorDashboard() {
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis type="number" />
                       <YAxis dataKey="name" type="category" width={150} tick={{ fontSize: 11 }} />
-                      <Tooltip formatter={(value, _, props) => [`${value} nota(s)`, props.payload.fullName]} />
+                      <Tooltip formatter={(value, _, props) => [`${value} nota(s)`, props.payload?.fullName || '']} />
                       <Bar
                         dataKey="value"
                         className="cursor-pointer hover:opacity-80 transition-opacity"
                         onClick={(entry) => handleChartClick('Terminal de Entrega', entry)}
                       >
-                        {activeSnapshot.terminais.map((entry, index) => (
+                        {(activeSnapshot.terminais || []).map((entry, index) => (
                           <Cell
                             key={`term-cell-${index}`}
                             fill={entry.isMissing ? '#f59e0b' : '#00C49F'}
@@ -1120,7 +1123,7 @@ export function ConferenceMirrorDashboard() {
                 <CardTitle className="text-sm font-bold flex items-center justify-between">
                   <span className="flex items-center gap-2">
                     Notas por Transbordo
-                    {activeSnapshot.missingTransbordoCount > 0 && (
+                    {(activeSnapshot.missingTransbordoCount || 0) > 0 && (
                       <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                         {activeSnapshot.missingTransbordoCount} Não Informado
                       </span>
@@ -1135,7 +1138,7 @@ export function ConferenceMirrorDashboard() {
                 <div className="h-[250px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
-                      data={activeSnapshot.transbordos}
+                      data={activeSnapshot.transbordos || []}
                       layout="vertical"
                       onClick={(state: any) => {
                         if (state && state.activePayload && state.activePayload.length > 0) {
@@ -1146,13 +1149,13 @@ export function ConferenceMirrorDashboard() {
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis type="number" />
                       <YAxis dataKey="name" type="category" width={150} tick={{ fontSize: 11 }} />
-                      <Tooltip formatter={(value, _, props) => [`${value} nota(s)`, props.payload.fullName]} />
+                      <Tooltip formatter={(value, _, props) => [`${value} nota(s)`, props.payload?.fullName || '']} />
                       <Bar
                         dataKey="value"
                         className="cursor-pointer hover:opacity-80 transition-opacity"
                         onClick={(entry) => handleChartClick('Transbordo', entry)}
                       >
-                        {activeSnapshot.transbordos.map((entry, index) => (
+                        {(activeSnapshot.transbordos || []).map((entry, index) => (
                           <Cell
                             key={`trans-cell-${index}`}
                             fill={entry.isMissing ? '#f59e0b' : '#FFBB28'}
@@ -1354,16 +1357,17 @@ export function ConferenceMirrorDashboard() {
 
               {/* Lista de notas com acordeão detalhado */}
               <div className="overflow-y-auto flex-1 space-y-2 py-2 pr-1 custom-scrollbar">
-                {selectedGroup.notes
+                {(selectedGroup.notes || [])
                   .filter((n) => {
+                    if (!n) return false
                     if (!modalSearch.trim()) return true
                     const q = modalSearch.toLowerCase()
                     return (
-                      n.numero.toLowerCase().includes(q) ||
-                      n.chave.toLowerCase().includes(q) ||
-                      n.emitNome.toLowerCase().includes(q) ||
-                      n.destNome.toLowerCase().includes(q) ||
-                      n.allVagoesStr.toLowerCase().includes(q)
+                      (n.numero && n.numero.toLowerCase().includes(q)) ||
+                      (n.chave && n.chave.toLowerCase().includes(q)) ||
+                      (n.emitNome && n.emitNome.toLowerCase().includes(q)) ||
+                      (n.destNome && n.destNome.toLowerCase().includes(q)) ||
+                      (n.allVagoesStr && n.allVagoesStr.toLowerCase().includes(q))
                     )
                   })
                   .map((note, idx) => {

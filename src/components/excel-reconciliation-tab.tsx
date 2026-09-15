@@ -386,11 +386,11 @@ export function ExcelReconciliationTab({
           return [...prev, ...newOnes]
         })
 
-        const totalVagoes = parsedList.reduce((acc, c) => acc + c.vagoes.length, 0)
+        const totalVagoes = parsedList.reduce((acc, c) => acc + (c.vagoes?.length || 0), 0)
         const expedidoresNomes = Array.from(
           new Set(
             parsedList
-              .map((c) => c.expedidor.nome || c.expedidor.cnpjCpfFormatado || c.expedidor.cnpjCpf)
+              .map((c) => c.expedidor?.nome || c.expedidor?.cnpjCpfFormatado || c.expedidor?.cnpjCpf)
               .filter(Boolean)
           )
         ).join(', ')

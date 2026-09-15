@@ -7,6 +7,8 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { parseDanfeText, parseMultiDanfePdf } from "./src/lib/pdf-text-parser";
 import { auditarHeuristicaLocal } from "./src/lib/weight-ai-auditor";
 import { auditarLogisticaHeuristicaLocal } from "./src/lib/logistics-ai-auditor";
+import * as XLSX from "xlsx";
+import { processRumoExtractedText, generateRumoWorkbook } from "./src/lib/rumo-pdf-parser";
 
 dotenv.config();
 
@@ -126,6 +128,62 @@ app.post("/api/parse-pdf-text", async (req, res) => {
   } catch (err: any) {
     console.error(`Erro ao extrair texto do PDF ${req.body?.fileName}:`, err);
     return res.status(500).json({ error: err.message || "Erro ao extrair texto do PDF." });
+  }
+});
+
+// Endpoint para conversão e processamento de PDF de Resumo Rumo / Composição Ferroviária
+app.post("/api/parse-rumo-pdf", async (req, res) => {
+  try {
+    const { fileBase64, fileName } = req.body || {};
+    if (!fileBase64) {
+      return res.status(400).json({ error: "Nenhum arquivo PDF enviado no corpo da requisição." });
+    }
+
+    const pdfBuffer = Buffer.from(fileBase64, "base64");
+    const parser = new PDFParse({ data: pdfBuffer });
+    let text = "";
+    try {
+      const textResult = await parser.getText();
+      text = textResult?.text || "";
+    } finally {
+      await parser.destroy();
+    }
+
+    if (!text || text.trim() === "") {
+      return res.status(400).json({
+        error: "O PDF parece estar vazio ou contém apenas imagens. Não foi possível extrair texto legível."
+      });
+    }
+
+    const result = processRumoExtractedText(text, fileName || "resumo.pdf");
+    if (!result.aoaData || result.aoaData.length <= 1) {
+      return res.status(400).json({
+        error: "Não foi possível extrair dados estruturados da composição ferroviária. Verifique se o arquivo corresponde ao Resumo Rumo / TEAG / Baltech."
+      });
+    }
+
+    // Gera o arquivo Excel no backend
+    const wb = generateRumoWorkbook(result.aoaData, result.desmembreRows, result.cnpjData);
+    const excelBuffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
+    const excelBase64 = (excelBuffer as Buffer).toString("base64");
+
+    return res.status(200).json({
+      message: "Arquivo processado e planilha gerada com sucesso!",
+      fileData: excelBase64,
+      fileName: result.outputFileName,
+      tableData: result.aoaData,
+      desmembreCount: result.desmembreCount,
+      desmembreRemetenteCount: result.desmembreRemetenteCount,
+      desmembreRows: result.desmembreRows,
+      cnpjData: result.cnpjData,
+      prefixo: result.prefixo,
+      trainName: result.trainName,
+      totalWagons: result.totalWagons,
+      totalWeightKg: result.totalWeightKg,
+    });
+  } catch (err: any) {
+    console.error(`Erro ao processar PDF Rumo ${req.body?.fileName}:`, err);
+    return res.status(500).json({ error: err.message || "Erro inesperado no servidor durante o processamento do PDF." });
   }
 });
 

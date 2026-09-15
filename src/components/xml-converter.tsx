@@ -22,6 +22,7 @@ import { ExcelReconciliationTab } from '@/components/excel-reconciliation-tab'
 import { MDFExcelComparator } from '@/components/mdf-excel-comparator'
 import { DocumentationPanel } from '@/components/documentation-panel'
 import { RealtimeMonitor } from '@/components/realtime-monitor'
+import { RumoConverterTab } from '@/components/rumo-converter-tab'
 import { UserProfileHeader } from '@/components/user-profile-header'
 import { LoginScreen } from '@/components/login-screen'
 import { useAuth } from '@/context/auth-context'
@@ -197,7 +198,9 @@ export function XMLConverter() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<string>('list')
-  const [converterMode, setConverterMode] = useState<'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'documentation' | 'realtime-monitor'>('xml-to-pdf')
+  const [converterMode, setConverterMode] = useState<
+    'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'conversor-resumo-rumo' | 'documentation' | 'realtime-monitor'
+  >('xml-to-pdf')
   const [processFileType, setProcessFileType] = useState<'all' | 'xml' | 'pdf'>('all')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -1059,7 +1062,7 @@ export function XMLConverter() {
 
   return (
     <div className='min-h-screen bg-background p-4 md:p-8'>
-      <div className={`mx-auto transition-all ${converterMode === 'mdf-x-excel' ? 'max-w-6xl xl:max-w-7xl' : 'max-w-5xl lg:max-w-6xl'}`}>
+      <div className={`mx-auto transition-all ${converterMode === 'mdf-x-excel' || converterMode === 'conversor-resumo-rumo' ? 'max-w-6xl xl:max-w-7xl' : 'max-w-5xl lg:max-w-6xl'}`}>
         {/* Header Principal com Perfil do Operador Firebase */}
         <div className='mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 pb-4 border-b border-zinc-200/80 dark:border-zinc-800'>
           <div className='flex items-center gap-3 text-center sm:text-left'>
@@ -1070,9 +1073,6 @@ export function XMLConverter() {
               <h1 className='text-xl sm:text-2xl font-extrabold tracking-tight text-foreground flex items-center justify-center sm:justify-start gap-2'>
                 Sistema de Conferência Fiscal
               </h1>
-              <p className='text-xs text-zinc-500 dark:text-zinc-400'>
-                NF-e, DANFE, MDF-e x Vagões & Monitoramento Realtime
-              </p>
             </div>
           </div>
 
@@ -1083,7 +1083,7 @@ export function XMLConverter() {
 
         {/* Seletor de Módulos (Menu Principal Intuitivo e Unificado) */}
         <div className="mb-6">
-          <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRealtimeAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-2.5 bg-zinc-100/80 dark:bg-zinc-900 p-1.5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800`}>
+          <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRealtimeAdmin ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-2.5 bg-zinc-100/80 dark:bg-zinc-900 p-1.5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800`}>
             <button
               onClick={() => {
                 setConverterMode('xml-to-pdf')
@@ -1103,6 +1103,28 @@ export function XMLConverter() {
               </div>
               <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
                 NF-e, DANFE, Chaves
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setConverterMode('conversor-resumo-rumo')
+                updatePresence('Conversor Resumo Rumo')
+              }}
+              className={`flex flex-col items-start p-3 rounded-xl transition-all text-left cursor-pointer border ${
+                converterMode === 'conversor-resumo-rumo'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-teal-400 dark:border-teal-500 shadow-xs ring-1 ring-teal-400/30'
+                  : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1 w-full">
+                <div className={`p-1.5 rounded-lg ${converterMode === 'conversor-resumo-rumo' ? 'bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
+                  <FileSpreadsheet className="h-4 w-4" />
+                </div>
+                <span className="text-xs font-bold truncate">Resumo Rumo</span>
+              </div>
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+                PDF p/ Excel & Desmembres
               </span>
             </button>
 
@@ -2231,6 +2253,11 @@ export function XMLConverter() {
             </div>
           </Tabs>
         )}
+        </div>
+
+        {/* Módulo Conversor Resumo Rumo Preservado em Memória */}
+        <div className={converterMode === 'conversor-resumo-rumo' ? 'block' : 'hidden'}>
+          <RumoConverterTab />
         </div>
 
         {/* Módulo MDF-e x EXCEL (Vagões) Preservado */}

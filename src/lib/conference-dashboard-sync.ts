@@ -108,8 +108,10 @@ export interface ConferenceDashboardSnapshot {
   // KPIs & Agregações Gerais
   totalNotas: number
   totalValor: number
+  valorTotal?: number
   valorTotalFormatted: string
   totalPesoKg: number
+  pesoTotalKg?: number
   pesoTotalFormatted: string
   totalVagoesUnicos: number
   totalDestinatariosUnicos: number
@@ -623,14 +625,98 @@ export function buildConferenceDashboardSnapshot(
 // Sincronização Local & Firebase
 // -------------------------------------------------------------
 
+export function sanitizeSnapshot(data: any): ConferenceDashboardSnapshot | null {
+  if (!data || typeof data !== 'object') return null
+  if (data.id?.startsWith('demo_') || data.id?.includes('demo')) return null
+
+  const notesList: ConferenceNoteSummary[] = Array.isArray(data.notes)
+    ? data.notes.map((n: any) => ({
+        chave: n?.chave || '',
+        numero: n?.numero || '',
+        serie: n?.serie || '',
+        dataEmissao: n?.dataEmissao || '',
+        emitNome: n?.emitNome || '',
+        emitCNPJ: n?.emitCNPJ || '',
+        destNome: n?.destNome || '',
+        destCNPJ: n?.destCNPJ || '',
+        produto: n?.produto || '',
+        terminal: n?.terminal || '',
+        transbordo: n?.transbordo || '',
+        vagoes: Array.isArray(n?.vagoes) ? n.vagoes : [],
+        primaryVagao: n?.primaryVagao || '',
+        allVagoesStr: n?.allVagoesStr || '',
+        pesoNum: Number(n?.pesoNum) || 0,
+        pesoFormatted: n?.pesoFormatted || '0 kg',
+        valorNum: Number(n?.valorNum) || 0,
+        valorFormatted: n?.valorFormatted || 'R$ 0,00',
+        confrontoChaveXDest: n?.confrontoChaveXDest || '',
+        isDivergentCNPJ: Boolean(n?.isDivergentCNPJ),
+        placa: n?.placa || '',
+        isDerivedFromFolder: Boolean(n?.isDerivedFromFolder),
+      }))
+    : []
+
+  const vagoesPorTransbordo: VagaoTransbordoSummary[] = Array.isArray(data.vagoesPorTransbordo)
+    ? data.vagoesPorTransbordo.map((v: any) => ({
+        fullName: v?.fullName || '',
+        name: v?.name || '',
+        totalVagoes: Number(v?.totalVagoes) || 0,
+        vagoesList: Array.isArray(v?.vagoesList) ? v.vagoesList : [],
+        totalNotas: Number(v?.totalNotas) || 0,
+        pesoTotalKg: Number(v?.pesoTotalKg) || 0,
+        pesoTotalFormatted: v?.pesoTotalFormatted || '0 kg',
+        valorTotal: Number(v?.valorTotal) || 0,
+        valorTotalFormatted: v?.valorTotalFormatted || 'R$ 0,00',
+        color: v?.color || '#f59e0b',
+      }))
+    : []
+
+  return {
+    id: data.id || `snap_${Date.now()}`,
+    sessionId: data.sessionId || `session_${Date.now()}`,
+    timestamp: Number(data.timestamp) || Date.now(),
+    dateFormatted: data.dateFormatted || '',
+    timeFormatted: data.timeFormatted || '',
+    operatorName: data.operatorName || 'Operador',
+    operatorEmail: data.operatorEmail || '',
+    title: data.title || '',
+    totalNotas: Number(data.totalNotas) || notesList.length,
+    totalPesoKg: Number(data.totalPesoKg || data.pesoTotalKg) || 0,
+    pesoTotalKg: Number(data.totalPesoKg || data.pesoTotalKg) || 0,
+    pesoTotalFormatted: data.pesoTotalFormatted || '0 kg',
+    totalValor: Number(data.totalValor || data.valorTotal) || 0,
+    valorTotal: Number(data.totalValor || data.valorTotal) || 0,
+    valorTotalFormatted: data.valorTotalFormatted || 'R$ 0,00',
+    totalVagoesUnicos: Number(data.totalVagoesUnicos) || 0,
+    totalDestinatariosUnicos: Number(data.totalDestinatariosUnicos) || (Array.isArray(data.destinatarios) ? data.destinatarios.length : 0),
+    totalTerminaisUnicos: Number(data.totalTerminaisUnicos) || (Array.isArray(data.terminais) ? data.terminais.length : 0),
+    totalTransbordosUnicos: Number(data.totalTransbordosUnicos) || (Array.isArray(data.transbordos) ? data.transbordos.length : 0),
+    totalDivergenciasCNPJ: Number(data.totalDivergenciasCNPJ) || 0,
+    missingDestinatarioCount: Number(data.missingDestinatarioCount) || 0,
+    missingTerminalCount: Number(data.missingTerminalCount) || 0,
+    missingTransbordoCount: Number(data.missingTransbordoCount) || 0,
+    missingDataCount: Number(data.missingDataCount) || 0,
+    isDerivedFromFolders: Boolean(data.isDerivedFromFolders),
+    hasFolderDerivedWagons: Boolean(data.hasFolderDerivedWagons),
+    hasDocExtractedWagons: Boolean(data.hasDocExtractedWagons),
+    destinatarios: Array.isArray(data.destinatarios) ? data.destinatarios : [],
+    terminais: Array.isArray(data.terminais) ? data.terminais : [],
+    produtos: Array.isArray(data.produtos) ? data.produtos : [],
+    transbordos: Array.isArray(data.transbordos) ? data.transbordos : [],
+    vagoesPorTransbordo,
+    notes: notesList,
+  }
+}
+
 function getStoredLatestSnapshot(): ConferenceDashboardSnapshot | null {
   if (typeof window === 'undefined') return null
   try {
     const raw = localStorage.getItem(STORAGE_KEY_LATEST)
     if (raw) {
-      const parsed: ConferenceDashboardSnapshot = JSON.parse(raw)
-      if (parsed && !parsed.id?.startsWith('demo_') && !parsed.id?.includes('demo')) {
-        return parsed
+      const parsed = JSON.parse(raw)
+      const sanitized = sanitizeSnapshot(parsed)
+      if (sanitized) {
+        return sanitized
       } else {
         localStorage.removeItem(STORAGE_KEY_LATEST)
       }
@@ -646,9 +732,11 @@ function getStoredHistory(): ConferenceDashboardSnapshot[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_HISTORY)
     if (raw) {
-      const parsed: ConferenceDashboardSnapshot[] = JSON.parse(raw)
+      const parsed = JSON.parse(raw)
       if (Array.isArray(parsed)) {
-        const real = parsed.filter((item) => item && !item.id?.startsWith('demo_') && !item.id?.includes('demo'))
+        const real: ConferenceDashboardSnapshot[] = parsed
+          .map((item) => sanitizeSnapshot(item))
+          .filter((item): item is ConferenceDashboardSnapshot => item !== null)
         if (real.length !== parsed.length) {
           localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(real))
         }
@@ -737,7 +825,10 @@ export function subscribeToLatestConferenceDashboard(
   // Escuta BroadcastChannel para atualizações de outras abas
   const handleMessage = (event: MessageEvent) => {
     if (event.data?.type === 'DASHBOARD_UPDATED' && event.data.snapshot) {
-      callback(event.data.snapshot)
+      const sanitized = sanitizeSnapshot(event.data.snapshot)
+      if (sanitized) {
+        callback(sanitized)
+      }
     }
   }
   if (broadcastChannel) {
@@ -755,12 +846,9 @@ export function subscribeToLatestConferenceDashboard(
         latestRef,
         (snap) => {
           if (snap.exists()) {
-            const data = snap.val() as ConferenceDashboardSnapshot
-            if (data && !data.id?.startsWith('demo_') && !data.id?.includes('demo')) {
-              callback(data)
-            } else {
-              callback(null)
-            }
+            const data = snap.val()
+            const sanitized = sanitizeSnapshot(data)
+            callback(sanitized)
           } else {
             callback(null)
           }
@@ -798,10 +886,10 @@ export function subscribeToConferenceDashboardHistory(
 
   // Escuta BroadcastChannel
   const handleMessage = (event: MessageEvent) => {
-    if (event.data?.type === 'DASHBOARD_UPDATED' && event.data.history) {
-      const realHistory = event.data.history.filter(
-        (item: ConferenceDashboardSnapshot) => item && !item.id?.startsWith('demo_') && !item.id?.includes('demo')
-      )
+    if (event.data?.type === 'DASHBOARD_UPDATED' && Array.isArray(event.data.history)) {
+      const realHistory: ConferenceDashboardSnapshot[] = event.data.history
+        .map((item: any) => sanitizeSnapshot(item))
+        .filter((item: any): item is ConferenceDashboardSnapshot => item !== null)
       callback(realHistory)
     }
   }
@@ -824,9 +912,13 @@ export function subscribeToConferenceDashboardHistory(
             return
           }
           const val = snap.val()
+          if (!val || typeof val !== 'object') {
+            callback(getStoredHistory())
+            return
+          }
           const list: ConferenceDashboardSnapshot[] = Object.keys(val)
-            .map((k) => val[k])
-            .filter((item) => item && !item.id?.startsWith('demo_') && !item.id?.includes('demo'))
+            .map((k) => sanitizeSnapshot(val[k]))
+            .filter((item): item is ConferenceDashboardSnapshot => item !== null)
           list.sort((a, b) => b.timestamp - a.timestamp)
           callback(list)
         },
