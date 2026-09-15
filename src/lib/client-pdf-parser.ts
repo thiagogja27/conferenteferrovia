@@ -46,9 +46,26 @@ export async function extractPdfTextWithPdfJs(arrayBuffer: ArrayBuffer): Promise
     for (let i = 1; i <= pdfDoc.numPages; i++) {
       const page = await pdfDoc.getPage(i)
       const textContent = await page.getTextContent()
-      const pageText = textContent.items
-        .map((item: any) => item.str || '')
-        .join(' ')
+      
+      let pageText = ''
+      let lastY: number | null = null
+      for (const item of textContent.items as any[]) {
+        const str = item.str ?? ''
+        const currentY = item.transform ? item.transform[5] : null
+        
+        if (lastY !== null && currentY !== null && Math.abs(currentY - lastY) > 3) {
+          pageText += '\n'
+        } else if (item.hasEOL) {
+          pageText += '\n'
+        } else if (pageText.length > 0 && !pageText.endsWith('\n') && !pageText.endsWith(' ') && str) {
+          pageText += ' '
+        }
+        pageText += str
+        if (currentY !== null) {
+          lastY = currentY
+        }
+      }
+
       pages.push({ num: i, text: pageText })
       fullTextParts.push(pageText)
     }

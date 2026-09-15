@@ -77,7 +77,8 @@ export function processRumoExtractedText(text: string, originalFileName: string 
   const desmembreRemetenteCount: Record<string, number> = {}
 
   // Regex para separar cada registro de vagão
-  const recordSplitRegex = /^\s*(?=\d{1,3}\.?\s+[A-Z0-9-]{6,14})/m
+  // Quebra por linhas iniciadas com sequência numérica e placa de vagão
+  const recordSplitRegex = /(?:^|\r?\n)\s*(?=\d{1,3}\.?\s+[A-Z0-9-]{6,14})/m
   const records = text.split(recordSplitRegex).filter((r) => r.trim() !== '')
 
   const wagonRegex = /^(\d{1,3})\.?\s+([A-Z0-9-]{6,14})\s+(.*)/s
@@ -323,4 +324,8 @@ export function exportRumoExcelFile(
 ) {
   const wb = generateRumoWorkbook(tableData, desmembreRows, cnpjData)
   XLSX.writeFile(wb, fileName || 'resumo-composicao.xlsx')
+}
+
+export function buildRumoExcelBase64(wb: XLSX.WorkBook): string {
+  return XLSX.write(wb, { bookType: 'xlsx', type: 'base64' })
 }

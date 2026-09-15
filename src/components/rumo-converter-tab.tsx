@@ -38,7 +38,11 @@ import {
   RumoFileEntry,
   RumoExtractionResult,
   exportRumoExcelFile,
+  processRumoExtractedText,
+  generateRumoWorkbook,
+  buildRumoExcelBase64,
 } from '@/lib/rumo-pdf-parser'
+import { extractPdfTextWithPdfJs } from '@/lib/client-pdf-parser'
 
 const RUMO_STORAGE_KEY = 'rumo_conversor_historico_v1'
 
@@ -153,7 +157,7 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
     }
   }
 
-  // 3. Processar arquivo PDF
+  // 3. Processar arquivo PDF (Client-First com Fallback de Servidor e Tratamento Seguro de JSON)
   const handlePdfUpload = async (file: File) => {
     if (!file) return
     if (!file.name.toLowerCase().endsWith('.pdf')) {
@@ -167,91 +171,135 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
     setCompletedDesmembreRows([])
 
     try {
-      const reader = new FileReader()
-      reader.onload = async () => {
-        try {
-          const resultStr = reader.result as string
-          const base64Data = resultStr.split(',')[1] || resultStr
+      let extractionResult: RumoExtractionResult | null = null
+      let excelBase64: string | null = null
 
-          const response = await fetch('/api/parse-rumo-pdf', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              fileBase64: base64Data,
-              fileName: file.name,
-            }),
-          })
+      // ESTRATÉGIA 1: Extração Direta no Navegador (Client-Side First - 100% compatível com Vercel)
+      try {
+        const arrayBuffer = await file.arrayBuffer()
+        const { text } = await extractPdfTextWithPdfJs(arrayBuffer)
 
-          const data = await response.json()
-
-          if (!response.ok || data.error) {
-            throw new Error(data.error || 'Erro ao processar PDF no servidor.')
+        if (text && text.trim().length > 30) {
+          const clientResult = processRumoExtractedText(text, file.name)
+          if (clientResult.aoaData && clientResult.aoaData.length > 1) {
+            extractionResult = clientResult
+            const wb = generateRumoWorkbook(
+              clientResult.aoaData,
+              clientResult.desmembreRows,
+              clientResult.cnpjData
+            )
+            excelBase64 = buildRumoExcelBase64(wb)
           }
-
-          const extractionResult: RumoExtractionResult = {
-            aoaData: data.tableData || [],
-            desmembreCount: data.desmembreCount || 0,
-            desmembreRows: data.desmembreRows || [],
-            desmembreRemetenteCount: data.desmembreRemetenteCount || {},
-            cnpjData: data.cnpjData || [],
-            prefixo: data.prefixo || null,
-            trainName: data.trainName || null,
-            outputFileName: data.fileName || 'resumo-composicao.xlsx',
-            totalWagons: data.totalWagons || 0,
-            totalWeightKg: data.totalWeightKg || 0,
-          }
-
-          setActiveResult(extractionResult)
-          setActiveFileName(file.name)
-          setActiveFileBase64Excel(data.fileData || null)
-
-          // Salva no histórico
-          await saveEntryToStorage({
-            originalName: file.name,
-            name: extractionResult.outputFileName,
-            createdAt: new Date().toISOString(),
-            prefixo: extractionResult.prefixo,
-            trainName: extractionResult.trainName,
-            desmembreCount: extractionResult.desmembreCount,
-            desmembreRemetenteCount: extractionResult.desmembreRemetenteCount,
-            tableData: extractionResult.aoaData,
-            desmembreRows: extractionResult.desmembreRows,
-            cnpjData: extractionResult.cnpjData,
-          })
-
-          // Download automático do Excel gerado
-          if (data.fileData) {
-            downloadBase64Excel(data.fileData, extractionResult.outputFileName)
-          }
-
-          setSuccessMessage(
-            `Arquivo "${file.name}" processado com sucesso! Planilha "${extractionResult.outputFileName}" gerada com ${extractionResult.aoaData.length - 1} registro(s) e ${extractionResult.desmembreCount} desmembre(s).`
-          )
-          if (onNotify) {
-            onNotify(`Composição Rumo extraída com sucesso!`, 'success')
-          }
-        } catch (err: any) {
-          console.error('Erro no processamento do PDF Rumo:', err)
-          setErrorMessage(err.message || 'Erro inesperado ao converter PDF.')
-          if (onNotify) {
-            onNotify(`Erro ao processar PDF: ${err.message}`, 'error')
-          }
-        } finally {
-          setIsProcessing(false)
         }
+      } catch (clientErr) {
+        console.warn('Tentativa client-side de leitura do PDF falhou, tentando endpoint backend:', clientErr)
       }
 
-      reader.onerror = () => {
-        setIsProcessing(false)
-        setErrorMessage('Não foi possível ler o arquivo selecionado no navegador.')
+      // ESTRATÉGIA 2: Fallback para o Endpoint /api/parse-rumo-pdf (se o client-side não extraiu registros)
+      if (!extractionResult) {
+        const base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            const resultStr = reader.result as string
+            resolve(resultStr.split(',')[1] || resultStr)
+          }
+          reader.onerror = (e) => reject(e)
+          reader.readAsDataURL(file)
+        })
+
+        const response = await fetch('/api/parse-rumo-pdf', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            fileBase64: base64Data,
+            fileName: file.name,
+          }),
+        })
+
+        const responseText = await response.text()
+        let data: any = null
+        if (responseText && responseText.trim().startsWith('{')) {
+          try {
+            data = JSON.parse(responseText)
+          } catch (jsonErr) {
+            console.warn('Erro ao parsear JSON da resposta:', jsonErr)
+          }
+        }
+
+        if (!response.ok || !data || data.error) {
+          throw new Error(
+            data?.error ||
+              `Falha na resposta do servidor (HTTP ${response.status}). Verifique se o arquivo é um PDF legível.`
+          )
+        }
+
+        extractionResult = {
+          aoaData: data.tableData || [],
+          desmembreCount: data.desmembreCount || 0,
+          desmembreRows: data.desmembreRows || [],
+          desmembreRemetenteCount: data.desmembreRemetenteCount || {},
+          cnpjData: data.cnpjData || [],
+          prefixo: data.prefixo || null,
+          trainName: data.trainName || null,
+          outputFileName: data.fileName || 'resumo-composicao.xlsx',
+          totalWagons: data.totalWagons || 0,
+          totalWeightKg: data.totalWeightKg || 0,
+        }
+        excelBase64 = data.fileData || null
       }
 
-      reader.readAsDataURL(file)
-    } catch (e: any) {
+      if (!extractionResult || !extractionResult.aoaData || extractionResult.aoaData.length <= 1) {
+        throw new Error(
+          'Não foi possível encontrar dados de vagões neste PDF. Verifique se o arquivo é um Resumo de Composição Rumo/TEAG.'
+        )
+      }
+
+      setActiveResult(extractionResult)
+      setActiveFileName(file.name)
+      setActiveFileBase64Excel(excelBase64)
+
+      // Salva no histórico local e Firebase Realtime
+      await saveEntryToStorage({
+        originalName: file.name,
+        name: extractionResult.outputFileName,
+        createdAt: new Date().toISOString(),
+        prefixo: extractionResult.prefixo,
+        trainName: extractionResult.trainName,
+        desmembreCount: extractionResult.desmembreCount,
+        desmembreRemetenteCount: extractionResult.desmembreRemetenteCount,
+        tableData: extractionResult.aoaData,
+        desmembreRows: extractionResult.desmembreRows,
+        cnpjData: extractionResult.cnpjData,
+      })
+
+      // Download automático do Excel gerado
+      if (excelBase64) {
+        downloadBase64Excel(excelBase64, extractionResult.outputFileName)
+      } else {
+        exportRumoExcelFile(
+          extractionResult.aoaData,
+          extractionResult.desmembreRows,
+          extractionResult.cnpjData,
+          extractionResult.outputFileName
+        )
+      }
+
+      setSuccessMessage(
+        `Arquivo "${file.name}" processado com sucesso! Planilha "${extractionResult.outputFileName}" gerada com ${extractionResult.aoaData.length - 1} registro(s) e ${extractionResult.desmembreCount} desmembre(s).`
+      )
+      if (onNotify) {
+        onNotify(`Composição Rumo extraída com sucesso!`, 'success')
+      }
+    } catch (err: any) {
+      console.error('Erro no processamento do PDF Rumo:', err)
+      setErrorMessage(err.message || 'Erro inesperado ao converter PDF.')
+      if (onNotify) {
+        onNotify(`Erro ao processar PDF: ${err.message}`, 'error')
+      }
+    } finally {
       setIsProcessing(false)
-      setErrorMessage(e.message || 'Erro ao preparar upload do arquivo.')
     }
   }
 
