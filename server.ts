@@ -187,10 +187,50 @@ app.post("/api/parse-rumo-pdf", async (req, res) => {
   }
 });
 
-// Endpoint para envio de notificações WhatsApp (CallMeBot / Webhooks)
+// Endpoint para diagnóstico em tempo real do status do CallMeBot
+app.post("/api/check-callmebot-status", async (req, res) => {
+  try {
+    const { phone, apiKey } = req.body || {};
+    if (!phone || !apiKey) {
+      return res.status(400).json({ error: "Telefone e ApiKey são obrigatórios para o teste." });
+    }
+
+    const cleanPhone = String(phone).replace(/[^0-9+]/g, "");
+    const testText = encodeURIComponent("VLIC Probe Check");
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(cleanPhone)}&text=${testText}&apikey=${encodeURIComponent(String(apiKey).trim())}`;
+
+    const response = await fetch(url, { method: "GET" });
+    const respText = await response.text();
+    const respLower = respText.toLowerCase();
+
+    const isMaintenance = respLower.includes("service is down") || respLower.includes("technical problem") || respLower.includes("410");
+    const isInvalidKey = respLower.includes("invalid apikey") || respLower.includes("apikey is invalid");
+    const rawClean = respText.replace(/<[^>]*>?/gm, " ").replace(/\s+/g, " ").trim();
+
+    return res.status(200).json({
+      online: !isMaintenance,
+      keyValid: !isInvalidKey,
+      isMaintenance,
+      statusCode: response.status,
+      raw: rawClean,
+      message: isMaintenance
+        ? "O servidor do CallMeBot está temporariamente em manutenção técnica global (Código 410: 'Service is down - The service will be back in 24-48hs'). Suas credenciais estão corretas e salvas, mas a rede externa do CallMeBot está fora do ar no momento."
+        : isInvalidKey
+        ? "A ApiKey informada foi recusada pelo CallMeBot. Verifique se copiou exatamente o código enviado pelo bot no WhatsApp."
+        : "Servidor do CallMeBot online e pronto para envio!",
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      online: false,
+      error: err.message || "Erro ao contatar servidor do CallMeBot.",
+    });
+  }
+});
+
+// Endpoint para envio de notificações WhatsApp / Telegram (CallMeBot / Webhooks / Telegram Bot)
 app.post("/api/send-whatsapp", async (req, res) => {
   try {
-    const { provider, phone, apiKey, webhookUrl, webhookSecret, text, payload } = req.body || {};
+    const { provider, phone, apiKey, webhookUrl, webhookSecret, telegramBotToken, telegramChatId, text, payload } = req.body || {};
 
     if (provider === "callmebot") {
       if (!phone || !apiKey || !text) {
@@ -205,10 +245,33 @@ app.post("/api/send-whatsapp", async (req, res) => {
 
       const response = await fetch(url, { method: "GET" });
       const respText = await response.text();
+      const respLower = respText.toLowerCase();
 
-      if (!response.ok || respText.toLowerCase().includes("error") || respText.toLowerCase().includes("invalid apikey")) {
+      const isMaintenance = respLower.includes("service is down") || respLower.includes("technical problem") || respLower.includes("410");
+      const isInvalidKey = respLower.includes("invalid apikey") || respLower.includes("apikey is invalid");
+      const isError = !response.ok || respLower.includes("<b>error") || respLower.includes("error:");
+
+      if (isMaintenance) {
+        return res.status(503).json({
+          success: false,
+          isMaintenance: true,
+          error: "O serviço externo do CallMeBot está temporariamente fora do ar para manutenção técnica global (Erro 410: 'Service is down - The service will be back in 24-48hs'). Suas credenciais estão salvas e corretas, mas o servidor externo está indisponível neste momento.",
+          raw: respText.replace(/<[^>]*>?/gm, " ").trim(),
+        });
+      }
+
+      if (isInvalidKey) {
         return res.status(400).json({
-          error: respText || "Falha ao enviar mensagem via CallMeBot. Verifique se o telefone e a ApiKey estão corretos.",
+          success: false,
+          error: "ApiKey inválida no CallMeBot. Verifique se copiou a ApiKey correta recebida pelo bot no WhatsApp.",
+          raw: respText.replace(/<[^>]*>?/gm, " ").trim(),
+        });
+      }
+
+      if (isError) {
+        return res.status(400).json({
+          success: false,
+          error: respText.replace(/<[^>]*>?/gm, " ").trim() || "Falha ao enviar mensagem via CallMeBot.",
           raw: respText,
         });
       }
@@ -217,6 +280,37 @@ app.post("/api/send-whatsapp", async (req, res) => {
         success: true,
         message: "Mensagem encaminhada ao WhatsApp via CallMeBot com sucesso!",
         raw: respText,
+      });
+    } else if (provider === "telegram") {
+      if (!telegramBotToken || !telegramChatId || !text) {
+        return res.status(400).json({
+          error: "Para notificações via Telegram, Bot Token e Chat ID são obrigatórios."
+        });
+      }
+
+      const telegramUrl = `https://api.telegram.org/bot${encodeURIComponent(String(telegramBotToken).trim())}/sendMessage`;
+      const response = await fetch(telegramUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: String(telegramChatId).trim(),
+          text,
+          parse_mode: "Markdown",
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        return res.status(400).json({
+          success: false,
+          error: data.description || "Falha ao enviar mensagem pelo bot do Telegram.",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Mensagem enviada com sucesso no Telegram!",
+        result: data.result,
       });
     } else if (provider === "webhook") {
       if (!webhookUrl || !String(webhookUrl).startsWith("http")) {
@@ -229,6 +323,7 @@ app.post("/api/send-whatsapp", async (req, res) => {
       if (webhookSecret) {
         headers["Authorization"] = `Bearer ${webhookSecret}`;
         headers["X-Webhook-Secret"] = String(webhookSecret);
+        headers["apikey"] = String(webhookSecret);
       }
 
       const response = await fetch(webhookUrl, {
@@ -245,11 +340,11 @@ app.post("/api/send-whatsapp", async (req, res) => {
       });
     }
 
-    return res.status(400).json({ error: "Provedor de WhatsApp inválido (use 'callmebot' ou 'webhook')." });
+    return res.status(400).json({ error: "Provedor de notificação inválido (use 'callmebot', 'telegram' ou 'webhook')." });
   } catch (err: any) {
     console.error("Erro no endpoint /api/send-whatsapp:", err);
     return res.status(500).json({
-      error: err.message || "Erro inesperado ao disparar notificação de WhatsApp."
+      error: err.message || "Erro inesperado ao disparar notificação."
     });
   }
 });

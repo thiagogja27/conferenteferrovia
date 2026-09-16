@@ -32,8 +32,8 @@ import {
 } from 'lucide-react'
 
 export function DocumentationPanel() {
-  const { user } = useAuth()
-  const isRealtimeAdmin = user?.email?.toLowerCase().trim() === 'thiago_gja27@hotmail.com'
+  const { user, isSupervisor } = useAuth()
+  const isRealtimeAdmin = isSupervisor
   const [activeTopic, setActiveTopic] = useState<'mdf-x-excel' | 'excel-conferencia' | 'pdf-to-xml' | 'conferencia-geral' | 'realtime-monitor' | 'faq'>('mdf-x-excel')
   const [searchDocQuery, setSearchDocQuery] = useState('')
 

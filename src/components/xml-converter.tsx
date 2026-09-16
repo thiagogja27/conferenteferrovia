@@ -189,8 +189,8 @@ async function getAllFilesFromDataTransfer(
 }
 
 export function XMLConverter() {
-  const { user } = useAuth()
-  const isRealtimeAdmin = user?.email?.toLowerCase().trim() === 'thiago_gja27@hotmail.com'
+  const { user, isSupervisor, loading: authLoading } = useAuth()
+  const isRealtimeAdmin = isSupervisor
 
   const [files, setFiles] = useState<ProcessedFile[]>([])
   const [otherZipFiles, setOtherZipFiles] = useState<{ path: string; content: Blob }[]>([])
@@ -212,12 +212,13 @@ export function XMLConverter() {
   const [selectedXmlModal, setSelectedXmlModal] = useState<{ fileName: string; content: string } | null>(null)
   const [copiedXml, setCopiedXml] = useState(false)
 
-  // Proteção de rota interna para o Monitor Realtime (apenas thiago_gja27@hotmail.com)
+  // Proteção de rota interna para o Monitor Realtime (exclusivo para supervisores)
   useEffect(() => {
+    if (authLoading) return
     if (converterMode === 'realtime-monitor' && !isRealtimeAdmin) {
       setConverterMode('xml-to-pdf')
     }
-  }, [converterMode, isRealtimeAdmin])
+  }, [converterMode, isRealtimeAdmin, authLoading])
 
   const handleCopyXml = (content: string) => {
     navigator.clipboard.writeText(content)

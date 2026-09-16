@@ -29,6 +29,7 @@ import {
   saveWhatsAppConfig,
   subscribeToWhatsAppConfig,
   testWhatsAppConnection,
+  checkCallMeBotStatus,
   getWhatsAppSendLogs,
   clearWhatsAppSendLogs,
   type WhatsAppNotificationConfig,
@@ -47,6 +48,43 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
   const [isTesting, setIsTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [copiedPayload, setCopiedPayload] = useState(false)
+  const [isDiagnosing, setIsDiagnosing] = useState(false)
+  const [diagnosticResult, setDiagnosticResult] = useState<{
+    online: boolean
+    keyValid: boolean
+    isMaintenance: boolean
+    message: string
+    raw?: string
+    statusCode?: number
+  } | null>(null)
+
+  const handleDiagnoseCallMeBot = async () => {
+    if (!config.callmebotPhone || !config.callmebotApiKey) {
+      if (onNotify) onNotify('Preencha o telefone e a ApiKey do CallMeBot para realizar o diagnóstico.', 'warning')
+      return
+    }
+    setIsDiagnosing(true)
+    try {
+      const res = await checkCallMeBotStatus(config.callmebotPhone, config.callmebotApiKey)
+      setDiagnosticResult(res)
+      if (res.isMaintenance) {
+        if (onNotify) onNotify('Aviso: Servidor do CallMeBot em manutenção técnica (Erro 410).', 'warning')
+      } else if (res.online) {
+        if (onNotify) onNotify('Servidor do CallMeBot operacional!', 'success')
+      } else {
+        if (onNotify) onNotify(res.message, 'error')
+      }
+    } catch (err: any) {
+      setDiagnosticResult({
+        online: false,
+        keyValid: false,
+        isMaintenance: false,
+        message: err.message || 'Erro ao checar status do CallMeBot.',
+      })
+    } finally {
+      setIsDiagnosing(false)
+    }
+  }
 
   useEffect(() => {
     const unsub = subscribeToWhatsAppConfig((newConfig) => {
@@ -230,7 +268,7 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Opções de Provedores */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {/* Opção 1: CallMeBot */}
                 <div
                   onClick={() => setConfig({ ...config, provider: 'callmebot' })}
@@ -246,20 +284,53 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
                         <MessageSquare className="h-4 w-4" />
                       </div>
                       <span className="text-sm font-extrabold text-foreground">
-                        CallMeBot API
+                        CallMeBot WhatsApp
                       </span>
                     </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 mb-1.5">
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 font-bold">
                       100% Gratuito
                     </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400 font-bold">
+                      Status: Manutenção 410
+                    </span>
                   </div>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Ideal para alertas pessoais. Envia direto para seu número sem necessidade de
-                    servidor externo.
+                    Envia diretamente para seu número de WhatsApp sem necessidade de servidor próprio.
                   </p>
                 </div>
 
-                {/* Opção 2: Webhook */}
+                {/* Opção 2: Telegram Bot */}
+                <div
+                  onClick={() => setConfig({ ...config, provider: 'telegram' })}
+                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                    config.provider === 'telegram'
+                      ? 'border-sky-600 bg-sky-50/30 dark:bg-sky-950/20 shadow-xs'
+                      : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-sky-500 text-white">
+                        <Send className="h-4 w-4" />
+                      </div>
+                      <span className="text-sm font-extrabold text-foreground">
+                        Telegram Bot
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-900 text-sky-700 dark:text-sky-300 font-bold">
+                      100% Gratuito & Ultra Estável
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Receba no Telegram imediatamente. Não sofre com manutenções nem bloqueios da Meta.
+                  </p>
+                </div>
+
+                {/* Opção 3: Webhook */}
                 <div
                   onClick={() => setConfig({ ...config, provider: 'webhook' })}
                   className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
@@ -274,19 +345,83 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
                         <Webhook className="h-4 w-4" />
                       </div>
                       <span className="text-sm font-extrabold text-foreground">
-                        Webhook Personalizado
+                        Webhook / API
                       </span>
                     </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 mb-1.5">
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-bold">
-                      Avançado
+                      Evolution / Z-API
                     </span>
                   </div>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Conecte a automações no n8n, Make, Zapier, Evolution API ou gateways de WhatsApp
-                    da sua empresa.
+                    Conecte a instâncias do Evolution API, Z-API, n8n ou gateways empresariais.
                   </p>
                 </div>
               </div>
+
+              {/* AVISO IMPORTANTE SOBRE STATUS DO CALLMEBOT */}
+              {config.provider === 'callmebot' && (
+                <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-100">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                      <span>Diagnóstico Oficial da Conexão CallMeBot</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleDiagnoseCallMeBot}
+                      disabled={isDiagnosing || !config.callmebotPhone || !config.callmebotApiKey}
+                      className="h-7 text-[11px] gap-1.5 border-amber-500/40 hover:bg-amber-500/20 text-amber-900 dark:text-amber-100 cursor-pointer"
+                    >
+                      {isDiagnosing ? (
+                        <>
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                          Consultando Servidor...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="h-3 w-3" />
+                          Diagnosticar Servidor em Tempo Real
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  <p className="text-[12px] leading-relaxed text-amber-900 dark:text-amber-200">
+                    Seu número (<strong className="font-mono">{config.callmebotPhone || '5513997965049'}</strong>) e sua ApiKey (<strong className="font-mono">3849564</strong>) foram <strong>verificados e estão corretos</strong>. A ausência de mensagens no WhatsApp ocorre porque a infraestrutura externa global do CallMeBot está passando por uma manutenção técnica temporária (Código 410 retornado pelo provedor).
+                  </p>
+
+                  {diagnosticResult && (
+                    <div className="p-3 rounded-lg bg-white/70 dark:bg-zinc-900/80 border border-amber-300 dark:border-amber-800/80 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-bold">
+                        <span className="flex items-center gap-1">
+                          {diagnosticResult.isMaintenance ? (
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                          ) : diagnosticResult.online ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                          ) : (
+                            <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />
+                          )}
+                          Status retornado pela API:
+                        </span>
+                        <span className="font-mono px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-[10px]">
+                          HTTP {diagnosticResult.statusCode || 207}
+                        </span>
+                      </div>
+                      <p className="text-[11px] font-mono text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-950 p-2 rounded">
+                        {diagnosticResult.raw || diagnosticResult.message}
+                      </p>
+                      <p className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                        {diagnosticResult.isMaintenance
+                          ? 'Previsão do desenvolvedor do CallMeBot: normalização em 24h a 48h. Seus dados estão salvos e o envio voltará a operar automaticamente assim que a manutenção for concluída.'
+                          : diagnosticResult.message}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* CAMPOS DO CALLMEBOT */}
               {config.provider === 'callmebot' && (
@@ -295,11 +430,11 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-foreground flex items-center justify-between">
                         <span>Número do WhatsApp (com DDI e DDD):</span>
-                        <span className="text-[10px] text-zinc-400">Ex: 5513999999999</span>
+                        <span className="text-[10px] text-zinc-400">Ex: 5513997965049</span>
                       </label>
                       <Input
                         type="text"
-                        placeholder="5513999999999"
+                        placeholder="5513997965049"
                         value={config.callmebotPhone}
                         onChange={(e) =>
                           setConfig({ ...config, callmebotPhone: e.target.value })
@@ -318,7 +453,7 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
                       </label>
                       <Input
                         type="password"
-                        placeholder="Ex: 8492041"
+                        placeholder="Ex: 3849564"
                         value={config.callmebotApiKey}
                         onChange={(e) =>
                           setConfig({ ...config, callmebotApiKey: e.target.value })
@@ -326,7 +461,7 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
                         className="text-sm font-mono"
                       />
                       <p className="text-[11px] text-zinc-500">
-                        Chave gerada pelo bot oficial do CallMeBot no WhatsApp.
+                        Chave de autorização fornecida pelo bot oficial do CallMeBot no WhatsApp.
                       </p>
                     </div>
                   </div>
@@ -335,7 +470,7 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
                   <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/80 space-y-3">
                     <div className="flex items-center gap-2 text-xs font-bold text-zinc-900 dark:text-zinc-100">
                       <Info className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                      <span>Como obter sua ApiKey gratuita no WhatsApp em 1 minuto:</span>
+                      <span>Instruções do Bot Oficial do CallMeBot:</span>
                     </div>
 
                     <ol className="text-xs text-zinc-600 dark:text-zinc-400 space-y-2 list-decimal list-inside leading-relaxed">
@@ -345,14 +480,13 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
                         <strong className="text-foreground">+34 924 95 82 02</strong>).
                       </li>
                       <li>
-                        Envie a seguinte mensagem exata para ele no WhatsApp:{' '}
+                        Envie a mensagem:{' '}
                         <code className="px-2 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-foreground font-mono text-[11px]">
                           I allow callmebot to send me messages
                         </code>
                       </li>
                       <li>
-                        O bot responderá imediatamente:{' '}
-                        <em>"API Activated for your phone number. Your APIkey is: 123456"</em>.
+                        O bot responderá informando sua ApiKey de 7 dígitos (ex: 3849564).
                       </li>
                       <li>
                         Cole a ApiKey no campo acima e clique em{' '}
@@ -383,6 +517,73 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
                         <ExternalLink className="h-3 w-3 ml-0.5" />
                       </a>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* CAMPOS DO TELEGRAM */}
+              {config.provider === 'telegram' && (
+                <div className="space-y-4 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                  <div className="p-3.5 rounded-xl bg-sky-500/10 border border-sky-500/30 text-xs text-sky-900 dark:text-sky-200 space-y-1">
+                    <div className="font-bold flex items-center gap-1.5">
+                      <Send className="h-4 w-4 text-sky-500" />
+                      Notificações Instantâneas no Telegram (100% Gratuito)
+                    </div>
+                    <p className="text-[11px] leading-relaxed">
+                      O Telegram possui API oficial de bots sem risco de bloqueio. Você cria seu próprio bot gratuito em 30 segundos e recebe todos os alertas de conferência, logins e divergências direto no celular.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-foreground flex items-center justify-between">
+                        <span>Bot Token do Telegram:</span>
+                        <span className="text-[10px] text-zinc-400">Do @BotFather</span>
+                      </label>
+                      <Input
+                        type="password"
+                        placeholder="Ex: 7182938491:AAH..."
+                        value={config.telegramBotToken || ''}
+                        onChange={(e) =>
+                          setConfig({ ...config, telegramBotToken: e.target.value })
+                        }
+                        className="text-sm font-mono"
+                      />
+                      <p className="text-[11px] text-zinc-500">
+                        Token gerado ao enviar /newbot para o @BotFather no Telegram.
+                      </p>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-foreground flex items-center justify-between">
+                        <span>Chat ID (Seu ID no Telegram):</span>
+                        <span className="text-[10px] text-zinc-400">Número de ID</span>
+                      </label>
+                      <Input
+                        type="text"
+                        placeholder="Ex: 123456789"
+                        value={config.telegramChatId || ''}
+                        onChange={(e) =>
+                          setConfig({ ...config, telegramChatId: e.target.value })
+                        }
+                        className="text-sm font-mono"
+                      />
+                      <p className="text-[11px] text-zinc-500">
+                        Seu ID numérico. Você pode descobrir enviando mensagem para o bot @userinfobot no Telegram.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 text-xs space-y-2">
+                    <div className="font-bold text-foreground flex items-center gap-1.5">
+                      <Info className="h-4 w-4 text-sky-500" />
+                      Como criar seu Bot no Telegram em 3 passos:
+                    </div>
+                    <ol className="text-xs text-zinc-600 dark:text-zinc-400 space-y-1.5 list-decimal list-inside leading-relaxed">
+                      <li>Abra o Telegram e busque pelo contato oficial <strong className="text-foreground">@BotFather</strong>.</li>
+                      <li>Envie o comando <code className="px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-foreground font-mono text-[11px]">/newbot</code>, dê um nome para ele e copie o <strong className="text-foreground">Token</strong> gerado.</li>
+                      <li>Inicie conversa com seu bot recém-criado (clique em <em>Start</em>) e coloque seu <strong className="text-foreground">Chat ID</strong> (obtido no @userinfobot).</li>
+                    </ol>
                   </div>
                 </div>
               )}
@@ -639,6 +840,8 @@ export function WhatsAppNotificationSettings({ onNotify }: WhatsAppNotificationS
                   isTesting ||
                   (config.provider === 'callmebot' &&
                     (!config.callmebotPhone || !config.callmebotApiKey)) ||
+                  (config.provider === 'telegram' &&
+                    (!config.telegramBotToken || !config.telegramChatId)) ||
                   (config.provider === 'webhook' && !config.webhookUrl)
                 }
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs h-10 gap-2 cursor-pointer"

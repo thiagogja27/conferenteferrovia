@@ -22,12 +22,21 @@ import {
   type FirebaseRealtimeConfig,
   resetFirebase,
 } from '@/lib/firebase-realtime'
+import {
+  syncUserInDatabase,
+  subscribeUserDepartment,
+  type UserDepartment,
+  isDefaultSupervisor,
+  getLocalCachedDepartment,
+} from '@/lib/user-roles'
 
 interface AuthContextType {
   user: User | AuthUserProfile | null
   loading: boolean
   isAuthenticated: boolean
   isDemo: boolean
+  departamento: UserDepartment
+  isSupervisor: boolean
   isAuthModalOpen: boolean
   setIsAuthModalOpen: (open: boolean) => void
   requireLogin: boolean
@@ -47,10 +56,13 @@ const STORAGE_KEY_REQUIRE_LOGIN = 'vlic_require_login'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | AuthUserProfile | null>(null)
+  const [departamento, setDepartamento] = useState<UserDepartment>('colaborador')
   const [loading, setLoading] = useState(true)
   const [isDemo, setIsDemo] = useState(false)
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
   const [requireLogin, setRequireLoginState] = useState<boolean>(true)
+
+  const isSupervisor = departamento === 'supervisor'
 
   const setRequireLogin = (required: boolean) => {
     setRequireLoginState(required)
@@ -64,6 +76,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (auth) {
       unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
         if (firebaseUser) {
+          // Restaura imediatamente departamento do cache para evitar atraso visual de permissões
+          const cachedDept =
+            (firebaseUser.email && getLocalCachedDepartment(firebaseUser.email)) ||
+            getLocalCachedDepartment(firebaseUser.uid)
+
+          if (cachedDept) {
+            setDepartamento(cachedDept)
+          } else if (firebaseUser.email && isDefaultSupervisor(firebaseUser.email)) {
+            setDepartamento('supervisor')
+          }
+
           setUser(firebaseUser)
           setIsDemo(false)
           setLoading(false)
@@ -81,6 +104,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => unsubscribe()
   }, [])
+
+  // Sincroniza e escuta em tempo real o departamento do usuário no banco de dados (supervisor ou colaborador)
+  useEffect(() => {
+    if (!user) {
+      setDepartamento('colaborador')
+      return
+    }
+
+    let isMounted = true
+
+    // Atualiza imediatamente com cache ou regra padrão enquanto busca no banco
+    const cachedDept =
+      (user.email && getLocalCachedDepartment(user.email)) || getLocalCachedDepartment(user.uid)
+    if (cachedDept) {
+      setDepartamento(cachedDept)
+    } else if (user.email && isDefaultSupervisor(user.email)) {
+      setDepartamento('supervisor')
+    }
+
+    // Sincronização no banco de dados
+    syncUserInDatabase({
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+    }).then((initialDept) => {
+      if (isMounted) {
+        setDepartamento(initialDept)
+      }
+    })
+
+    // Listener em tempo real para mudanças no departamento efetuadas por supervisores no Firebase
+    const unsubDept = subscribeUserDepartment(
+      { uid: user.uid, email: user.email },
+      (liveDept) => {
+        if (isMounted) {
+          setDepartamento(liveDept)
+        }
+      }
+    )
+
+    return () => {
+      isMounted = false
+      unsubDept()
+    }
+  }, [user])
 
   const signIn = async (email: string, pass: string) => {
     try {
@@ -149,6 +217,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loading,
         isAuthenticated: !!user,
         isDemo,
+        departamento,
+        isSupervisor,
         isAuthModalOpen,
         setIsAuthModalOpen,
         requireLogin,

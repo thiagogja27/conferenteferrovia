@@ -3,6 +3,7 @@ import {
   getDatabase,
   ref,
   set,
+  update,
   push,
   onValue,
   off,
@@ -496,24 +497,40 @@ export async function logInputedFiles(
   records.forEach((rec) => {
     localInputFiles.unshift(rec)
   })
-  if (localInputFiles.length > 500) {
-    localInputFiles.length = 500
+  if (localInputFiles.length > 2000) {
+    localInputFiles.length = 2000
   }
   persistLocalInputFiles()
   localSubscribersInputFiles.forEach((cb) => cb([...localInputFiles]))
 
-  // Envia para o Firebase se conectado
+  // Envia para o Firebase em lote atômico se conectado
   const db = getDatabaseInstance()
   if (db) {
     try {
       const filesRef = ref(db, 'vlic_telemetry/input_files')
+      const updates: Record<string, any> = {}
+
       for (const rec of records) {
         const newRef = push(filesRef)
-        await set(newRef, {
+        const key = newRef.key || rec.id
+        updates[`vlic_telemetry/input_files/${key}`] = {
           ...rec,
-          id: newRef.key || rec.id,
+          id: key,
           timestamp: serverTimestamp(),
-        })
+        }
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await update(ref(db), updates)
+      }
+
+      // Atualiza contador consolidado de notas em metrics de forma atômica
+      try {
+        const totalItemsInBatch = records.reduce((acc, r) => acc + (r.itemsCount || 1), 0)
+        const metricsRef = ref(db, 'vlic_telemetry/metrics/totalNotesProcessed')
+        runTransaction(metricsRef, (curr) => (curr || 0) + totalItemsInBatch).catch(() => {})
+      } catch (e) {
+        // non-blocking
       }
     } catch (err) {
       console.warn('Erro ao registrar arquivos inputados no Firebase:', err)
@@ -521,15 +538,19 @@ export async function logInputedFiles(
   }
 }
 
-// Assinatura de lista de arquivos inputados
+// Assinatura de lista de arquivos inputados (por padrão ilimitado ou com limite configurável)
 export function subscribeToInputedFiles(
   callback: (files: InputedFileRecord[]) => void,
-  limitCount: number = 300
+  limitCount: number = 0
 ): () => void {
   const db = getDatabaseInstance()
   if (db) {
     try {
-      const filesRef = query(ref(db, 'vlic_telemetry/input_files'), limitToLast(limitCount))
+      const filesRef =
+        limitCount && limitCount > 0
+          ? query(ref(db, 'vlic_telemetry/input_files'), limitToLast(limitCount))
+          : ref(db, 'vlic_telemetry/input_files')
+
       const unsubscribe = onValue(
         filesRef,
         (snapshot) => {
@@ -573,18 +594,18 @@ export function subscribeToInputedFiles(
   }
 }
 
-// Assinatura de lista de atividades em tempo real
+// Assinatura de lista de atividades em tempo real (por padrão sem limite ou com limite configurável)
 export function subscribeToActivities(
   callback: (activities: RealtimeActivity[]) => void,
-  limitCount: number = 300
+  limitCount: number = 0
 ): () => void {
   const db = getDatabaseInstance()
   if (db) {
     try {
-      const activitiesRef = query(
-        ref(db, 'vlic_telemetry/activities'),
-        limitToLast(limitCount)
-      )
+      const activitiesRef =
+        limitCount && limitCount > 0
+          ? query(ref(db, 'vlic_telemetry/activities'), limitToLast(limitCount))
+          : ref(db, 'vlic_telemetry/activities')
 
       const unsubscribe = onValue(
         activitiesRef,

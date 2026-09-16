@@ -41,6 +41,7 @@ import {
   Info,
   Layers,
   ArrowUpDown,
+  Loader2,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import {
@@ -51,6 +52,7 @@ import {
   subscribeToLatestConferenceDashboard,
   subscribeToConferenceDashboardHistory,
   deleteConferenceDashboardSession,
+  deleteLiveConferenceDashboard,
   clearConferenceDashboardHistory,
 } from '@/lib/conference-dashboard-sync'
 import {
@@ -58,6 +60,8 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
+  DialogFooter,
 } from '@/components/ui/dialog'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -81,12 +85,26 @@ interface SelectedGroupModal {
   notes: ConferenceNoteSummary[]
 }
 
+interface DeleteConfirmationState {
+  type: 'live' | 'session' | 'all'
+  id: string
+  title: string
+  operator?: string
+  date?: string
+  notasCount?: number
+}
+
 export function ConferenceMirrorDashboard() {
   const [latestLiveSnapshot, setLatestLiveSnapshot] = useState<ConferenceDashboardSnapshot | null>(null)
   const [historyList, setHistoryList] = useState<ConferenceDashboardSnapshot[]>([])
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | 'LIVE'>('LIVE')
   const [isLiveMode, setIsLiveMode] = useState<boolean>(true)
   const [showHistoryPanel, setShowHistoryPanel] = useState<boolean>(false)
+
+  // Estado para confirmação de exclusão em modal (sem window.confirm)
+  const [confirmDelete, setConfirmDelete] = useState<DeleteConfirmationState | null>(null)
+  const [isDeleting, setIsDeleting] = useState<boolean>(false)
+  const [deleteSuccessMessage, setDeleteSuccessMessage] = useState<string | null>(null)
 
   // Filtros de busca no histórico
   const [historySearchQuery, setHistorySearchQuery] = useState<string>('')
@@ -122,12 +140,49 @@ export function ConferenceMirrorDashboard() {
 
   // Snapshot ativo para visualização: Ao Vivo ou uma sessão histórica selecionada
   const activeSnapshot: ConferenceDashboardSnapshot | null = useMemo(() => {
-    if (isLiveMode || selectedSnapshotId === 'LIVE') {
-      return latestLiveSnapshot || (historyList.length > 0 ? historyList[0] : null)
+    if (selectedSnapshotId === 'LIVE' || isLiveMode) {
+      return latestLiveSnapshot
     }
     const found = historyList.find((h) => h.id === selectedSnapshotId)
-    return found || latestLiveSnapshot || null
+    return found || null
   }, [isLiveMode, selectedSnapshotId, latestLiveSnapshot, historyList])
+
+  // Executa a exclusão solicitada no modal
+  const handleExecuteDelete = async () => {
+    if (!confirmDelete) return
+    setIsDeleting(true)
+    try {
+      if (confirmDelete.type === 'live') {
+        await deleteLiveConferenceDashboard()
+        setLatestLiveSnapshot(null)
+        setSelectedSnapshotId('LIVE')
+        setIsLiveMode(true)
+        setDeleteSuccessMessage('Espelho ao vivo excluído com sucesso!')
+      } else if (confirmDelete.type === 'session') {
+        await deleteConferenceDashboardSession(confirmDelete.id)
+        if (selectedSnapshotId === confirmDelete.id) {
+          setSelectedSnapshotId('LIVE')
+          setIsLiveMode(true)
+        }
+        setDeleteSuccessMessage('Sessão histórica excluída com sucesso!')
+      } else if (confirmDelete.type === 'all') {
+        await clearConferenceDashboardHistory()
+        setLatestLiveSnapshot(null)
+        setHistoryList([])
+        setSelectedSnapshotId('LIVE')
+        setIsLiveMode(true)
+        setDeleteSuccessMessage('Todos os espelhos foram removidos com sucesso!')
+      }
+    } catch (err) {
+      console.error('Erro ao excluir espelho de conferência:', err)
+    } finally {
+      setIsDeleting(false)
+      setConfirmDelete(null)
+      setTimeout(() => {
+        setDeleteSuccessMessage(null)
+      }, 4000)
+    }
+  }
 
   // Lista de operadores disponíveis no histórico para o filtro
   const availableOperators = useMemo(() => {
@@ -294,6 +349,22 @@ export function ConferenceMirrorDashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Alerta de Feedback de Sucesso ao Excluir */}
+      {deleteSuccessMessage && (
+        <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 rounded-xl text-xs text-emerald-800 dark:text-emerald-200 flex items-center justify-between gap-2 shadow-xs animate-in fade-in slide-in-from-top duration-300">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="font-semibold">{deleteSuccessMessage}</span>
+          </div>
+          <button
+            onClick={() => setDeleteSuccessMessage(null)}
+            className="text-emerald-600 hover:text-emerald-800 dark:hover:text-emerald-300 text-xs font-bold px-2 py-0.5 rounded cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* ========================================================================= */}
       {/* CABEÇALHO DO ESPELHO: STATUS AO VIVO vs CONSULTA HISTÓRICA                */}
       {/* ========================================================================= */}
@@ -391,16 +462,38 @@ export function ConferenceMirrorDashboard() {
             </Button>
 
             {activeSnapshot && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={exportFullSessionToExcel}
-                className="bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
-                title="Exportar planilha Excel completa deste dashboard espelhado"
-              >
-                <Download className="h-3.5 w-3.5 text-emerald-600" />
-                <span className="hidden sm:inline">Exportar Excel</span>
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={exportFullSessionToExcel}
+                  className="bg-emerald-50 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
+                  title="Exportar planilha Excel completa deste dashboard espelhado"
+                >
+                  <Download className="h-3.5 w-3.5 text-emerald-600" />
+                  <span className="hidden sm:inline">Exportar Excel</span>
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setConfirmDelete({
+                      type: isLiveMode ? 'live' : 'session',
+                      id: activeSnapshot.id,
+                      title: activeSnapshot.title || 'Espelho de Conferência',
+                      operator: activeSnapshot.operatorName,
+                      date: `${activeSnapshot.dateFormatted} às ${activeSnapshot.timeFormatted}`,
+                      notasCount: activeSnapshot.totalNotas,
+                    })
+                  }}
+                  className="bg-red-50/80 text-red-700 hover:bg-red-100 dark:bg-red-950/40 dark:text-red-300 border-red-200 dark:border-red-900/60 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                  title={isLiveMode ? "Excluir espelho ao vivo em exibição" : "Excluir esta sessão histórica"}
+                >
+                  <Trash2 className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
+                  <span>Excluir Espelho</span>
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -424,11 +517,13 @@ export function ConferenceMirrorDashboard() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    if (window.confirm('Deseja limpar todo o histórico de dashboards de conferência salvos?')) {
-                      clearConferenceDashboardHistory()
-                    }
+                    setConfirmDelete({
+                      type: 'all',
+                      id: 'ALL',
+                      title: 'Limpar Todo o Histórico de Espelhos',
+                    })
                   }}
-                  className="text-[11px] text-zinc-500 hover:text-red-600 flex items-center gap-1 p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md cursor-pointer"
+                  className="text-[11px] text-zinc-500 hover:text-red-600 flex items-center gap-1 p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md cursor-pointer transition-colors"
                   title="Limpar histórico de dashboards"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -553,11 +648,16 @@ export function ConferenceMirrorDashboard() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
-                            if (window.confirm('Excluir esta sessão histórica?')) {
-                              deleteConferenceDashboardSession(item.id)
-                            }
+                            setConfirmDelete({
+                              type: 'session',
+                              id: item.id,
+                              title: item.title || 'Sessão Histórica',
+                              operator: item.operatorName,
+                              date: `${item.dateFormatted} às ${item.timeFormatted}`,
+                              notasCount: item.totalNotas,
+                            })
                           }}
-                          className="p-1 text-zinc-400 hover:text-red-500 transition-colors cursor-pointer"
+                          className="p-1 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 rounded transition-colors cursor-pointer"
                           title="Excluir sessão"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -574,14 +674,44 @@ export function ConferenceMirrorDashboard() {
 
       {/* Se não houver nenhum snapshot carregado ainda */}
       {!activeSnapshot ? (
-        <div className="bg-white dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-800 rounded-2xl p-12 text-center space-y-3">
-          <Package className="h-10 w-10 text-zinc-400 mx-auto opacity-50" />
-          <h3 className="text-base font-bold text-zinc-700 dark:text-zinc-300">
-            Nenhum Dashboard de Conferência Espelhado no Momento
-          </h3>
-          <p className="text-xs text-zinc-500 max-w-md mx-auto">
-            Assim que qualquer usuário fizer upload de arquivos ou abrir a aba "Gráficos / Dashboard" no Painel de Conferência, o espelho em tempo real será projetado e transmitido aqui instantaneamente.
-          </p>
+        <div className="bg-white dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-800 rounded-2xl p-10 sm:p-12 text-center space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-zinc-800/80 flex items-center justify-center mx-auto text-zinc-400 shadow-xs">
+            <Package className="h-6 w-6" />
+          </div>
+          <div className="space-y-1.5">
+            <h3 className="text-base font-bold text-zinc-800 dark:text-zinc-200">
+              Nenhum Espelho de Conferência em Exibição
+            </h3>
+            <p className="text-xs text-zinc-500 max-w-md mx-auto leading-relaxed">
+              Assim que qualquer operador realizar uma conferência ou abrir a aba "Gráficos / Dashboard", o espelho ao vivo será transmitido aqui em tempo real.
+            </p>
+          </div>
+
+          {historyList.length > 0 && (
+            <div className="pt-2 flex flex-wrap items-center justify-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSelectedSnapshotId(historyList[0].id)
+                  setIsLiveMode(false)
+                }}
+                className="text-xs font-semibold gap-1.5 cursor-pointer bg-zinc-50 hover:bg-zinc-100 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+              >
+                <History className="h-3.5 w-3.5 text-indigo-500" />
+                Visualizar Última Sessão Salva ({historyList[0].dateFormatted})
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowHistoryPanel(true)}
+                className="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 gap-1 cursor-pointer"
+              >
+                Consultar Histórico ({historyList.length})
+                <ChevronDown className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -1556,6 +1686,99 @@ export function ConferenceMirrorDashboard() {
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ========================================================================= */}
+      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO DE ESPELHO (SEM window.confirm)          */}
+      {/* ========================================================================= */}
+      <Dialog open={!!confirmDelete} onOpenChange={(open) => !open && !isDeleting && setConfirmDelete(null)}>
+        <DialogContent className="max-w-md p-6">
+          <DialogHeader className="pb-2">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-950/60 flex items-center justify-center shrink-0 text-red-600 dark:text-red-400">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                  {confirmDelete?.type === 'all'
+                    ? 'Limpar Todo o Histórico de Espelhos?'
+                    : confirmDelete?.type === 'live'
+                    ? 'Excluir Espelho em Tempo Real?'
+                    : 'Excluir Sessão Histórica do Espelho?'}
+                </DialogTitle>
+                <DialogDescription className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  {confirmDelete?.type === 'all'
+                    ? 'Esta ação apagará permanentemente todos os espelhos e históricos salvos no banco de dados e sincronizará com todas as abas.'
+                    : 'Esta ação removerá permanentemente o espelho e todas as suas notas fiscais conferidas deste painel.'}
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          {confirmDelete && confirmDelete.type !== 'all' && (
+            <div className="my-2 p-3 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl space-y-1.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500 font-medium">Sessão:</span>
+                <span className="font-bold text-foreground truncate max-w-[220px]">{confirmDelete.title}</span>
+              </div>
+              {confirmDelete.operator && (
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium">Operador:</span>
+                  <span className="font-semibold text-zinc-800 dark:text-zinc-200">{confirmDelete.operator}</span>
+                </div>
+              )}
+              {confirmDelete.date && (
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium">Data / Hora:</span>
+                  <span className="font-mono text-zinc-700 dark:text-zinc-300">{confirmDelete.date}</span>
+                </div>
+              )}
+              {typeof confirmDelete.notasCount === 'number' && (
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium">Notas Fiscais:</span>
+                  <span className="font-bold text-indigo-600 dark:text-indigo-400">{confirmDelete.notasCount} notas</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isDeleting}
+              onClick={() => setConfirmDelete(null)}
+              className="text-xs cursor-pointer"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={isDeleting}
+              onClick={handleExecuteDelete}
+              className="bg-red-600 hover:bg-red-700 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Excluindo...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>
+                    {confirmDelete?.type === 'all'
+                      ? 'Sim, Limpar Tudo'
+                      : 'Sim, Excluir Espelho'}
+                  </span>
+                </>
+              )}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

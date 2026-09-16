@@ -3,6 +3,8 @@ import { useAuth } from '@/context/auth-context'
 import {
   LogOut,
   ShieldCheck,
+  Crown,
+  UserCheck,
 } from 'lucide-react'
 
 export function UserProfileHeader() {
@@ -10,6 +12,8 @@ export function UserProfileHeader() {
     user,
     isAuthenticated,
     signOutUser,
+    departamento,
+    isSupervisor,
   } = useAuth()
 
   const [showDropdown, setShowDropdown] = useState(false)
@@ -44,7 +48,7 @@ export function UserProfileHeader() {
                 className="h-6 w-6 rounded-full object-cover border border-zinc-200 dark:border-zinc-700"
               />
             ) : (
-              <div className="h-6 w-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-bold">
+              <div className={`h-6 w-6 rounded-full ${isSupervisor ? 'bg-purple-600' : 'bg-indigo-600'} text-white flex items-center justify-center text-[10px] font-bold`}>
                 {initials || 'OP'}
               </div>
             )}
@@ -55,9 +59,19 @@ export function UserProfileHeader() {
             <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-1 block max-w-[130px]">
               {displayName}
             </span>
-            <span className="text-[10px] text-zinc-500 dark:text-zinc-400 block -mt-0.5">
-              Firebase Auth
-            </span>
+            <div className="flex items-center gap-1 -mt-0.5">
+              {isSupervisor ? (
+                <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 flex items-center gap-0.5">
+                  <Crown className="h-2.5 w-2.5" />
+                  Supervisor
+                </span>
+              ) : (
+                <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 flex items-center gap-0.5">
+                  <UserCheck className="h-2.5 w-2.5" />
+                  Colaborador
+                </span>
+              )}
+            </div>
           </div>
         </button>
 
@@ -68,17 +82,43 @@ export function UserProfileHeader() {
               className="fixed inset-0 z-40"
               onClick={() => setShowDropdown(false)}
             />
-            <div className="absolute right-0 mt-1.5 w-56 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl z-50 p-2 text-xs animate-in fade-in-50 zoom-in-95">
-              <div className="p-2.5 bg-zinc-50 dark:bg-zinc-800/60 rounded-xl mb-1.5">
-                <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 block">
-                  {displayName}
-                </span>
+            <div className="absolute right-0 mt-1.5 w-64 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xl z-50 p-2 text-xs animate-in fade-in-50 zoom-in-95">
+              <div className="p-2.5 bg-zinc-50 dark:bg-zinc-800/60 rounded-xl mb-1.5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100 block">
+                    {displayName}
+                  </span>
+                  {isSupervisor ? (
+                    <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/80 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                      Supervisor
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border border-zinc-300 dark:border-zinc-700">
+                      Colaborador
+                    </span>
+                  )}
+                </div>
                 <span className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate block">
                   {email}
                 </span>
-                <div className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                <div className="pt-1 border-t border-zinc-200 dark:border-zinc-700/60">
+                  <div className="text-[10px] text-zinc-600 dark:text-zinc-300 font-medium">
+                    {isSupervisor ? (
+                      <span className="text-purple-600 dark:text-purple-400 font-semibold flex items-center gap-1">
+                        <Crown className="h-3 w-3" />
+                        Acesso total liberado (Aba Monitor ativa)
+                      </span>
+                    ) : (
+                      <span className="text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
+                        <UserCheck className="h-3 w-3" />
+                        Acesso operacional (Aba Monitor restrita)
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  Conectado via Firebase Auth
+                  Conectado ao Banco de Dados
                 </div>
               </div>
 

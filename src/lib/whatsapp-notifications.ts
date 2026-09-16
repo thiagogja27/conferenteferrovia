@@ -1,7 +1,7 @@
 import { ref, get, set, onValue, type Database } from 'firebase/database'
 import { getDatabaseInstance } from './firebase-realtime'
 
-export type WhatsAppProvider = 'callmebot' | 'webhook'
+export type WhatsAppProvider = 'callmebot' | 'telegram' | 'webhook'
 export type WhatsAppEventType = 'login' | 'conference' | 'rumo' | 'divergence' | 'test'
 
 export interface WhatsAppNotificationConfig {
@@ -11,6 +11,10 @@ export interface WhatsAppNotificationConfig {
   // CallMeBot (100% Gratuito)
   callmebotPhone: string // Ex: 5513999999999
   callmebotApiKey: string // Chave de API enviada pelo bot do CallMeBot
+
+  // Telegram Bot (Alternativa 100% Estável, Gratuita e Oficial)
+  telegramBotToken?: string // Token do Bot (@BotFather)
+  telegramChatId?: string // ID do chat ou usuário
 
   // Webhook Personalizado (n8n, Make, Z-API, Evolution API, Zapier)
   webhookUrl: string
@@ -212,42 +216,46 @@ export async function sendWhatsAppMessage(
         throw new Error('Telefone e ApiKey do CallMeBot são obrigatórios para envio.')
       }
 
-      // Tenta rota do servidor primeiro (para evitar CORS do navegador)
-      let sentViaServer = false
-      try {
-        const res = await fetch('/api/send-whatsapp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            provider: 'callmebot',
-            phone,
-            apiKey,
-            text,
-          }),
-        })
+      const res = await fetch('/api/send-whatsapp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'callmebot',
+          phone,
+          apiKey,
+          text,
+        }),
+      })
 
-        const data = await res.json()
-        if (res.ok && data.success) {
-          success = true
-          responseMsg = data.message || 'Mensagem enviada com sucesso no WhatsApp!'
-          sentViaServer = true
-        } else if (!res.ok) {
-          throw new Error(data.error || 'Erro retornado pelo servidor ao enviar WhatsApp.')
-        }
-      } catch (serverErr: any) {
-        console.warn('Tentativa via /api/send-whatsapp falhou, tentando fallback direto:', serverErr)
+      const data = await res.json()
+      if (res.ok && data.success) {
+        success = true
+        responseMsg = data.message || 'Mensagem enviada com sucesso no WhatsApp!'
+      } else {
+        throw new Error(data.error || 'Falha ao enviar mensagem via CallMeBot.')
+      }
+    } else if (config.provider === 'telegram') {
+      if (!config.telegramBotToken || !config.telegramChatId) {
+        throw new Error('Token do Bot e Chat ID do Telegram são obrigatórios para envio.')
       }
 
-      // Fallback direto do navegador caso o endpoint não responda
-      if (!sentViaServer) {
-        const encodedText = encodeURIComponent(text)
-        const callmebotUrl = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(
-          phone
-        )}&text=${encodedText}&apikey=${encodeURIComponent(apiKey)}`
+      const res = await fetch('/api/send-whatsapp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'telegram',
+          telegramBotToken: config.telegramBotToken,
+          telegramChatId: config.telegramChatId,
+          text,
+        }),
+      })
 
-        const clientRes = await fetch(callmebotUrl, { mode: 'no-cors' })
+      const data = await res.json()
+      if (res.ok && data.success) {
         success = true
-        responseMsg = 'Comando de envio encaminhado via CallMeBot!'
+        responseMsg = data.message || 'Mensagem enviada com sucesso no Telegram!'
+      } else {
+        throw new Error(data.error || 'Falha ao enviar mensagem no Telegram.')
       }
     } else if (config.provider === 'webhook') {
       if (!config.webhookUrl || !config.webhookUrl.startsWith('http')) {
@@ -404,14 +412,51 @@ export async function testWhatsAppConnection(
   config: WhatsAppNotificationConfig
 ): Promise<{ success: boolean; message: string }> {
   const now = new Date()
+  let channelName = 'CallMeBot WhatsApp'
+  if (config.provider === 'telegram') channelName = 'Telegram Bot Oficial'
+  else if (config.provider === 'webhook') channelName = 'Webhook Customizado'
+
   const testMessage =
-    `✅ *TESTE DE INTEGRAÇÃO WHATSAPP VLIC*\n` +
+    `✅ *TESTE DE INTEGRAÇÃO - VLIC*\n` +
     `━━━━━━━━━━━━━━━━━━━━\n` +
-    `Seu canal de notificações para o sistema de conferência fiscal foi configurado com sucesso!\n\n` +
+    `Seu canal de notificações para o sistema de conferência fiscal foi configurado!\n\n` +
     `🕒 *Data/Hora:* ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR')}\n` +
-    `📡 *Canal:* ${config.provider === 'callmebot' ? 'CallMeBot WhatsApp' : 'Webhook Customizado'}\n` +
+    `📡 *Canal:* ${channelName}\n` +
     `━━━━━━━━━━━━━━━━━━━━\n` +
     `Você receberá alertas automáticos sobre logins, conferências e processamento de composições conforme configurado.`
 
   return await sendWhatsAppMessage(testMessage, config, 'test')
 }
+
+/**
+ * Consulta em tempo real o status dos servidores do CallMeBot
+ */
+export async function checkCallMeBotStatus(
+  phone: string,
+  apiKey: string
+): Promise<{
+  online: boolean
+  keyValid: boolean
+  isMaintenance: boolean
+  message: string
+  raw?: string
+  statusCode?: number
+}> {
+  try {
+    const res = await fetch('/api/check-callmebot-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, apiKey }),
+    })
+    const data = await res.json()
+    return data
+  } catch (err: any) {
+    return {
+      online: false,
+      keyValid: false,
+      isMaintenance: false,
+      message: err.message || 'Falha ao consultar status do CallMeBot.',
+    }
+  }
+}
+

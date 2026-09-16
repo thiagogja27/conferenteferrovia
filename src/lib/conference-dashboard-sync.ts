@@ -22,7 +22,7 @@ import {
   formatDateBR,
   formatTimeBR,
 } from '@/lib/firebase-realtime'
-import { ref, set, push, onValue, off, query, limitToLast, remove } from 'firebase/database'
+import { ref, set, push, onValue, off, query, limitToLast, remove, get } from 'firebase/database'
 
 export interface ConferenceNoteSummary {
   fileName: string
@@ -829,6 +829,9 @@ export function subscribeToLatestConferenceDashboard(
       if (sanitized) {
         callback(sanitized)
       }
+    } else if (event.data?.type === 'DASHBOARD_DELETED') {
+      const current = getStoredLatestSnapshot()
+      callback(current)
     }
   }
   if (broadcastChannel) {
@@ -891,6 +894,9 @@ export function subscribeToConferenceDashboardHistory(
         .map((item: any) => sanitizeSnapshot(item))
         .filter((item: any): item is ConferenceDashboardSnapshot => item !== null)
       callback(realHistory)
+    } else if (event.data?.type === 'DASHBOARD_DELETED') {
+      const realHistory = getStoredHistory()
+      callback(realHistory)
     }
   }
   if (broadcastChannel) {
@@ -908,12 +914,12 @@ export function subscribeToConferenceDashboardHistory(
         historyQuery,
         (snap) => {
           if (!snap.exists()) {
-            callback(getStoredHistory())
+            callback([])
             return
           }
           const val = snap.val()
           if (!val || typeof val !== 'object') {
-            callback(getStoredHistory())
+            callback([])
             return
           }
           const list: ConferenceDashboardSnapshot[] = Object.keys(val)
@@ -942,26 +948,113 @@ export function subscribeToConferenceDashboardHistory(
 }
 
 /**
- * Remove uma sessão histórica específica
+ * Remove uma sessão histórica específica de conferência
  */
 export async function deleteConferenceDashboardSession(id: string): Promise<void> {
+  // 1. Atualiza histórico local
   const currentHistory = getStoredHistory().filter((item) => item.id !== id)
   if (typeof window !== 'undefined') {
     localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(currentHistory))
   }
   historyListeners.forEach((cb) => cb(currentHistory))
 
+  // 2. Se a sessão excluída for a que estava projetada ao vivo, limpa o espelho ao vivo também
+  const latest = getStoredLatestSnapshot()
+  let wasLatest = false
+  if (latest && latest.id === id) {
+    wasLatest = true
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(STORAGE_KEY_LATEST)
+    }
+    latestListeners.forEach((cb) => cb(null))
+  }
+
+  // 3. Notifica outras abas via BroadcastChannel
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.postMessage({
+        type: 'DASHBOARD_DELETED',
+        deletedId: id,
+        wasLatest,
+        history: currentHistory,
+      })
+    } catch (e) {}
+  }
+
+  // 4. Remove do Firebase Realtime Database
   const db = getDatabaseInstance()
   if (db) {
     try {
       const itemRef = ref(db, `vlic_telemetry/conference_dashboards/${id}`)
       await remove(itemRef)
-    } catch (e) {}
+
+      // Se o latest no banco tiver este mesmo id, remove também
+      const latestRef = ref(db, 'vlic_telemetry/latest_conference_dashboard')
+      const latestSnap = await get(latestRef)
+      if (latestSnap.exists()) {
+        const val = latestSnap.val()
+        if (val?.id === id) {
+          await remove(latestRef)
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao remover sessão no Firebase:', e)
+    }
   }
 }
 
 /**
- * Limpa todo o histórico de sessões
+ * Remove o espelho ao vivo atualmente projetado no Monitor Realtime
+ */
+export async function deleteLiveConferenceDashboard(): Promise<void> {
+  const latest = getStoredLatestSnapshot()
+  const latestId = latest?.id
+
+  // 1. Limpa espelho local
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(STORAGE_KEY_LATEST)
+  }
+  latestListeners.forEach((cb) => cb(null))
+
+  // 2. Se o espelho também estava no histórico, remove-o
+  let updatedHistory = getStoredHistory()
+  if (latestId) {
+    updatedHistory = updatedHistory.filter((item) => item.id !== latestId)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(updatedHistory))
+    }
+    historyListeners.forEach((cb) => cb(updatedHistory))
+  }
+
+  // 3. Transmite via BroadcastChannel
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.postMessage({
+        type: 'DASHBOARD_DELETED',
+        deletedId: latestId,
+        wasLatest: true,
+        history: updatedHistory,
+      })
+    } catch (e) {}
+  }
+
+  // 4. Remove do Firebase
+  const db = getDatabaseInstance()
+  if (db) {
+    try {
+      const latestRef = ref(db, 'vlic_telemetry/latest_conference_dashboard')
+      await remove(latestRef)
+      if (latestId) {
+        await remove(ref(db, `vlic_telemetry/conference_dashboards/${latestId}`))
+      }
+    } catch (e) {
+      console.warn('Erro ao remover espelho ao vivo no Firebase:', e)
+    }
+  }
+}
+
+/**
+ * Limpa todo o histórico de sessões e o espelho ao vivo
  */
 export async function clearConferenceDashboardHistory(): Promise<void> {
   if (typeof window !== 'undefined') {
@@ -971,12 +1064,24 @@ export async function clearConferenceDashboardHistory(): Promise<void> {
   historyListeners.forEach((cb) => cb([]))
   latestListeners.forEach((cb) => cb(null))
 
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.postMessage({
+        type: 'DASHBOARD_DELETED',
+        clearedAll: true,
+        history: [],
+      })
+    } catch (e) {}
+  }
+
   const db = getDatabaseInstance()
   if (db) {
     try {
       await remove(ref(db, 'vlic_telemetry/conference_dashboards'))
       await remove(ref(db, 'vlic_telemetry/latest_conference_dashboard'))
-    } catch (e) {}
+    } catch (e) {
+      console.warn('Erro ao limpar histórico no Firebase:', e)
+    }
   }
 }
 
