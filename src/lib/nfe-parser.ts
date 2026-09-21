@@ -681,20 +681,9 @@ export function verifyChaveCNPJ(
   const isDestIE = destDigits.length === 12 || (destDigits.length >= 8 && destDigits.length <= 10) || (destDigits.length > 11 && destDigits.length < 14)
   const isEmitIE = emitDigits.length === 12 || (emitDigits.length >= 8 && emitDigits.length <= 10) || (emitDigits.length > 11 && emitDigits.length < 14)
 
-  if (isDestIE) {
-    // Se recebemos a IE no lugar do CNPJ do destinatário, usar o CNPJ do emitente/chave como referência se for mesma empresa
-    if (chaveCnpjRaw && (!emitDigits || emitDigits === chaveCnpjRaw)) {
-      destDigits = chaveCnpjRaw
-    }
-  }
-
+  // Se o emitDigits for uma Inscrição Estadual e não tivermos o CNPJ do emitente
   if (isEmitIE && chaveCnpjRaw) {
     emitDigits = chaveCnpjRaw
-  }
-
-  // Se destDigits não foi informado ou é vazio, mas emitDigits bate com a chave
-  if (!destDigits && emitDigits && emitDigits === chaveCnpjRaw) {
-    destDigits = emitDigits
   }
 
   const matchesEmitente = !!(
@@ -722,7 +711,8 @@ export function verifyChaveCNPJ(
       ? "IGUAIS"
       : "DIVERGENTES"
 
-  const isValid = matchesDestinatario || matchesEmitente
+  // CRÍTICO: isValid na auditoria reflete estritamente se a Chave confere com o Destinatário esperado
+  const isValid = matchesDestinatario
 
   let statusLabel = ""
   let details = ""
@@ -739,12 +729,14 @@ export function verifyChaveCNPJ(
   } else if (matchesDestinatario) {
     statusLabel = "IGUAIS (Chave = Destinatário)"
     details = `O CNPJ na Chave (${chaveCnpj}) é IGUAL ao CNPJ do Destinatário (${formattedDest}).`
-  } else if (matchesEmitente) {
-    statusLabel = "CONFERE COM EMITENTE"
-    details = `O CNPJ na Chave (${chaveCnpj}) é do EMITENTE da NF-e (${formattedEmit}). Destinatário: ${formattedDest}.`
   } else {
-    statusLabel = "DIVERGENTES (Chave ≠ Destinatário)"
-    details = `O CNPJ na Chave (${chaveCnpj}) é DIVERGENTE do Destinatário (${formattedDest}). (CNPJ do Remetente: ${formattedEmit}).`
+    // Quando o CNPJ da Chave NÃO bate com o Destinatário: É DIVERGENTE!
+    statusLabel = "DIVERGENTE (Chave ≠ Destinatário)"
+    if (matchesEmitente) {
+      details = `ATENÇÃO CRÍTICA: O CNPJ contido na Chave de Acesso (${chaveCnpj}) pertence ao EMITENTE (${formattedEmit}) e é DIVERGENTE do Destinatário (${formattedDest}).`
+    } else {
+      details = `ATENÇÃO CRÍTICA: O CNPJ contido na Chave (${chaveCnpj}) é DIVERGENTE tanto do Destinatário (${formattedDest}) quanto do Emitente (${formattedEmit}).`
+    }
   }
 
   return {

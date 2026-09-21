@@ -54,6 +54,9 @@ export function sanitizeDestinatarioNome(
   const combined = `${nome} ${rawCnpj || ''} ${fullText || ''}`.toUpperCase()
 
   // 2. Normalização corporativa de grandes clientes do setor agro / trading / usinas
+  if (combined.includes('BTG PACTUAL') || combined.includes('SERTRADING') || /04\.?626\.?426/i.test(combined)) {
+    return 'BTG PACTUAL COMMODITIES SERTRADING S.A.'
+  }
   if (combined.includes('TIETE') || combined.includes('TIETÊ') || /51\.?843\.?514/i.test(combined)) {
     return 'TIETE AGROINDUSTRIAL S.A.'
   }

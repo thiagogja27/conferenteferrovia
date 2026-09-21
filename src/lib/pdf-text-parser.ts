@@ -434,22 +434,43 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   let destNome = '';
   let destIE = '';
 
-  const destBlockMatch = text.match(/(?:DESTINATÁRIO\/REMETENTE|DESTINATARIO\/REMETENTE|DESTINATÁRIO|DESTINATARIO)([\s\S]{1,900})/i);
-  if (destBlockMatch) {
-    let block = destBlockMatch[1];
-    const endBlockIdx = block.search(/(?:CÁLCULO\s+DO\s+IMPOSTO|CALCULO\s+DO\s+IMPOSTO|BASE\s+DE\s+CÁLCULO|TRANSPORTADOR|DADOS\s+DOS\s+PRODUTOS)/i);
+  // Localizar especificamente o QUADRO de Destinatário / Remetente
+  // CRÍTICO: Evitar o canhoto do topo da página ("DESTINATÁRIO: ...")
+  let destBlock = '';
+  const quadroRegex = /(?:DESTINAT[AÁ]RIO\s*[\/\-]?\s*REMETENTE|DADOS\s+DO\s+DESTINAT[AÁ]RIO|IDENTIFICA[ÇC][ÃA]O\s+DO\s+DESTINAT[AÁ]RIO)([\s\S]{1,1600})/i;
+  const qMatch = text.match(quadroRegex);
+  if (qMatch) {
+    destBlock = qMatch[1];
+  } else {
+    // Fallback: procurar DESTINATÁRIO que NÃO seja o canhoto (não seguido por dois-pontos)
+    const altMatch = text.match(/DESTINAT[AÁ]RIO(?!\s*:)([\s\S]{1,1400})/i);
+    if (altMatch) {
+      destBlock = altMatch[1];
+    }
+  }
+
+  if (destBlock) {
+    const endBlockIdx = destBlock.search(/(?:CÁLCULO\s+DO\s+IMPOSTO|CALCULO\s+DO\s+IMPOSTO|BASE\s+DE\s+CÁLCULO|TRANSPORTADOR|DADOS\s+DOS\s+PRODUTOS)/i);
     if (endBlockIdx > 0) {
-      block = block.substring(0, endBlockIdx);
+      destBlock = destBlock.substring(0, endBlockIdx);
     }
 
-    // Extrair Inscrição Estadual específica do destinatário no bloco
-    const destIEMatch = block.match(/(?:INSCRIÇÃO\s*ESTADUAL|INSCRICAO\s*ESTADUAL|INSC\.?\s*ESTADUAL|I\.E\.|IE)[^\d]{1,15}(\d{8,15})/i);
+    // Isolar a primeira parte do quadro (Destinatário Principal) antes de "Informações do Local de Entrega"
+    let mainDestBlock = destBlock;
+    const entregaIdx = destBlock.search(/(?:INFORMA[ÇC][ÕO]ES\s+DO\s+LOCAL\s+DE\s+ENTREGA|LOCAL\s+DE\s+ENTREGA)/i);
+    if (entregaIdx > 0) {
+      mainDestBlock = destBlock.substring(0, entregaIdx);
+    }
+
+    // Extrair Inscrição Estadual específica do destinatário no bloco principal
+    const destIEMatch = mainDestBlock.match(/(?:INSCRIÇÃO\s*ESTADUAL|INSCRICAO\s*ESTADUAL|INSC\.?\s*ESTADUAL|I\.E\.|IE)[^\d]{1,15}(\d{8,15})/i)
+      || destBlock.match(/(?:INSCRIÇÃO\s*ESTADUAL|INSCRICAO\s*ESTADUAL|INSC\.?\s*ESTADUAL|I\.E\.|IE)[^\d]{1,15}(\d{8,15})/i);
     if (destIEMatch) {
       destIE = destIEMatch[1].trim();
     }
 
     // Extrair Nome / Razão Social do Destinatário
-    const nameMatch = block.match(/(?:NOME\s*\/\s*RAZÃO\s*SOCIAL|NOME\s*RAZAO\s*SOCIAL|RAZÃO\s*SOCIAL|RAZAO\s*SOCIAL|NOME)[\s\n\r:-]*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80})/i);
+    const nameMatch = mainDestBlock.match(/(?:NOME\s*\/\s*RAZÃO\s*SOCIAL|NOME\s*RAZAO\s*SOCIAL|RAZÃO\s*SOCIAL|RAZAO\s*SOCIAL|NOME)[\s\n\r:-]*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80})/i);
     if (nameMatch) {
       let raw = nameMatch[1].trim();
       const stopIdx = raw.search(/(?:ENDEREÇO|ENDEREC|BAIRRO|CNPJ|CPF|CEP|MUNICÍPIO|MUNICIPIO|UF|FONE|TELEFONE|INSCRIÇÃO|INSCRICAO|DATA|ENTRADA|SAIDA|SAÍDA|INSC|FASE)/i);
@@ -459,7 +480,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       destNome = raw.replace(/[:=\-.,;]+$/, '').trim();
     } else {
       // Fallback: pegar as primeiras linhas não vazias do bloco de destinatário que não sejam rótulos
-      const blockLines = block.split(/[\r\n]+/).map(l => l.trim()).filter(l => l.length > 3);
+      const blockLines = mainDestBlock.split(/[\r\n]+/).map(l => l.trim()).filter(l => l.length > 3);
       for (const line of blockLines) {
         if (!/^(?:DESTINAT|ENDERE|BAIRRO|MUNIC|CNPJ|CPF|CEP|INSC|UF|TELEFONE|FONE|DATA)/i.test(line)) {
           const stopIdx = line.search(/(?:ROD|RODOVIA|RUA|AV|AVENIDA|ALAMEDA|CNPJ|CPF|CEP)/i);
@@ -472,9 +493,11 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     // Limpar e sanitizar nome inicial capturado
     destNome = sanitizeDestinatarioNome(destNome, '', text);
 
-    // Buscar CNPJ/CPF formatado especificamente no bloco (com pontuação)
-    const formattedCnpjs = block.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g);
-    const formattedCpfs = block.match(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g);
+    // Buscar CNPJ/CPF formatado especificamente no bloco do destinatário
+    const formattedCnpjs = mainDestBlock.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g)
+      || destBlock.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g);
+    const formattedCpfs = mainDestBlock.match(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g)
+      || destBlock.match(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g);
 
     if (formattedCnpjs && formattedCnpjs.length > 0) {
       destCNPJ = formattedCnpjs[0].replace(/\D/g, '');
@@ -482,7 +505,8 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       destCNPJ = formattedCpfs[0].replace(/\D/g, '');
     } else {
       // Buscar após rótulo CNPJ / CPF garantindo não capturar Inscrição Estadual (IE)
-      const cnpjsInBlock = block.match(/(?:CNPJ\s*\/\s*CPF|CNPJ|CPF)[^\d]{1,50}(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}|\d{14}|\d{11})/i);
+      const cnpjsInBlock = mainDestBlock.match(/(?:CNPJ\s*\/\s*CPF|CNPJ|CPF)[^\d]{1,50}(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}|\d{14}|\d{11})/i)
+        || destBlock.match(/(?:CNPJ\s*\/\s*CPF|CNPJ|CPF)[^\d]{1,50}(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}|\d{14}|\d{11})/i);
       if (cnpjsInBlock) {
         const candidate = cnpjsInBlock[1].replace(/\D/g, '');
         // Garantir que não é a Inscrição Estadual
@@ -497,17 +521,18 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   if (!destCNPJ || destCNPJ === destIE || destCNPJ === emitIE || destCNPJ.length === 12) {
     const allCnpjsInText = text.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g);
     if (allCnpjsInText && allCnpjsInText.length > 0) {
-      // Se tiver mais de um, e o primeiro for o emitente, pegar o segundo (destinatário) ou o primeiro se for a mesma empresa
-      destCNPJ = allCnpjsInText.length > 1 ? allCnpjsInText[1].replace(/\D/g, '') : allCnpjsInText[0].replace(/\D/g, '');
+      // Se houver um CNPJ diferente do emitente, é o destinatário!
+      const nonEmit = allCnpjsInText.find(c => c.replace(/\D/g, '') !== emitCNPJRaw);
+      if (nonEmit) {
+        destCNPJ = nonEmit.replace(/\D/g, '');
+      } else {
+        destCNPJ = allCnpjsInText[0].replace(/\D/g, '');
+      }
     }
   }
 
-  // Se o destinatário for da mesma empresa do emitente (ex: São Martinho, remessa para exportação, transferência, etc)
-  if (!destCNPJ || destCNPJ === destIE || destCNPJ === emitIE || destCNPJ.length === 12) {
-    if (emitCNPJRaw && emitCNPJRaw.length === 14) {
-      destCNPJ = emitCNPJRaw;
-    }
-  }
+  // Se o destinatário continuar vazio, manter vazio e NÃO forçar o CNPJ do emitente
+  // (forçar o emitente mascara divergências graves de CNPJ!)
 
   if (!destIE && emitIE) {
     destIE = emitIE;

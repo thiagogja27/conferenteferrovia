@@ -276,25 +276,32 @@ export function ConferenceMirrorDashboard() {
   // Exportação para Excel (.xlsx) das notas do modal de drilldown
   const exportModalToExcel = () => {
     if (!selectedGroup) return
-    const exportData = (selectedGroup.notes || []).map((n) => ({
-      Número: n.numero,
-      Série: n.serie,
-      'Data Emissão': n.dataEmissao,
-      'Chave de Acesso': n.chave,
-      Emitente: n.emitNome,
-      'CNPJ Emitente': n.emitCNPJ,
-      Destinatário: n.destNome,
-      'CNPJ Destinatário': n.destCNPJ,
-      Produto: n.produto,
-      'Terminal Entrega': n.terminal,
-      Transbordo: n.transbordo,
-      'Vagão(ões)': n.allVagoesStr || '-',
-      'Peso Bruto (kg)': n.pesoNum,
-      'Valor Total (R$)': n.valorNum,
-      'Confronto Chave x CNPJ': n.confrontoChaveXDest,
-      'Placa Veículo': n.placa || '-',
-      'Info Complementar': n.infCpl || '-',
-    }))
+    const exportData = (selectedGroup.notes || []).map((n) => {
+      const chaveCnpj = n.chave && n.chave.length === 44 
+        ? n.chave.substring(6, 20).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') 
+        : 'N/I'
+
+      return {
+        Número: n.numero,
+        Série: n.serie,
+        'Data Emissão': n.dataEmissao,
+        'Chave de Acesso': n.chave,
+        'CNPJ na Chave': chaveCnpj,
+        'Destinatário CNPJ': n.destCNPJ,
+        'Destinatário': n.destNome,
+        'Confronto Chave x Destinatário': n.confrontoChaveXDest,
+        Emitente: n.emitNome,
+        'CNPJ Emitente': n.emitCNPJ,
+        Produto: n.produto,
+        'Terminal Entrega': n.terminal,
+        Transbordo: n.transbordo,
+        'Vagão(ões)': n.allVagoesStr || '-',
+        'Peso Bruto (kg)': n.pesoNum,
+        'Valor Total (R$)': n.valorNum,
+        'Placa Veículo': n.placa || '-',
+        'Info Complementar': n.infCpl || '-',
+      }
+    })
 
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()
@@ -306,24 +313,31 @@ export function ConferenceMirrorDashboard() {
   // Exportação completa da sessão de dashboard ativa
   const exportFullSessionToExcel = () => {
     if (!activeSnapshot) return
-    const exportData = (activeSnapshot.notes || []).map((n) => ({
-      Número: n.numero,
-      Série: n.serie,
-      'Data Emissão': n.dataEmissao,
-      'Chave de Acesso': n.chave,
-      Emitente: n.emitNome,
-      'CNPJ Emitente': n.emitCNPJ,
-      Destinatário: n.destNome,
-      'CNPJ Destinatário': n.destCNPJ,
-      Produto: n.produto,
-      'Terminal Entrega': n.terminal,
-      Transbordo: n.transbordo,
-      'Vagões Ferroviários': n.allVagoesStr || '-',
-      'Peso Bruto (kg)': n.pesoNum,
-      'Valor Total (R$)': n.valorNum,
-      'Status Chave x Destinatário': n.confrontoChaveXDest,
-      'Placa Veículo': n.placa || '-',
-    }))
+    const exportData = (activeSnapshot.notes || []).map((n) => {
+      const chaveCnpj = n.chave && n.chave.length === 44 
+        ? n.chave.substring(6, 20).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') 
+        : 'N/I'
+
+      return {
+        Número: n.numero,
+        Série: n.serie,
+        'Data Emissão': n.dataEmissao,
+        'Chave de Acesso': n.chave,
+        'CNPJ na Chave': chaveCnpj,
+        'Destinatário CNPJ': n.destCNPJ,
+        'Destinatário': n.destNome,
+        'Status Chave x Destinatário': n.confrontoChaveXDest,
+        Emitente: n.emitNome,
+        'CNPJ Emitente': n.emitCNPJ,
+        Produto: n.produto,
+        'Terminal Entrega': n.terminal,
+        Transbordo: n.transbordo,
+        'Vagões Ferroviários': n.allVagoesStr || '-',
+        'Peso Bruto (kg)': n.pesoNum,
+        'Valor Total (R$)': n.valorNum,
+        'Placa Veículo': n.placa || '-',
+      }
+    })
 
     const ws = XLSX.utils.json_to_sheet(exportData)
     const wb = XLSX.utils.book_new()

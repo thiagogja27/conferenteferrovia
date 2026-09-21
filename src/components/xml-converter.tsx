@@ -69,9 +69,12 @@ import {
   Radio,
   User,
   Lock,
+  MessageSquarePlus,
 } from 'lucide-react'
 import JSZip from 'jszip'
 import * as XLSX from 'xlsx'
+import { SuggestionsPanel } from '@/components/suggestions-panel'
+import { subscribeToSuggestions, type SuggestionMessage } from '@/lib/suggestions-service'
 
 interface ProcessedFile {
   fileName: string
@@ -211,6 +214,18 @@ export function XMLConverter() {
   const [showWorkflowGuide, setShowWorkflowGuide] = useState(true)
   const [selectedXmlModal, setSelectedXmlModal] = useState<{ fileName: string; content: string } | null>(null)
   const [copiedXml, setCopiedXml] = useState(false)
+  const [isSuggestionsModalOpen, setIsSuggestionsModalOpen] = useState(false)
+  const [suggestionsList, setSuggestionsList] = useState<SuggestionMessage[]>([])
+
+  useEffect(() => {
+    const unsub = subscribeToSuggestions((list) => {
+      setSuggestionsList(list)
+    })
+    return () => unsub()
+  }, [])
+
+  const answeredSuggestionsCount = suggestionsList.filter((s) => s.status === 'respondida').length
+  const pendingSuggestionsCount = suggestionsList.filter((s) => s.status === 'pendente').length
 
   // Proteção de rota interna para o Monitor Realtime (exclusivo para supervisores)
   useEffect(() => {
@@ -924,10 +939,48 @@ export function XMLConverter() {
     if (successfulFiles.length === 0) return;
 
     const dataToExport = [];
+    const divergentDataToExport: any[][] = [];
+
     const headers = [
-      "Arquivo", "Chave de Acesso", "CNPJ na Chave", "Validação CNPJ (Chave x Rem/Dest)", "Numero NFe", "Data Emissão",
-      "Emitente Nome", "Emitente CNPJ", "Destinatário Nome", "Destinatário CNPJ",
-      "Quantidade", "Valor Total", "Terminal de Entrega", "Transbordo", "Retirada", "Tipo Produto"
+      "Arquivo",
+      "Chave de Acesso",
+      "CNPJ na Chave",
+      "Destinatário CNPJ",
+      "Destinatário Razão Social",
+      "Validação CNPJ (Chave x Destinatário)",
+      "Confronto Chave vs Destinatário",
+      "Comprovação da Divergência / Detalhes",
+      "Emitente CNPJ",
+      "Emitente Razão Social",
+      "Numero NFe",
+      "Série",
+      "Data Emissão",
+      "Quantidade",
+      "Valor Total (R$)",
+      "Terminal de Entrega",
+      "Transbordo",
+      "Retirada",
+      "Tipo Produto"
+    ];
+
+    const divergentHeaders = [
+      "Arquivo",
+      "Chave de Acesso",
+      "CNPJ na Chave",
+      "Destinatário CNPJ",
+      "Destinatário Razão Social",
+      "Validação CNPJ (Chave x Destinatário)",
+      "Confronto Chave vs Destinatário",
+      "Comprovação da Divergência / Detalhes",
+      "Emitente CNPJ",
+      "Emitente Razão Social",
+      "Numero NFe",
+      "Série",
+      "Data Emissão",
+      "Quantidade",
+      "Valor Total (R$)",
+      "Terminal de Entrega",
+      "Transbordo"
     ];
 
     for (const file of successfulFiles) {
@@ -944,30 +997,81 @@ export function XMLConverter() {
               ? pesoLiquido
               : (sumItensQtd && sumItensQtd > 0 ? sumItensQtd : (file.nfeData.transportador?.quantidade || 0))
 
-            dataToExport.push([
+            const emitCNPJ = file.nfeData.emitente?.cnpj || vCNPJ.emitenteCnpjRaw || "N/I"
+            const emitNome = file.nfeData.emitente?.nome || "N/I"
+            const destCNPJ = file.nfeData.destinatario?.cpfCnpj || vCNPJ.destinatarioCnpjRaw || "NÃO INFORMADO"
+            const destNome = file.nfeData.destinatario?.nome || "NÃO INFORMADO"
+
+            const rowData = [
                 file.fileName,
                 file.nfeData.chaveAcesso,
                 vCNPJ.chaveCnpj || "N/I",
+                destCNPJ,
+                destNome,
                 vCNPJ.statusLabel,
+                vCNPJ.confrontoChaveXDest,
+                vCNPJ.details,
+                emitCNPJ,
+                emitNome,
                 file.nfeData.numero,
+                file.nfeData.serie || "",
                 file.nfeData.dataEmissao,
-                file.nfeData.emitente.nome,
-                file.nfeData.emitente.cnpj,
-                file.nfeData.destinatario.nome,
-                file.nfeData.destinatario.cpfCnpj,
                 quantidadeVal,
                 file.nfeData.impostos.valorTotal,
                 file.nfeData.terminalEntrega,
                 file.nfeData.transbordo,
                 file.nfeData.retirada,
                 file.nfeData.tipoProduto
-            ]);
+            ];
+
+            dataToExport.push(rowData);
+
+            if (vCNPJ.confrontoChaveXDest === 'DIVERGENTES' || !vCNPJ.isValid) {
+              divergentDataToExport.push([
+                file.fileName,
+                file.nfeData.chaveAcesso,
+                vCNPJ.chaveCnpj || "N/I",
+                destCNPJ,
+                destNome,
+                vCNPJ.statusLabel,
+                vCNPJ.confrontoChaveXDest,
+                vCNPJ.details,
+                emitCNPJ,
+                emitNome,
+                file.nfeData.numero,
+                file.nfeData.serie || "",
+                file.nfeData.dataEmissao,
+                quantidadeVal,
+                file.nfeData.impostos.valorTotal,
+                file.nfeData.terminalEntrega,
+                file.nfeData.transbordo
+              ]);
+            }
         }
     }
 
+    const autoFitCols = (rows: any[][]) => {
+      const maxLen = rows.reduce((w: number[], r: any[]) => {
+        r.forEach((val: any, idx: number) => {
+          const valStr = String(val ?? '');
+          w[idx] = Math.max(w[idx] || 0, valStr.length);
+        });
+        return w;
+      }, []);
+      return maxLen.map((len: number) => ({ wch: Math.min(Math.max(len + 3, 12), 70) }));
+    };
+
     const worksheet = XLSX.utils.aoa_to_sheet([headers, ...dataToExport]);
+    worksheet['!cols'] = autoFitCols([headers, ...dataToExport]);
+
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Notas Fiscais");
+
+    if (divergentDataToExport.length > 0) {
+        const divergentWorksheet = XLSX.utils.aoa_to_sheet([divergentHeaders, ...divergentDataToExport]);
+        divergentWorksheet['!cols'] = autoFitCols([divergentHeaders, ...divergentDataToExport]);
+        XLSX.utils.book_append_sheet(workbook, divergentWorksheet, "Divergências de CNPJ");
+    }
 
     const itemsDataToExport: any[][] = [];
     const itemHeaders = ["Chave de Acesso", "Numero NFe", "Código Produto", "Descrição", "NCM", "CFOP", "Quantidade", "Unidade", "Valor Unitário", "Valor Total"];
@@ -993,6 +1097,7 @@ export function XMLConverter() {
 
     if(itemsDataToExport.length > 0) {
         const itemsWorksheet = XLSX.utils.aoa_to_sheet([itemHeaders, ...itemsDataToExport]);
+        itemsWorksheet['!cols'] = autoFitCols([itemHeaders, ...itemsDataToExport]);
         XLSX.utils.book_append_sheet(workbook, itemsWorksheet, "Itens das Notas");
     }
 
@@ -1270,6 +1375,29 @@ export function XMLConverter() {
                   >
                     <BookOpen className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
                     Guia de Uso
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (files.length > 0) {
+                        setActiveTab('suggestions')
+                      } else {
+                        setIsSuggestionsModalOpen(true)
+                      }
+                    }}
+                    className="text-xs h-7 px-2.5 gap-1.5 text-pink-700 dark:text-pink-300 border-pink-200 dark:border-pink-800/60 bg-pink-50/60 dark:bg-pink-950/40 hover:bg-pink-100 dark:hover:bg-pink-900/60 cursor-pointer relative"
+                    title="Caixa de Sugestões, Dúvidas e Respostas da Supervisão"
+                  >
+                    <MessageSquarePlus className="h-3.5 w-3.5 text-pink-600 dark:text-pink-400 shrink-0" />
+                    <span>Caixa de Sugestões</span>
+                    {answeredSuggestionsCount > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-emerald-600 text-white text-[9px] font-extrabold shadow-xs">
+                        {answeredSuggestionsCount} respondida{answeredSuggestionsCount > 1 ? 's' : ''}
+                      </span>
+                    )}
                   </Button>
                 </div>
               </CardHeader>
@@ -1585,7 +1713,7 @@ export function XMLConverter() {
         )}
 
         {/* Results Area with Lateral Vertical Navigation */}
-        {files.length > 0 && (
+        {files.length > 0 ? (
           <Tabs value={activeTab} onValueChange={setActiveTab} className='w-full'>
             <div className="flex flex-col lg:flex-row items-start gap-6 w-full">
               {/* Menu Lateral com opções empilhadas verticalmente */}
@@ -1692,6 +1820,31 @@ export function XMLConverter() {
                       }`}>
                         Rotas
                       </span>
+                    </TabsTrigger>
+
+                    <TabsTrigger
+                      value='suggestions'
+                      className={`w-full justify-between text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        activeTab === 'suggestions'
+                          ? 'bg-indigo-600 text-white shadow-xs dark:bg-indigo-600 dark:text-white font-extrabold'
+                          : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <MessageSquarePlus className={`h-4 w-4 shrink-0 ${activeTab === 'suggestions' ? 'text-white' : 'text-pink-600 dark:text-pink-400'}`} />
+                        <span>Caixa de Sugestões</span>
+                      </div>
+                      {answeredSuggestionsCount > 0 ? (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500 text-white shadow-2xs animate-pulse">
+                          {answeredSuggestionsCount} respondida{answeredSuggestionsCount > 1 ? 's' : ''}
+                        </span>
+                      ) : (
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                          activeTab === 'suggestions' ? 'bg-white/20 text-white' : 'bg-pink-50 dark:bg-pink-950/50 text-pink-600 dark:text-pink-400 border border-pink-200/60 dark:border-pink-800/40'
+                        }`}>
+                          Atendimento
+                        </span>
+                      )}
                     </TabsTrigger>
                   </TabsList>
                 </div>
@@ -1975,8 +2128,17 @@ export function XMLConverter() {
                               </button>
                             )}
                             {vCNPJ.chaveCnpj && (
-                              <div className="text-xs font-mono bg-white dark:bg-zinc-900 px-3 py-1.5 rounded border text-zinc-700 dark:text-zinc-300">
-                                CNPJ na Chave: <b>{vCNPJ.chaveCnpj}</b>
+                              <div className="flex flex-wrap items-center gap-1.5 text-xs font-mono">
+                                <div className="bg-white dark:bg-zinc-900 px-2.5 py-1 rounded border text-zinc-700 dark:text-zinc-300 shadow-2xs">
+                                  Chave: <b>{vCNPJ.chaveCnpj}</b>
+                                </div>
+                                <div className={`px-2.5 py-1 rounded border shadow-2xs ${
+                                  vCNPJ.confrontoChaveXDest === 'DIVERGENTES'
+                                    ? 'bg-rose-50 dark:bg-rose-950/60 border-rose-300 text-rose-800 dark:text-rose-200'
+                                    : 'bg-white dark:bg-zinc-900 border-zinc-200 text-zinc-700 dark:text-zinc-300'
+                                }`}>
+                                  Destinatário: <b>{processedFile.nfeData.destinatario?.cpfCnpj || 'Não Informado'}</b>
+                                </div>
                               </div>
                             )}
                           </div>
@@ -2250,9 +2412,17 @@ export function XMLConverter() {
               <MapPanel files={files} />
             </TabsContent>
 
+            <TabsContent value='suggestions'>
+              <SuggestionsPanel />
+            </TabsContent>
+
               </div>
             </div>
           </Tabs>
+        ) : (
+          <div className="pt-2">
+            <SuggestionsPanel />
+          </div>
         )}
         </div>
 
@@ -2341,6 +2511,13 @@ export function XMLConverter() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Modal Rápido de Caixa de Sugestões & Atendimento */}
+      <Dialog open={isSuggestionsModalOpen} onOpenChange={setIsSuggestionsModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-6 overflow-y-auto">
+          <SuggestionsPanel onClose={() => setIsSuggestionsModalOpen(false)} />
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

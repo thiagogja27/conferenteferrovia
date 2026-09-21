@@ -41,6 +41,7 @@ import {
   Activity,
   Radio,
   MessageSquare,
+  Lightbulb,
   Crown,
   UserCheck,
   ShieldAlert,
@@ -49,6 +50,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  MessageSquareText,
 } from 'lucide-react'
 import {
   subscribeAllUsersWithDepartments,
@@ -59,6 +61,8 @@ import {
 } from '@/lib/user-roles'
 import { ConferenceMirrorDashboard } from '@/components/conference-mirror-dashboard'
 import { WhatsAppNotificationSettings } from '@/components/whatsapp-notification-settings'
+import { SuggestionsMonitorAdmin } from '@/components/suggestions-monitor-admin'
+import { subscribeToSuggestions, type SuggestionMessage } from '@/lib/suggestions-service'
 import {
   ResponsiveContainer,
   BarChart,
@@ -106,8 +110,19 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
 
   // Abas de Navegação do Monitor
   const [activeTab, setActiveTab] = useState<
-    'mirror' | 'dashboard' | 'files' | 'timeline' | 'operators' | 'whatsapp'
+    'mirror' | 'dashboard' | 'files' | 'timeline' | 'operators' | 'whatsapp' | 'suggestions'
   >('mirror')
+
+  // Contador de sugestões pendentes de resposta da supervisão
+  const [pendingSuggestionsCount, setPendingSuggestionsCount] = useState(0)
+
+  useEffect(() => {
+    const unsubSuggestions = subscribeToSuggestions((msgs) => {
+      const pending = msgs.filter((m) => m.status === 'pendente').length
+      setPendingSuggestionsCount(pending)
+    })
+    return () => unsubSuggestions()
+  }, [])
 
   // Filtros de Auditoria
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'yesterday' | '7days' | '30days'>('all')
@@ -546,275 +561,413 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Top Header com Status & Controles de Auditoria */}
-      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 p-5 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xs">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-              Central de Auditoria & Monitoramento em Tempo Real
-            </h1>
-            <span
-              className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5 ${
-                isConnected
-                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                  : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
-              }`}
-            >
-              <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-ping' : 'bg-indigo-500'}`} />
-              {isConnected ? 'Firebase Realtime Sincronizado' : 'Telemetria Operacional Ativa'}
-            </span>
-          </div>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-2xl">
-            Comprovante executivo de produtividade dos funcionários, rastreabilidade fiscal de notas e conciliações de vagões para prestação de contas à chefia.
-          </p>
-        </div>
+    <div className="flex flex-col md:flex-row items-start gap-4">
+      {/* BARRA VERTICAL NO LADO ESQUERDO: APENAS ÍCONES UM EMBAIXO DO OUTRO */}
+      <aside
+        aria-label="Navegação Lateral do Monitor"
+        className="shrink-0 flex md:flex-col items-center gap-2 p-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-xs sticky top-4 z-20 w-full md:w-14"
+      >
+        {/* 1. Espelho da Conferência */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('mirror')}
+          className={`relative p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+            activeTab === 'mirror'
+              ? 'bg-emerald-600 text-white shadow-md'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+          title="Espelho da Conferência (Ao Vivo & Histórico)"
+          aria-label="Espelho da Conferência"
+        >
+          <Radio className={`h-5 w-5 ${activeTab === 'mirror' ? 'animate-pulse text-white' : 'text-emerald-500'}`} />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+        </button>
 
-        {/* Ações Globais: Identificação do Usuário + Botões de Exportação */}
-        <div className="flex items-center gap-2 flex-wrap w-full lg:w-auto justify-end">
-          {/* Identificação do Operador Ativo */}
-          <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-800 px-3 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs">
-            <span className="text-zinc-500 font-medium">Supervisor / Operador:</span>
-            {editingOperator ? (
-              <form onSubmit={handleSaveOperator} className="flex items-center gap-1">
-                <input
-                  type="text"
-                  value={operatorInput}
-                  onChange={(e) => setOperatorInput(e.target.value)}
-                  className="bg-white dark:bg-zinc-900 border rounded px-1.5 py-0.5 text-xs w-32 focus:outline-hidden"
-                  autoFocus
-                />
-                <button type="submit" className="text-emerald-600 hover:text-emerald-700 cursor-pointer">
-                  <Check className="h-3.5 w-3.5" />
-                </button>
+        {/* 2. Produtividade Geral */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('dashboard')}
+          className={`p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+            activeTab === 'dashboard'
+              ? 'bg-indigo-600 text-white shadow-md'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+          title="Produtividade Geral & Indicadores"
+          aria-label="Produtividade Geral"
+        >
+          <BarChart3 className="h-5 w-5" />
+        </button>
+
+        {/* 3. Arquivos Inputados */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('files')}
+          className={`relative p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+            activeTab === 'files'
+              ? 'bg-indigo-600 text-white shadow-md'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+          title={`Arquivos Inputados (${filteredInputFiles.length})`}
+          aria-label="Arquivos Inputados"
+        >
+          <FileSpreadsheet className="h-5 w-5" />
+          {filteredInputFiles.length > 0 && (
+            <span className="absolute -top-1 -right-1 px-1 rounded-full bg-indigo-600 text-white text-[9px] font-bold shadow-xs">
+              {filteredInputFiles.length > 99 ? '99+' : filteredInputFiles.length}
+            </span>
+          )}
+        </button>
+
+        {/* 4. Linha do Tempo */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('timeline')}
+          className={`relative p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+            activeTab === 'timeline'
+              ? 'bg-indigo-600 text-white shadow-md'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+          title={`Linha do Tempo (${filteredActivities.length})`}
+          aria-label="Linha do Tempo"
+        >
+          <Clock className="h-5 w-5" />
+          {filteredActivities.length > 0 && (
+            <span className="absolute -top-1 -right-1 px-1 rounded-full bg-indigo-600 text-white text-[9px] font-bold shadow-xs">
+              {filteredActivities.length > 99 ? '99+' : filteredActivities.length}
+            </span>
+          )}
+        </button>
+
+        {/* 5. Equipe & Departamentos */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('operators')}
+          className={`p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+            activeTab === 'operators'
+              ? 'bg-indigo-600 text-white shadow-md'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+          title={`Equipe & Departamentos (${operators.length})`}
+          aria-label="Equipe & Departamentos"
+        >
+          <Users className="h-5 w-5" />
+        </button>
+
+        {/* 6. Alertas WhatsApp & Telegram */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('whatsapp')}
+          className={`p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+            activeTab === 'whatsapp'
+              ? 'bg-emerald-600 text-white shadow-md'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+          title="Alertas WhatsApp & Notificações"
+          aria-label="Alertas WhatsApp & Notificações"
+        >
+          <MessageSquare className="h-5 w-5 text-emerald-500" />
+        </button>
+
+        {/* 7. Caixa de Sugestões & Respostas da Supervisão */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('suggestions')}
+          className={`relative p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+            activeTab === 'suggestions'
+              ? 'bg-amber-600 text-white shadow-md'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+          title="Caixa de Sugestões e Dúvidas dos Operadores"
+          aria-label="Sugestões dos Operadores"
+        >
+          <Lightbulb className={`h-5 w-5 ${activeTab === 'suggestions' ? 'text-white' : 'text-amber-500'}`} />
+          {pendingSuggestionsCount > 0 && (
+            <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-amber-500 text-white text-[9px] font-bold shadow-xs animate-bounce">
+              {pendingSuggestionsCount}
+            </span>
+          )}
+        </button>
+
+        {/* Divisor Separador */}
+        <div className="w-8 h-px bg-zinc-200 dark:bg-zinc-800 my-1 hidden md:block" />
+
+        {/* 7. Relatório / Imprimir (PDF) */}
+        <button
+          type="button"
+          onClick={() => setIsPrintModalOpen(true)}
+          className="p-3 rounded-xl text-zinc-600 dark:text-zinc-400 hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all cursor-pointer flex items-center justify-center"
+          title="Relatório / Imprimir (PDF)"
+          aria-label="Relatório / Imprimir (PDF)"
+        >
+          <Printer className="h-5 w-5" />
+        </button>
+
+        {/* 8. Exportar Relatório Excel (.xlsx) */}
+        <button
+          type="button"
+          onClick={handleExportDetailedExcel}
+          className="p-3 rounded-xl text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-all cursor-pointer flex items-center justify-center"
+          title="Exportar Relatório Excel (.xlsx)"
+          aria-label="Exportar Relatório Excel (.xlsx)"
+        >
+          <Download className="h-5 w-5" />
+        </button>
+
+        {/* 9. Limpar Histórico de Telemetria */}
+        <button
+          type="button"
+          onClick={() => {
+            if (window.confirm('Deseja limpar todo o histórico e manter apenas dados 100% reais gerados pela sua equipe?')) {
+              clearAllTelemetryHistory()
+            }
+          }}
+          className="p-3 rounded-xl text-zinc-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all cursor-pointer flex items-center justify-center"
+          title="Limpar telemetria e manter apenas dados reais"
+          aria-label="Limpar telemetria"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </aside>
+
+      {/* ÁREA DE CONTEÚDO PRINCIPAL À DIREITA */}
+      <div className="flex-1 min-w-0 space-y-6 w-full">
+        {/* Top Header com Status & Controles de Auditoria */}
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 p-5 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xs">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                Central de Auditoria & Monitoramento em Tempo Real
+              </h1>
+              <span
+                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5 ${
+                  isConnected
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                    : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
+                }`}
+              >
+                <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-ping' : 'bg-indigo-500'}`} />
+                {isConnected ? 'Firebase Realtime Sincronizado' : 'Telemetria Operacional Ativa'}
+              </span>
+            </div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-2xl">
+              Comprovante executivo de produtividade dos funcionários, rastreabilidade fiscal de notas e conciliações de vagões para prestação de contas à chefia.
+            </p>
+          </div>
+
+          {/* Ações Globais: Identificação do Usuário + Botões de Exportação */}
+          <div className="flex items-center gap-2 flex-wrap w-full lg:w-auto justify-end">
+            {/* Identificação do Operador Ativo */}
+            <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-800 px-3 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-xs">
+              <span className="text-zinc-500 font-medium">Supervisor / Operador:</span>
+              {editingOperator ? (
+                <form onSubmit={handleSaveOperator} className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={operatorInput}
+                    onChange={(e) => setOperatorInput(e.target.value)}
+                    className="bg-white dark:bg-zinc-900 border rounded px-1.5 py-0.5 text-xs w-32 focus:outline-hidden"
+                    autoFocus
+                  />
+                  <button type="submit" className="text-emerald-600 hover:text-emerald-700 cursor-pointer">
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingOperator(false)}
+                    className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </form>
+              ) : (
                 <button
                   type="button"
-                  onClick={() => setEditingOperator(false)}
-                  className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                  onClick={() => setEditingOperator(true)}
+                  className="font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  title="Clique para alterar sua identificação"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <span>{currentOperator}</span>
+                  <span className="text-[10px] text-zinc-400 font-normal">(alterar)</span>
                 </button>
-              </form>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setEditingOperator(true)}
-                className="font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
-                title="Clique para alterar sua identificação"
+              )}
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsPrintModalOpen(true)}
+              className="text-xs h-9 px-3 gap-1.5 cursor-pointer border-zinc-200 dark:border-zinc-700"
+              title="Relatório / Imprimir (PDF)"
+            >
+              <Printer className="h-4 w-4 text-zinc-600 dark:text-zinc-300" />
+              <span className="hidden sm:inline">Relatório / Imprimir (PDF)</span>
+            </Button>
+
+            <Button
+              size="sm"
+              onClick={handleExportDetailedExcel}
+              className="text-xs h-9 px-3 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-xs"
+              title="Exportar Relatório Excel (.xlsx)"
+            >
+              <Download className="h-4 w-4" />
+              <span className="hidden sm:inline">Exportar Excel</span>
+            </Button>
+          </div>
+        </div>
+
+        {/* Barra de Filtros Globais: Período, Funcionário e Pesquisa */}
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800">
+          {/* Seletor de Período Rápido */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
+            <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400 mr-1 flex items-center gap-1 shrink-0">
+              <Calendar className="h-3.5 w-3.5" />
+              Período:
+            </span>
+            <button
+              onClick={() => setPeriodFilter('all')}
+              className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
+                periodFilter === 'all'
+                  ? 'bg-indigo-600 text-white font-bold'
+                  : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+              }`}
+            >
+              Todo o Histórico
+            </button>
+            <button
+              onClick={() => setPeriodFilter('today')}
+              className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
+                periodFilter === 'today'
+                  ? 'bg-indigo-600 text-white font-bold'
+                  : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+              }`}
+            >
+              Hoje
+            </button>
+            <button
+              onClick={() => setPeriodFilter('yesterday')}
+              className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
+                periodFilter === 'yesterday'
+                  ? 'bg-indigo-600 text-white font-bold'
+                  : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+              }`}
+            >
+              Ontem
+            </button>
+            <button
+              onClick={() => setPeriodFilter('7days')}
+              className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
+                periodFilter === '7days'
+                  ? 'bg-indigo-600 text-white font-bold'
+                  : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+              }`}
+            >
+              Últimos 7 Dias
+            </button>
+            <button
+              onClick={() => setPeriodFilter('30days')}
+              className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
+                periodFilter === '30days'
+                  ? 'bg-indigo-600 text-white font-bold'
+                  : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+              }`}
+            >
+              Últimos 30 Dias
+            </button>
+          </div>
+
+          {/* Filtro por Funcionário e Campo de Busca */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2.5 py-1 text-xs">
+              <Users className="h-3.5 w-3.5 text-zinc-400" />
+              <select
+                value={operatorFilter}
+                onChange={(e) => setOperatorFilter(e.target.value)}
+                className="bg-transparent text-foreground focus:outline-hidden cursor-pointer"
               >
-                <span>{currentOperator}</span>
-                <span className="text-[10px] text-zinc-400 font-normal">(alterar)</span>
-              </button>
+                <option value="all">Todos os Funcionários</option>
+                {availableOperators.map((op) => (
+                  <option key={op} value={op}>
+                    {op}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="relative flex-1 md:w-56">
+              <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-zinc-400" />
+              <input
+                type="text"
+                placeholder="Buscar em arquivos, logs..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg pl-8 pr-3 py-1 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+
+            {/* Botão para Limpar e Manter Apenas Dados Reais Operacionais */}
+            <button
+              onClick={() => {
+                if (window.confirm('Deseja limpar todo o histórico e manter apenas dados 100% reais gerados pela sua equipe?')) {
+                  clearAllTelemetryHistory()
+                }
+              }}
+              className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 flex items-center gap-1 shrink-0 cursor-pointer"
+              title="Limpar telemetria e manter apenas dados reais"
+            >
+              <Trash2 className="h-3 w-3 text-zinc-500" />
+              <span className="hidden sm:inline">Limpar Histórico</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Indicador da Aba Ativa Selecionada na Barra Lateral */}
+        <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2">
+          <div className="flex items-center gap-2">
+            {activeTab === 'mirror' && (
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
+                <Radio className="h-3.5 w-3.5 text-emerald-500 animate-pulse" />
+                Espelho da Conferência (Ao Vivo & Histórico)
+              </span>
+            )}
+            {activeTab === 'dashboard' && (
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
+                <BarChart3 className="h-3.5 w-3.5 text-indigo-500" />
+                Produtividade Geral & Indicadores Executivos
+              </span>
+            )}
+            {activeTab === 'files' && (
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
+                <FileSpreadsheet className="h-3.5 w-3.5 text-indigo-500" />
+                Arquivos Inputados ({filteredInputFiles.length})
+              </span>
+            )}
+            {activeTab === 'timeline' && (
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
+                <Clock className="h-3.5 w-3.5 text-indigo-500" />
+                Linha do Tempo de Atividades ({filteredActivities.length})
+              </span>
+            )}
+            {activeTab === 'operators' && (
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
+                <Users className="h-3.5 w-3.5 text-indigo-500" />
+                Equipe & Departamentos ({operators.length})
+              </span>
+            )}
+            {activeTab === 'whatsapp' && (
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
+                <MessageSquare className="h-3.5 w-3.5 text-emerald-500" />
+                Alertas WhatsApp & Telegram
+              </span>
+            )}
+            {activeTab === 'suggestions' && (
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-bold">
+                <Lightbulb className="h-3.5 w-3.5 text-amber-500" />
+                Caixa de Sugestões & Respostas da Supervisão ({pendingSuggestionsCount} pendente{pendingSuggestionsCount === 1 ? '' : 's'})
+              </span>
             )}
           </div>
-
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsPrintModalOpen(true)}
-            className="text-xs h-9 gap-1.5 cursor-pointer border-zinc-200 dark:border-zinc-700"
-          >
-            <Printer className="h-4 w-4 text-zinc-600 dark:text-zinc-300" />
-            Relatório / Imprimir (PDF)
-          </Button>
-
-          <Button
-            size="sm"
-            onClick={handleExportDetailedExcel}
-            className="text-xs h-9 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-xs"
-          >
-            <Download className="h-4 w-4" />
-            Exportar Relatório Excel (.xlsx)
-          </Button>
         </div>
-      </div>
-
-      {/* Barra de Filtros Globais: Período, Funcionário e Pesquisa */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-3.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200 dark:border-zinc-800">
-        {/* Seletor de Período Rápido */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
-          <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400 mr-1 flex items-center gap-1 shrink-0">
-            <Calendar className="h-3.5 w-3.5" />
-            Período:
-          </span>
-          <button
-            onClick={() => setPeriodFilter('all')}
-            className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
-              periodFilter === 'all'
-                ? 'bg-indigo-600 text-white font-bold'
-                : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-            }`}
-          >
-            Todo o Histórico
-          </button>
-          <button
-            onClick={() => setPeriodFilter('today')}
-            className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
-              periodFilter === 'today'
-                ? 'bg-indigo-600 text-white font-bold'
-                : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-            }`}
-          >
-            Hoje
-          </button>
-          <button
-            onClick={() => setPeriodFilter('yesterday')}
-            className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
-              periodFilter === 'yesterday'
-                ? 'bg-indigo-600 text-white font-bold'
-                : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-            }`}
-          >
-            Ontem
-          </button>
-          <button
-            onClick={() => setPeriodFilter('7days')}
-            className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
-              periodFilter === '7days'
-                ? 'bg-indigo-600 text-white font-bold'
-                : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-            }`}
-          >
-            Últimos 7 Dias
-          </button>
-          <button
-            onClick={() => setPeriodFilter('30days')}
-            className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer shrink-0 ${
-              periodFilter === '30days'
-                ? 'bg-indigo-600 text-white font-bold'
-                : 'bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-            }`}
-          >
-            Últimos 30 Dias
-          </button>
-        </div>
-
-        {/* Filtro por Funcionário e Campo de Busca */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-2.5 py-1 text-xs">
-            <Users className="h-3.5 w-3.5 text-zinc-400" />
-            <select
-              value={operatorFilter}
-              onChange={(e) => setOperatorFilter(e.target.value)}
-              className="bg-transparent text-foreground focus:outline-hidden cursor-pointer"
-            >
-              <option value="all">Todos os Funcionários</option>
-              {availableOperators.map((op) => (
-                <option key={op} value={op}>
-                  {op}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="relative flex-1 md:w-56">
-            <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-zinc-400" />
-            <input
-              type="text"
-              placeholder="Buscar em arquivos, logs..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg pl-8 pr-3 py-1 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
-            />
-          </div>
-
-          {/* Botão para Limpar e Manter Apenas Dados Reais Operacionais */}
-          <button
-            onClick={() => {
-              if (window.confirm('Deseja limpar todo o histórico e manter apenas dados 100% reais gerados pela sua equipe?')) {
-                clearAllTelemetryHistory()
-              }
-            }}
-            className="text-xs px-2.5 py-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 flex items-center gap-1 shrink-0 cursor-pointer"
-            title="Limpar telemetria e manter apenas dados reais"
-          >
-            <Trash2 className="h-3 w-3 text-zinc-500" />
-            <span className="hidden sm:inline">Limpar Histórico</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 5 Abas Principais de Visualização */}
-      <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-2 overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('mirror')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
-            activeTab === 'mirror'
-              ? 'bg-emerald-600 text-white shadow-xs'
-              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          }`}
-        >
-          <Radio className="h-4 w-4 animate-pulse text-emerald-300" />
-          <span>Espelho da Conferência</span>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500 text-white font-bold ml-0.5">
-            Ao Vivo & Histórico
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('dashboard')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
-            activeTab === 'dashboard'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          }`}
-        >
-          <BarChart3 className="h-4 w-4" />
-          Produtividade Geral
-        </button>
-
-        <button
-          onClick={() => setActiveTab('files')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
-            activeTab === 'files'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          }`}
-        >
-          <FileSpreadsheet className="h-4 w-4" />
-          Arquivos Inputados ({filteredInputFiles.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab('timeline')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
-            activeTab === 'timeline'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          }`}
-        >
-          <Clock className="h-4 w-4" />
-          Linha do Tempo ({filteredActivities.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab('operators')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
-            activeTab === 'operators'
-              ? 'bg-indigo-600 text-white shadow-xs'
-              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          }`}
-        >
-          <Users className="h-4 w-4" />
-          Equipe & Departamentos ({operators.length})
-        </button>
-
-        <button
-          onClick={() => setActiveTab('whatsapp')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all cursor-pointer shrink-0 ${
-            activeTab === 'whatsapp'
-              ? 'bg-emerald-600 text-white shadow-xs'
-              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          }`}
-        >
-          <MessageSquare className="h-4 w-4 text-emerald-400" />
-          <span>Alertas WhatsApp</span>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 font-bold ml-0.5">
-            Ativo
-          </span>
-        </button>
-      </div>
 
       {/* ABA 0: ESPELHO DO PAINEL DE CONFERÊNCIA (TEMPO REAL & CONSULTAS HISTÓRICAS) */}
       {activeTab === 'mirror' && (
@@ -1715,6 +1868,19 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
       {activeTab === 'whatsapp' && (
         <WhatsAppNotificationSettings onNotify={onNotify} />
       )}
+
+      {/* ABA 6: CAIXA DE SUGESTÕES & RESPOSTAS DA SUPERVISÃO */}
+      {activeTab === 'suggestions' && (
+        <SuggestionsMonitorAdmin
+          currentSupervisor={currentOperator}
+          onNotify={(msg, type) => {
+            if (onNotify) {
+              onNotify(msg, type === 'info' ? 'success' : type)
+            }
+          }}
+        />
+      )}
+      </div>
 
       {/* MODAL DE IMPRESSÃO / RELATÓRIO EXECUTIVO OFICIAL (PDF) */}
       <Dialog open={isPrintModalOpen} onOpenChange={setIsPrintModalOpen}>

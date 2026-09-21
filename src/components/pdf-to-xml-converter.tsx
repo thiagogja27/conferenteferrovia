@@ -1151,11 +1151,12 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         'Chave de Acesso': key,
         'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
         'Destinatário CNPJ': destCNPJ,
+        'Destinatário': d?.destNome || res.nfeData?.destinatario?.nome || '',
         'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
         'Status Validação CNPJ': vCNPJ.statusLabel,
-        'Emitente': d?.emitNome || '',
+        'Comprovação da Divergência / Detalhes': vCNPJ.details,
+        'Emitente': d?.emitNome || res.nfeData?.emitente?.nome || '',
         'CNPJ Emitente': emitCNPJ,
-        'Destinatário': d?.destNome || '',
         'Quantidade': getResultQuantidade(res),
         'Valor Total Nota (R$)': d?.vNF || '',
       }
@@ -1165,6 +1166,20 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Notas Processadas')
 
+    const divergentRows = dataRows.filter((r) => r['Confronto (Chave vs Destinatário)'] === 'DIVERGENTES' || String(r['Status Validação CNPJ']).includes('DIVERGENTE'))
+    if (divergentRows.length > 0) {
+      const wsDiv = XLSX.utils.json_to_sheet(divergentRows)
+      const maxLenDiv = divergentRows.reduce((w: any, r: any) => {
+        Object.keys(r).forEach((k, idx) => {
+          const val = String(r[k] ?? '')
+          w[idx] = Math.max(w[idx] || 0, val.length, k.length)
+        })
+        return w
+      }, [])
+      wsDiv['!cols'] = maxLenDiv.map((len: number) => ({ wch: Math.min(Math.max(len + 3, 12), 70) }))
+      XLSX.utils.book_append_sheet(workbook, wsDiv, 'Divergências de CNPJ')
+    }
+
     const max_len = dataRows.reduce((w: any, r: any) => {
       Object.keys(r).forEach((key, idx) => {
         const val = String(r[key]);
@@ -1172,7 +1187,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       });
       return w;
     }, []);
-    worksheet['!cols'] = max_len.map((len: number) => ({ wch: len + 3 }));
+    worksheet['!cols'] = max_len.map((len: number) => ({ wch: Math.min(Math.max(len + 3, 12), 70) }));
 
     XLSX.writeFile(workbook, `consolidado_notas_${subMode}_${Date.now()}.xlsx`)
   }
@@ -2375,8 +2390,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             'Chave de Acesso': key || d?.chave || rowRec.key || '',
             'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
             'Destinatário CNPJ': destCNPJ,
+            'Destinatário': d?.destNome || resMatch.nfeData?.destinatario?.nome || '',
             'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
             'Validação CNPJ': vCNPJ.statusLabel,
+            'Comprovação da Divergência / Detalhes': vCNPJ.details,
             'Nº Nota (nNF)': d?.nNF || resMatch.nfeData?.numero || '',
             'Série': d?.serie || resMatch.nfeData?.serie || '',
             'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
@@ -2398,7 +2415,6 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             'Valor Total (R$)': d?.vNF || 0,
             'Emitente': d?.emitNome || '',
             'CNPJ Emitente': d?.emitCNPJ || '',
-            'Destinatário': d?.destNome || '',
             'Nome do Arquivo': resMatch.fileName,
             'Tipo Documento': subMode === 'pdf-to-xml' ? 'PDF' : 'XML',
           })
@@ -2416,8 +2432,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             'Chave de Acesso': cleanKey || 'SEM CHAVE NA LINHA',
             'CNPJ na Chave': cnpjFromKey,
             'Destinatário CNPJ': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Destinatário': 'NÃO ENCONTRADO NOS ARQUIVOS',
             'Confronto (Chave vs Destinatário)': 'NÃO ENCONTRADO NOS ARQUIVOS',
             'Validação CNPJ': 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Comprovação da Divergência / Detalhes': 'NÃO ENCONTRADO NOS ARQUIVOS',
             'Nº Nota (nNF)': numFromKey !== 'N/A' ? numFromKey : 'NÃO ENCONTRADO NOS ARQUIVOS',
             'Série': serieFromKey !== 'N/A' ? serieFromKey : 'N/A',
             'Peso Selecionado (Excel)': rowRec.pesoSelecionadoStr || 'N/A',
@@ -2435,7 +2453,6 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             'Valor Total (R$)': 0,
             'Emitente': 'NÃO ENCONTRADO NOS ARQUIVOS',
             'CNPJ Emitente': 'NÃO ENCONTRADO NOS ARQUIVOS',
-            'Destinatário': 'NÃO ENCONTRADO NOS ARQUIVOS',
             'Nome do Arquivo': 'ARQUIVO NÃO CARREGADO NO SISTEMA',
             'Tipo Documento': 'N/A',
           })
