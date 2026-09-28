@@ -102,10 +102,13 @@ export function isValidNFeKey(key: string): boolean {
   const digits = key.replace(/\D/g, '');
   if (digits.length !== 44) return false;
 
-  // Valida UF (primeiros 2 dígitos) - Códigos de UF válidos do IBGE
+  // Valida UF (primeiros 2 dígitos) - Códigos de UF válidos do IBGE + 99 (ambiente de teste/fictício/homologação/exterior)
   const uf = parseInt(digits.substring(0, 2), 10);
-  const validUFs = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 32, 33, 35, 41, 42, 43, 50, 51, 52, 53];
+  const validUFs = [11, 12, 13, 14, 15, 16, 17, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 32, 33, 35, 41, 42, 43, 50, 51, 52, 53, 99];
   if (!validUFs.includes(uf)) return false;
+
+  // Se UF for 99 (ambiente de teste/fictício), aceita qualquer modelo
+  if (uf === 99) return true;
 
   // Valida Modelo (dígitos 20 e 21) - Mod: 55 (NF-e), 65 (NFC-e), 57 (CT-e), 11, 67
   const mod = digits.substring(20, 22);
@@ -122,12 +125,14 @@ export function findKeysInText(text: string): string[] {
   const keys: string[] = [];
   const seen = new Set<string>();
 
-  const addKey = (k: string) => {
+  const addKey = (k: string, forceAccept: boolean = false) => {
     if (!k) return;
     const digits = k.replace(/\D/g, '');
-    if (digits.length === 44 && !seen.has(digits) && isValidNFeKey(digits)) {
-      seen.add(digits);
-      keys.push(digits);
+    if (digits.length === 44 && !seen.has(digits)) {
+      if (forceAccept || isValidNFeKey(digits)) {
+        seen.add(digits);
+        keys.push(digits);
+      }
     }
   };
 
@@ -138,7 +143,7 @@ export function findKeysInText(text: string): string[] {
   // 1. Procura preferencial no bloco "CHAVE DE ACESSO" ou "CHAVE" ou "CÓDIGO DE BARRAS"
   const matches1 = Array.from(clean.matchAll(/(?:CHAVE DE ACESSO|Chave de Acesso|CHAVE|CÓDIGO DE BARRAS|CODIGO DE BARRAS)[^\d]{0,80}((?:[0-9][\s\.\-]*){44})/gi));
   for (const m of matches1) {
-    addKey(m[1]);
+    addKey(m[1], true);
   }
 
   // 2. Chaves com 11 grupos de 4 dígitos separados por espaço, ponto ou traço
@@ -177,8 +182,8 @@ export function parseMultiDanfePdf(
 
   // 1. Estratégia Principal: Agrupamento Inteligente por Páginas com Detecção de DANFE x DCL/Romaneio
   if (pagesText && pagesText.length > 0) {
-    const groupedItems: { key: string; pagesText: string[] }[] = [];
-    let currentGroup: { key: string; pagesText: string[] } | null = null;
+    const groupedItems: { key: string; nfNum?: string; pagesText: string[] }[] = [];
+    let currentGroup: { key: string; nfNum?: string; pagesText: string[] } | null = null;
 
     for (const page of pagesText) {
       const pText = page.text || '';
@@ -187,17 +192,32 @@ export function parseMultiDanfePdf(
       const isRomaneio = /Notas Fiscais Carregadas|Romaneio|Ticket de Pesagem/i.test(pText);
 
       const pageKeys = findKeysInText(pText);
+      const mainKey = pageKeys[0] || '';
+
+      const numMatch = pText.match(/(?:NF-e\s*)?N[º°\.]+\s*:?[\s\.]*(\d{1,9}|\d{1,3}(?:\.\d{3})+)/i);
+      const pageNFNum = numMatch ? parseInt(numMatch[1].replace(/\D/g, ''), 10).toString() : '';
+
+      const isFolha1 = /Folha\s*0?1\b/i.test(pText) || /Folha\s*1\s*[\/\-de]/i.test(pText);
+      const isContinuationPage = /Folha\s*[2-9]\b/i.test(pText) || /Folha\s*[2-9]\s*[\/\-de]/i.test(pText) || /CONTINUA[ÇC][ÃA]O/i.test(pText);
+      const hasDanfeHeader = /[01]\s*-\s*(?:ENTRADA|SA[ÍI]DA)/i.test(pText) || /IDENTIFICA[ÇC][ÃA]O\s+DO\s+EMITENTE/i.test(pText);
 
       if (isDanfe) {
-        // Encontrou página de DANFE legítima
-        const mainKey = pageKeys[0] || '';
-        if (mainKey) {
-          currentGroup = { key: mainKey, pagesText: [pText] };
+        // Determina se esta página inicia um novo DANFE ou se é continuação da nota atual
+        const isStartOfNewDanfe = !currentGroup
+          || (mainKey && currentGroup.key && mainKey !== currentGroup.key)
+          || (pageNFNum && currentGroup.nfNum && pageNFNum !== currentGroup.nfNum)
+          || (isFolha1 && !isContinuationPage)
+          || (hasDanfeHeader && !isContinuationPage && currentGroup.pagesText.length > 0 && pageNFNum !== currentGroup.nfNum);
+
+        if (isStartOfNewDanfe) {
+          currentGroup = { key: mainKey, nfNum: pageNFNum, pagesText: [pText] };
           groupedItems.push(currentGroup);
         } else if (currentGroup) {
           currentGroup.pagesText.push(pText);
+          if (!currentGroup.key && mainKey) currentGroup.key = mainKey;
+          if (!currentGroup.nfNum && pageNFNum) currentGroup.nfNum = pageNFNum;
         } else {
-          currentGroup = { key: '', pagesText: [pText] };
+          currentGroup = { key: mainKey, nfNum: pageNFNum, pagesText: [pText] };
           groupedItems.push(currentGroup);
         }
       } else if (isDCL || isRomaneio || pageKeys.length > 1) {
@@ -205,7 +225,7 @@ export function parseMultiDanfePdf(
         // Anexa o texto do DCL/Romaneio a todos os grupos de notas correspondentes
         let matchedAnyGroup = false;
         for (const g of groupedItems) {
-          if (g.key && pageKeys.includes(g.key)) {
+          if ((g.key && pageKeys.includes(g.key)) || (g.nfNum && pText.includes(g.nfNum))) {
             g.pagesText.push(pText);
             matchedAnyGroup = true;
           }
@@ -225,14 +245,15 @@ export function parseMultiDanfePdf(
         }
       } else if (pageKeys.length === 1) {
         const k = pageKeys[0];
-        if (!currentGroup || currentGroup.key !== k) {
-          currentGroup = { key: k, pagesText: [pText] };
+        if (!currentGroup || (currentGroup.key && currentGroup.key !== k)) {
+          currentGroup = { key: k, nfNum: pageNFNum, pagesText: [pText] };
           groupedItems.push(currentGroup);
         } else {
           currentGroup.pagesText.push(pText);
+          if (!currentGroup.key) currentGroup.key = k;
         }
       } else {
-        // Página sem chave expressa (continuação)
+        // Página sem chave expressa (continuação de informações complementares, etc.)
         if (currentGroup) {
           currentGroup.pagesText.push(pText);
         } else {
@@ -249,7 +270,7 @@ export function parseMultiDanfePdf(
         const combinedText = group.pagesText.join('\n\n--- PAGINA ---\n\n');
         const key = group.key || findKeysInText(combinedText)[0] || '';
         const { xml, data } = parseDanfeText(combinedText, defaultFileName, key);
-        const fileName = `${baseName}_NF_${data.nNF || (i + 1)}.xml`;
+        const fileName = `${baseName}_NF_${data.nNF || group.nfNum || (i + 1)}.xml`;
         items.push({ xml, fileName, parsedData: data });
       }
 
@@ -264,6 +285,26 @@ export function parseMultiDanfePdf(
   }
 
   // 2. Estratégia Secundária (Fallback): Análise do Texto Bruto Concatenado
+  // Divide por separadores de DANFE se existirem múltiplos
+  const danfeSplits = fullText.split(/(?=(?:(?:^|[\r\n]+)\s*DANFE\b|(?:^|[\r\n]+)\s*DOCUMENTO AUXILIAR DA NOTA FISCAL))/i)
+    .filter(chunk => chunk.trim().length > 50 && /DANFE|DOCUMENTO AUXILIAR/i.test(chunk));
+
+  if (danfeSplits.length > 1) {
+    const items: PDFDanfeItem[] = [];
+    for (let i = 0; i < danfeSplits.length; i++) {
+      const chunk = danfeSplits[i];
+      const chunkKeys = findKeysInText(chunk);
+      const { xml, data } = parseDanfeText(chunk, defaultFileName, chunkKeys[0] || '');
+      const fileName = `${baseName}_NF_${data.nNF || (i + 1)}.xml`;
+      items.push({ xml, fileName, parsedData: data });
+    }
+    return {
+      items,
+      xml: items[0].xml,
+      data: items[0].parsedData,
+    };
+  }
+
   const keys = findKeysInText(fullText);
 
   if (keys.length <= 1) {
@@ -374,8 +415,27 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   const cUF = chave.substring(0, 2) || '35';
   const emitCNPJRaw = chave.substring(6, 20); // GARANTE 100% de sincronismo com a Chave!
   const emitCNPJ = formatCNPJStr(emitCNPJRaw);
-  const serie = parseInt(chave.substring(22, 25) || '1', 10).toString();
-  const nNF = parseInt(chave.substring(25, 34) || '1', 10).toString();
+
+  let printedNNF = '';
+  const numPrintedMatch = text.match(/(?:NF-e\s*)?N[º°\.]+\s*:?[\s\.]*(\d{1,9}|\d{1,3}(?:\.\d{3})+)/i);
+  if (numPrintedMatch) {
+    const digitsOnly = numPrintedMatch[1].replace(/\D/g, '');
+    if (digitsOnly && digitsOnly.length <= 9) {
+      printedNNF = parseInt(digitsOnly, 10).toString();
+    }
+  }
+
+  let printedSerie = '';
+  const seriePrintedMatch = text.match(/S[ÉE]RIE\s*:?[\s\.]*(\d{1,3})/i);
+  if (seriePrintedMatch) {
+    printedSerie = parseInt(seriePrintedMatch[1], 10).toString();
+  }
+
+  const keySerie = chave.length === 44 ? parseInt(chave.substring(22, 25) || '0', 10).toString() : '';
+  const keyNNF = chave.length === 44 ? parseInt(chave.substring(25, 34) || '0', 10).toString() : '';
+
+  const serie = (printedSerie && printedSerie !== '0') ? printedSerie : (keySerie || '1');
+  const nNF = (printedNNF && printedNNF !== '0') ? printedNNF : (keyNNF || '1');
   const cNF = chave.substring(34, 43) || '00053124';
   const cDV = chave.substring(43) || '0';
 
@@ -388,13 +448,25 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
 
   // 3. Emitente
   let emitNome = '';
-  const reciboMatch = text.match(/RECEBEMOS DE\s+([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)\s+(?:OS PRODUTOS|DANFE|NF-e|CNPJ)/i);
-  if (reciboMatch) {
-    emitNome = reciboMatch[1].trim();
-  }
-
   // Verificar se o nome capturado é ruído de cabeçalho do formulário
   const isBoilerplate = (n: string) => !n || n.length < 4 || /^(?:INSCRI[ÇC][ÃA]O|IDENTIFICA[ÇC][ÃA]O|DOCUMENTO|DANFE|EMPRESA EMITENTE|SUBST|TRIBUT|CHAVE|PROTOCOLO)/i.test(n);
+
+  // Prioridade 1: Identificação direta do emitente
+  const identMatch = text.match(/(?:IDENTIFICA[ÇC][ÃA]O\s+DO\s+EMITENTE|DADOS\s+DO\s+EMITENTE)[\s\r\n:-]+([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)(?:[\r\n]+|\s+CNPJ)/i);
+  if (identMatch) {
+    const raw = identMatch[1].trim();
+    if (!isBoilerplate(raw)) {
+      emitNome = raw;
+    }
+  }
+
+  // Prioridade 2: Canhoto "RECEBEMOS DE ..."
+  if (!emitNome) {
+    const reciboMatch = text.match(/RECEBEMOS DE\s+([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)\s+(?:OS PRODUTOS|DANFE|NF-e|CNPJ)/i);
+    if (reciboMatch) {
+      emitNome = reciboMatch[1].trim();
+    }
+  }
 
   if (isBoilerplate(emitNome)) {
     // Buscar próximo ao CNPJ do emitente ou debaixo do cabeçalho
@@ -642,6 +714,15 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
 
     if (netLabelMatch && !transpPesoLStr) transpPesoLStr = netLabelMatch[1].trim();
     if (grossLabelMatch && !transpPesoBStr) transpPesoBStr = grossLabelMatch[1].trim();
+
+    // Rótulo genérico PESO (ex: PESO \n 42000.000 KG)
+    if (!transpPesoBStr) {
+      const singlePesoMatch = transpTextClean.match(/(?:PESO|PESO\s+BRUTO|P\.\s*BRUTO)\s*[:=-]?\s*(?:\n|\r\n)?\s*(\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:[.,]\d+)?)/i);
+      if (singlePesoMatch) {
+        transpPesoBStr = singlePesoMatch[1].trim();
+        if (!transpPesoLStr) transpPesoLStr = transpPesoBStr;
+      }
+    }
 
     // Se os rótulos não tiverem valores imediatamente adjacentes (ex: cabeçalhos de tabela)
     if (!transpPesoLStr || !transpPesoBStr) {

@@ -32,7 +32,7 @@ export interface NFEData {
   terminalEntrega: string
   transbordo: string
   retirada: string
-  tipoProduto: "SOJA" | "MILHO" | "ACUCAR" | "OUTRO"
+  tipoProduto: "SOJA" | "MILHO" | "ACUCAR" | "FARELO" | "OUTRO"
   // Emitente
   emitente: {
     cnpj: string
@@ -621,7 +621,7 @@ function formatTime(dateStr: string): string {
   }
 }
 
-function formatCNPJ(cnpj: string): string {
+export function formatCNPJ(cnpj: string): string {
   if (!cnpj) return ""
   const cleaned = cnpj.replace(/\D/g, "")
   if (cleaned.length !== 14) return cnpj
@@ -939,9 +939,10 @@ function extractRetirada(infComplementares: string): string {
   return val
 }
 
-function detectTipoProduto(descricaoProduto: string, infComplementares: string): "SOJA" | "MILHO" | "ACUCAR" | "OUTRO" {
+export function detectTipoProduto(descricaoProduto: string, infComplementares: string): "SOJA" | "MILHO" | "ACUCAR" | "FARELO" | "OUTRO" {
   const texto = (descricaoProduto + " " + infComplementares).toUpperCase()
   
+  if (texto.includes("FARELO") && texto.includes("SOJA")) return "FARELO"
   if (texto.includes("SOJA")) return "SOJA"
   if (texto.includes("MILHO")) return "MILHO"
   if (texto.includes("ACUCAR") || texto.includes("AÇUCAR") || texto.includes("AÇÚCAR")) return "ACUCAR"
@@ -949,4 +950,147 @@ function detectTipoProduto(descricaoProduto: string, infComplementares: string):
   return "OUTRO"
 }
 
-// Alteração para teste de deploy
+/**
+ * Identifica e padroniza a mercadoria/produto (SOJA, MILHO, AÇÚCAR, FARELO DE SOJA, etc.)
+ * a partir de dados da nota fiscal, XML, PDF ou coluna mercadoria da planilha Excel.
+ */
+export function extractMercadoria(
+  nota?: any,
+  rawExcelMercadoria?: string,
+  rawText?: string
+): string {
+  // 1. Se fornecido via planilha Excel (coluna Mercadoria ou Produto)
+  const excelStr = String(rawExcelMercadoria || '').trim()
+  if (excelStr && excelStr !== '-' && excelStr !== 'N/A' && excelStr !== 'N/I' && excelStr !== 'null') {
+    const excelUpper = excelStr.toUpperCase()
+    if (excelUpper.includes('FARELO') && excelUpper.includes('SOJA')) return 'FARELO DE SOJA'
+    if (excelUpper.includes('SOJA')) return 'SOJA'
+    if (excelUpper.includes('MILHO')) return 'MILHO'
+    if (excelUpper.includes('ACUCAR') || excelUpper.includes('AÇUCAR') || excelUpper.includes('AÇÚCAR')) return 'AÇÚCAR'
+    if (excelUpper.includes('TRIGO')) return 'TRIGO'
+    if (excelUpper.includes('ALGOD')) return 'ALGODÃO'
+    if (excelUpper.includes('FERTILIZ') || excelUpper.includes('ADUBO')) return 'FERTILIZANTE'
+    if (excelUpper.includes('MINER') || excelUpper.includes('MINÉRIO')) return 'MINÉRIO'
+    if (excelUpper.includes('CLINKER') || excelUpper.includes('CIMENTO')) return 'CLÍNKER'
+    if (excelUpper.includes('CELULOSE')) return 'CELULOSE'
+    if (excelStr.length <= 40) return excelStr.toUpperCase()
+  }
+
+  // 2. Extração dos dados da nota fiscal (nfeData ou parsedData)
+  const nfe = nota?.nfeData || nota
+  const parsed = nota?.parsedData || (nota?.prodNome ? nota : null)
+
+  const desc = nfe?.produtos?.[0]?.descricao || parsed?.prodNome || ''
+  const infCpl = nfe?.informacoesComplementares || parsed?.infCpl || ''
+  const tp = nfe?.tipoProduto || ''
+
+  const combined = `${tp} ${desc} ${infCpl} ${rawText || ''}`.toUpperCase()
+
+  if (combined.includes('FARELO') && combined.includes('SOJA')) return 'FARELO DE SOJA'
+  if (combined.includes('SOJA')) return 'SOJA'
+  if (combined.includes('MILHO')) return 'MILHO'
+  if (combined.includes('ACUCAR') || combined.includes('AÇUCAR') || combined.includes('AÇÚCAR')) return 'AÇÚCAR'
+  if (combined.includes('TRIGO')) return 'TRIGO'
+  if (combined.includes('ALGOD')) return 'ALGODÃO'
+  if (combined.includes('FERTILIZ') || combined.includes('ADUBO')) return 'FERTILIZANTE'
+  if (combined.includes('MINER') || combined.includes('MINÉRIO')) return 'MINÉRIO'
+  if (combined.includes('CLINKER') || combined.includes('CIMENTO')) return 'CLÍNKER'
+  if (combined.includes('CELULOSE')) return 'CELULOSE'
+
+  if (desc && desc.trim().length > 0) {
+    return desc.trim().toUpperCase()
+  }
+
+  if (excelStr && excelStr !== '-' && excelStr !== 'N/A') {
+    return excelStr.toUpperCase()
+  }
+
+  return 'N/I'
+}
+
+/**
+ * Extrai e formata a Data de Emissão.
+ * Se tiver rawDate (ex: '2024-03-15T...', '15/03/2024'), formata para DD/MM/AAAA.
+ * Se rawDate for nulo ou inválido, deriva MM/AAAA da Chave de Acesso (44 dígitos: AAMM nas posições 2 a 5).
+ */
+export function extractDataEmissao(rawDate?: any, key?: string): string {
+  if (rawDate instanceof Date && !isNaN(rawDate.getTime())) {
+    const d = String(rawDate.getDate()).padStart(2, '0')
+    const m = String(rawDate.getMonth() + 1).padStart(2, '0')
+    const y = rawDate.getFullYear()
+    return `${d}/${m}/${y}`
+  }
+  if (rawDate !== undefined && rawDate !== null) {
+    const s = String(rawDate).trim()
+    if (s && s !== 'Não informada' && s !== 'N/I' && s !== 'N/A' && s !== 'null' && s !== 'undefined' && s !== '-') {
+      // Formato ISO: YYYY-MM-DD...
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        const parts = s.substring(0, 10).split('-')
+        return `${parts[2]}/${parts[1]}/${parts[0]}`
+      }
+      // Formato DD/MM/YYYY ou D/M/YYYY
+      if (/^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(s)) {
+        const parts = s.split(' ')[0].split('/')
+        const d = parts[0].padStart(2, '0')
+        const m = parts[1].padStart(2, '0')
+        const y = parts[2].length === 2 ? `20${parts[2]}` : parts[2]
+        return `${d}/${m}/${y}`
+      }
+      // Formato DD-MM-YYYY
+      if (/^\d{1,2}-\d{1,2}-\d{4}/.test(s)) {
+        const parts = s.split(' ')[0].split('-')
+        const d = parts[0].padStart(2, '0')
+        const m = parts[1].padStart(2, '0')
+        return `${d}/${m}/${parts[2]}`
+      }
+      // Se for número serial do Excel (ex: 45367)
+      const num = Number(s)
+      if (!isNaN(num) && num > 30000 && num < 60000) {
+        try {
+          const date = new Date(Math.round((num - 25569) * 86400 * 1000))
+          if (!isNaN(date.getTime())) {
+            const d = String(date.getUTCDate()).padStart(2, '0')
+            const m = String(date.getUTCMonth() + 1).padStart(2, '0')
+            const y = date.getUTCFullYear()
+            return `${d}/${m}/${y}`
+          }
+        } catch {
+          // fallback
+        }
+      }
+      return s.split(' ')[0]
+    }
+  }
+  // Extrai da Chave de Acesso (44 dígitos)
+  const cleanKey = (key || '').replace(/\D/g, '')
+  if (cleanKey.length === 44) {
+    const yy = cleanKey.substring(2, 4)
+    const mm = cleanKey.substring(4, 6)
+    const mmNum = parseInt(mm, 10)
+    if (mmNum >= 1 && mmNum <= 12) {
+      return `${mm}/20${yy}`
+    }
+  }
+  return 'N/I'
+}
+
+/**
+ * Extrai o Número da NF.
+ * Se tiver rawNumero, desformata/remove zeros à esquerda.
+ * Se rawNumero for nulo ou inválido, extrai da Chave de Acesso (44 dígitos: nNF nas posições 25 a 33).
+ */
+export function extractNumeroNF(rawNumero?: any, key?: string): string {
+  if (rawNumero !== undefined && rawNumero !== null) {
+    const s = String(rawNumero).trim()
+    if (s && s !== 'N/I' && s !== 'N/A' && s !== 'Não informado' && s !== 'null' && s !== 'undefined' && s !== '-') {
+      const unpadded = s.replace(/^0+/, '')
+      return unpadded || s
+    }
+  }
+  const cleanKey = (key || '').replace(/\D/g, '')
+  if (cleanKey.length === 44) {
+    const numPart = cleanKey.substring(25, 34).replace(/^0+/, '')
+    return numPart || cleanKey.substring(25, 34)
+  }
+  return 'N/I'
+}

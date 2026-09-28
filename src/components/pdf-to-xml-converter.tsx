@@ -3,7 +3,7 @@
 import React, { useState, useCallback, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { parseNFE, verifyChaveCNPJ, type NFEData } from '@/lib/nfe-parser'
+import { parseNFE, verifyChaveCNPJ, type NFEData, extractDataEmissao, extractNumeroNF, formatCNPJ } from '@/lib/nfe-parser'
 import { parsePdfClientSide } from '@/lib/client-pdf-parser'
 import { generatePDF } from '@/lib/pdf-generator'
 import { Dashboard } from '@/components/dashboard'
@@ -170,6 +170,8 @@ interface ExcelMatchInfo {
   vagao?: string
   pesoBruto?: number | null
   pesoBrutoStr?: string
+  dataEmissao?: string
+  numero?: string
 }
 
 export interface WagonSummary {
@@ -201,6 +203,8 @@ export interface ExcelRowRecord {
   pesoBrutoStr?: string
   rawValue?: string
   hasData?: boolean
+  dataEmissao?: string
+  numero?: string
 }
 
 interface ExcelData {
@@ -1265,6 +1269,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       let taraColIndex = -1
       let vagaoColIndex = -1
       let brutoColIndex = -1
+      let dataEmissaoColIndex = -1
+      let numeroColIndex = -1
 
       for (let r = 0; r < Math.min(rows.length, 30); r++) {
         const headerRow = rows[r]
@@ -1321,6 +1327,44 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             brutoColIndex = c
           }
 
+          if (
+            dataEmissaoColIndex === -1 &&
+            (cellStr === 'data' ||
+              cellStr === 'dt_emissao' ||
+              cellStr === 'dt emissao' ||
+              cellStr === 'data_emissao' ||
+              cellStr === 'data emissao' ||
+              cellStr.includes('data_emissao') ||
+              cellStr.includes('data emissao') ||
+              cellStr.includes('data_emissão') ||
+              cellStr.includes('data emissão') ||
+              cellStr.includes('data_de_emissao') ||
+              cellStr.includes('data de emissao') ||
+              cellStr.includes('dhemi') ||
+              cellStr.includes('demi') ||
+              cellStr.includes('dt. emiss') ||
+              cellStr.includes('dt.emiss'))
+          ) {
+            dataEmissaoColIndex = c
+          }
+
+          if (
+            numeroColIndex === -1 &&
+            (cellStr === 'numero' ||
+              cellStr === 'número' ||
+              cellStr === 'nfe' ||
+              cellStr === 'nf' ||
+              cellStr === 'num' ||
+              cellStr.includes('numero_nf') ||
+              cellStr.includes('numero da nota') ||
+              cellStr.includes('nº nota') ||
+              cellStr.includes('num_nf') ||
+              cellStr.includes('nr_nota') ||
+              cellStr.includes('nnf'))
+          ) {
+            numeroColIndex = c
+          }
+
           // Identificação da Coluna de Peso Selecionado
           if (pesoColIndex === -1) {
             if (weightColumnChoice === 'none') {
@@ -1365,6 +1409,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         vagao: string
         brutoRow: number | null
         hasData: boolean
+        dataEmissao?: string
+        numero?: string
       }
 
       const tempRowRecords: TempRowRecord[] = []
@@ -1457,6 +1503,26 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           }
         }
 
+        let rowDataEmissao = ''
+        if (dataEmissaoColIndex !== -1 && row[dataEmissaoColIndex] !== undefined && row[dataEmissaoColIndex] !== null) {
+          const val = String(row[dataEmissaoColIndex]).trim()
+          if (val) rowDataEmissao = val
+        } else {
+          for (let c = 0; c < row.length; c++) {
+            const val = String(row[c] || '').trim()
+            if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(val) || /^\d{4}-\d{2}-\d{2}/.test(val)) {
+              rowDataEmissao = val
+              break
+            }
+          }
+        }
+
+        let rowNumero = ''
+        if (numeroColIndex !== -1 && row[numeroColIndex] !== undefined && row[numeroColIndex] !== null) {
+          const val = String(row[numeroColIndex]).trim()
+          if (val) rowNumero = val
+        }
+
         // Extração de chaves de acesso
         const rowKeys: string[] = []
         let primaryRawValue = ''
@@ -1498,6 +1564,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           vagao,
           brutoRow,
           hasData: true,
+          dataEmissao: rowDataEmissao,
+          numero: rowNumero,
         })
       })
 
@@ -1577,6 +1645,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                 vagao: rec.vagao,
                 pesoBruto: pesoBrutoCalc,
                 pesoBrutoStr,
+                dataEmissao: rec.dataEmissao,
+                numero: rec.numero,
               })
               allKeysList.push(k)
             }
@@ -1597,6 +1667,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
               pesoBrutoStr,
               rawValue: rec.rawValue,
               hasData: true,
+              dataEmissao: rec.dataEmissao,
+              numero: rec.numero,
             })
           })
         } else {
@@ -1617,6 +1689,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             pesoBrutoStr,
             rawValue: rec.rawValue,
             hasData: true,
+            dataEmissao: rec.dataEmissao,
+            numero: rec.numero,
           })
         }
       })
@@ -2334,21 +2408,30 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       XLSX.utils.book_append_sheet(wb, wsWagons, 'Consolidação por Vagão')
     }
 
+    // Indexar todos os arquivos/resultados por chave e por número da NF
+    const filesByKey = new Map<string, any>()
+    const filesByNumero = new Map<string, any>()
+    results.forEach((res) => {
+      const k = getNormalizedKey(res) || (res.parsedData?.chave || '').replace(/\D/g, '') || (res.nfeData?.chaveAcesso || '').replace(/\D/g, '')
+      if (k) {
+        filesByKey.set(k, res)
+        const cleanK = k.replace(/\D/g, '')
+        if (cleanK) {
+          filesByKey.set(cleanK, res)
+          if (cleanK.length === 43) filesByKey.set('0' + cleanK, res)
+          if (cleanK.length === 44 && cleanK.startsWith('0')) filesByKey.set(cleanK.substring(1), res)
+        }
+      }
+      const num = String(res.nfeData?.numero || res.parsedData?.nNF || '').trim().replace(/^0+/, '')
+      if (num) {
+        filesByNumero.set(num, res)
+      }
+    })
+
     // 4. ABA TOTAL DE ARQUIVOS (ORDENADOS CONFORME A ORDEM DAS LINHAS DA PLANILHA EXCEL)
     let rowsTotalOrdered: any[] = []
 
     if (excelData && excelData.allRowsList && excelData.allRowsList.length > 0) {
-      // Indexar arquivos por chave
-      const filesByKey = new Map<string, any>()
-      validConvertedResults.forEach((res) => {
-        const k = getNormalizedKey(res)
-        if (k) {
-          filesByKey.set(k, res)
-          if (k.length === 43) filesByKey.set('0' + k, res)
-          if (k.length === 44 && k.startsWith('0')) filesByKey.set(k.substring(1), res)
-        }
-      })
-
       const matchedFilesSet = new Set<any>()
 
       // 1. Percorrer TODAS as linhas da planilha Excel na sequência original
@@ -2383,18 +2466,23 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             ? itemAudit.pesoCorrigidoDoc
             : (overrideWeightsMap[key || resMatch.fileName] !== undefined ? overrideWeightsMap[key || resMatch.fileName] : qtdNota)
 
+          const numNF = extractNumeroNF(d?.nNF || resMatch.nfeData?.numero, key || d?.chave)
+          const dtEmissao = extractDataEmissao(d?.dhEmi || d?.dataEmissao || resMatch.nfeData?.dataEmissao, key || d?.chave)
+
           rowsTotalOrdered.push({
             'Posição / Linha Excel': `Linha ${rowRec.row} (${rowRec.sheetName})`,
             'Status Conferência Excel': 'CONSTA NA PLANILHA',
             'Vagão (Excel)': rowRec.vagao || matchInfo?.vagao || 'N/A',
             'Chave de Acesso': key || d?.chave || rowRec.key || '',
+            'Número NF': numNF,
+            'Data de Emissão': dtEmissao,
             'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
             'Destinatário CNPJ': destCNPJ,
             'Destinatário': d?.destNome || resMatch.nfeData?.destinatario?.nome || '',
             'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
             'Validação CNPJ': vCNPJ.statusLabel,
             'Comprovação da Divergência / Detalhes': vCNPJ.details,
-            'Nº Nota (nNF)': d?.nNF || resMatch.nfeData?.numero || '',
+            'Nº Nota (nNF)': numNF,
             'Série': d?.serie || resMatch.nfeData?.serie || '',
             'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
             'Peso Nota Vagão (Excel)': rowRec.pesoNotaVagaoStr || matchInfo?.pesoNotaVagaoStr || 'N/A',
@@ -2422,7 +2510,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           // LINHA DA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE CARREGADO
           const cleanKey = rowRec.key || ''
           const cnpjFromKey = cleanKey.length === 44 ? cleanKey.substring(6, 20) : 'N/A'
-          const numFromKey = cleanKey.length === 44 ? (cleanKey.substring(25, 34).replace(/^0+/, '') || 'N/A') : 'N/A'
+          const numFromKey = extractNumeroNF(cleanKey.length === 44 ? cleanKey.substring(25, 34) : '', cleanKey)
+          const dtFromKey = extractDataEmissao('', cleanKey)
           const serieFromKey = cleanKey.length === 44 ? (cleanKey.substring(22, 25).replace(/^0+/, '') || 'N/A') : 'N/A'
 
           rowsTotalOrdered.push({
@@ -2430,13 +2519,15 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             'Status Conferência Excel': cleanKey ? 'NÃO ENCONTRADO NOS ARQUIVOS (CONSTA APENAS NO EXCEL)' : 'SEM CHAVE NA LINHA DO EXCEL (NÃO ENCONTRADO NOS ARQUIVOS)',
             'Vagão (Excel)': rowRec.vagao || 'N/A',
             'Chave de Acesso': cleanKey || 'SEM CHAVE NA LINHA',
+            'Número NF': cleanKey ? numFromKey : 'N/A',
+            'Data de Emissão': cleanKey ? dtFromKey : 'N/A',
             'CNPJ na Chave': cnpjFromKey,
             'Destinatário CNPJ': 'NÃO ENCONTRADO NOS ARQUIVOS',
             'Destinatário': 'NÃO ENCONTRADO NOS ARQUIVOS',
             'Confronto (Chave vs Destinatário)': 'NÃO ENCONTRADO NOS ARQUIVOS',
             'Validação CNPJ': 'NÃO ENCONTRADO NOS ARQUIVOS',
             'Comprovação da Divergência / Detalhes': 'NÃO ENCONTRADO NOS ARQUIVOS',
-            'Nº Nota (nNF)': numFromKey !== 'N/A' ? numFromKey : 'NÃO ENCONTRADO NOS ARQUIVOS',
+            'Nº Nota (nNF)': cleanKey ? numFromKey : 'NÃO ENCONTRADO NOS ARQUIVOS',
             'Série': serieFromKey !== 'N/A' ? serieFromKey : 'N/A',
             'Peso Selecionado (Excel)': rowRec.pesoSelecionadoStr || 'N/A',
             'Peso Nota Vagão (Excel)': rowRec.pesoNotaVagaoStr || 'N/A',
@@ -2467,17 +2558,21 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
           const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
           const qtdNota = getResultQuantidade(res)
+          const numNF = extractNumeroNF(d?.nNF || res.nfeData?.numero, key || d?.chave)
+          const dtEmissao = extractDataEmissao(d?.dhEmi || d?.dataEmissao || res.nfeData?.dataEmissao, key || d?.chave)
 
           rowsTotalOrdered.push({
             'Posição / Linha Excel': 'Fora da Planilha Excel',
             'Status Conferência Excel': 'NÃO CONSTA NA PLANILHA',
             'Vagão (Excel)': 'N/A',
             'Chave de Acesso': key || d?.chave || '',
+            'Número NF': numNF,
+            'Data de Emissão': dtEmissao,
             'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
             'Destinatário CNPJ': destCNPJ,
             'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
             'Validação CNPJ': vCNPJ.statusLabel,
-            'Nº Nota (nNF)': d?.nNF || '',
+            'Nº Nota (nNF)': numNF,
             'Série': d?.serie || '',
             'Peso Selecionado (Excel)': 'N/A',
             'Peso Nota Vagão (Excel)': 'N/A',
@@ -2512,17 +2607,21 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
         const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
         const qtdNota = getResultQuantidade(res)
+        const numNF = extractNumeroNF(d?.nNF || res.nfeData?.numero, key || d?.chave)
+        const dtEmissao = extractDataEmissao(d?.dhEmi || d?.dataEmissao || res.nfeData?.dataEmissao, key || d?.chave)
 
         return {
           'Posição / Linha Excel': 'Fora da Planilha Excel',
           'Status Conferência Excel': 'SEM PLANILHA EXCEL',
           'Vagão (Excel)': 'N/A',
           'Chave de Acesso': key || d?.chave || '',
+          'Número NF': numNF,
+          'Data de Emissão': dtEmissao,
           'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
           'Destinatário CNPJ': destCNPJ,
           'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
           'Validação CNPJ': vCNPJ.statusLabel,
-          'Nº Nota (nNF)': d?.nNF || '',
+          'Nº Nota (nNF)': numNF,
           'Série': d?.serie || '',
           'Peso Selecionado (Excel)': 'N/A',
           'Peso Nota Vagão (Excel)': 'N/A',
@@ -2567,6 +2666,8 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
         ? itemAudit.pesoCorrigidoDoc
         : (overrideWeightsMap[key || res.fileName] !== undefined ? overrideWeightsMap[key || res.fileName] : qtdNota)
+      const numNF = extractNumeroNF(d?.nNF || res.nfeData?.numero, key || d?.chave)
+      const dtEmissao = extractDataEmissao(d?.dhEmi || d?.dataEmissao || res.nfeData?.dataEmissao, key || d?.chave)
 
       return {
         'Linha no Excel': matchInfo ? `Linha ${matchInfo.row}` : 'N/A',
@@ -2574,11 +2675,13 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         'Status Conferência': 'CONSTA NA PLANILHA EXCEL',
         'Vagão (Excel)': matchInfo?.vagao || 'N/A',
         'Chave de Acesso': key || d?.chave || '',
+        'Número NF': numNF,
+        'Data de Emissão': dtEmissao,
         'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
         'Destinatário CNPJ': destCNPJ,
         'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
         'Validação CNPJ': vCNPJ.statusLabel,
-        'Nº Nota (nNF)': d?.nNF || '',
+        'Nº Nota (nNF)': numNF,
         'Série': d?.serie || '',
         'Peso Selecionado (Excel)': vWeight.pesoExcelStr,
         'Peso Nota Vagão (Excel)': matchInfo?.pesoNotaVagaoStr || 'N/A',
@@ -2608,42 +2711,118 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     XLSX.utils.book_append_sheet(wb, wsMatched, 'Notas Encontradas')
 
     // 4. ABA NOTAS QUE NÃO CONSTAM NA PLANILHA EXCEL
-    const rowsUnmatched = unmatchedResults.map((res) => {
-      const d = res.parsedData
-      const key = getNormalizedKey(res)
-      const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
-      const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
-      const qtdNota = getResultQuantidade(res)
+    const rowsUnmatched = unmatchedResults.length > 0
+      ? unmatchedResults.map((res) => {
+          const d = res.parsedData
+          const key = getNormalizedKey(res)
+          const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
+          const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
+          const qtdNota = getResultQuantidade(res)
+          const numNF = extractNumeroNF(d?.nNF || res.nfeData?.numero, key || d?.chave)
+          const dtEmissao = extractDataEmissao(d?.dhEmi || d?.dataEmissao || res.nfeData?.dataEmissao, key || d?.chave)
 
-      return {
-        'Status Conferência': 'NÃO CONSTA NA PLANILHA EXCEL',
-        'Chave de Acesso': key || d?.chave || '',
-        'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
-        'Destinatário CNPJ': destCNPJ,
-        'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
-        'Validação CNPJ': vCNPJ.statusLabel,
-        'Nº Nota (nNF)': d?.nNF || '',
-        'Série': d?.serie || '',
-        'Quantidade Extraída (Nota)': qtdNota,
-        'Valor Total (R$)': d?.vNF || 0,
-        'Emitente': d?.emitNome || '',
-        'CNPJ Emitente': d?.emitCNPJ || '',
-        'Destinatário': d?.destNome || '',
-        'Nome do Arquivo': res.fileName,
-        'Tipo Documento': subMode === 'pdf-to-xml' ? 'PDF' : 'XML',
-        'Observação': 'Nota fiscal importada mas a chave de acesso não foi encontrada na planilha Excel',
-      }
-    })
+          return {
+            'Status Conferência': 'NÃO CONSTA NA PLANILHA EXCEL',
+            'Chave de Acesso': key || d?.chave || '',
+            'Número NF': numNF,
+            'Data de Emissão': dtEmissao,
+            'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+            'Destinatário CNPJ': destCNPJ,
+            'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+            'Validação CNPJ': vCNPJ.statusLabel,
+            'Nº Nota (nNF)': numNF,
+            'Série': d?.serie || '',
+            'Quantidade Extraída (Nota)': qtdNota,
+            'Valor Total (R$)': d?.vNF || 0,
+            'Emitente': d?.emitNome || '',
+            'CNPJ Emitente': d?.emitCNPJ || '',
+            'Destinatário': d?.destNome || '',
+            'Nome do Arquivo': res.fileName,
+            'Tipo Documento': subMode === 'pdf-to-xml' ? 'PDF' : 'XML',
+            'Observação': 'Nota fiscal importada mas a chave de acesso não foi encontrada na planilha Excel',
+          }
+        })
+      : [
+          {
+            'Status Conferência': 'NENHUMA NOTA AUSENTE',
+            'Chave de Acesso': 'TODAS AS NOTAS FORAM ENCONTRADAS NA PLANILHA EXCEL',
+            'Número NF': '-',
+            'Data de Emissão': '-',
+            'CNPJ na Chave': '-',
+            'Destinatário CNPJ': '-',
+            'Confronto (Chave vs Destinatário)': '-',
+            'Validação CNPJ': '-',
+            'Nº Nota (nNF)': '-',
+            'Série': '-',
+            'Quantidade Extraída (Nota)': 0,
+            'Valor Total (R$)': 0,
+            'Emitente': '-',
+            'CNPJ Emitente': '-',
+            'Destinatário': '-',
+            'Nome do Arquivo': '-',
+            'Tipo Documento': '-',
+            'Observação': 'Todas as notas fiscais importadas constam perfeitamente na planilha Excel.',
+          },
+        ]
     const wsUnmatched = createFormattedWorksheet(rowsUnmatched)
     XLSX.utils.book_append_sheet(wb, wsUnmatched, 'Notas Ausentes no Excel')
 
     // 5. ABA CHAVES / LINHAS NA PLANILHA EXCEL SEM ARQUIVO CORRESPONDENTE (SEMPRE GERADA)
     if (excelData) {
       const rowsExcelOnly = excelRowsWithoutFiles.map((rowRec) => {
-        const cleanKey = rowRec.key || ''
+        const cleanKey = (rowRec.key || '').replace(/\D/g, '')
         const matchInfo = cleanKey ? getExcelMatchInfo(cleanKey) : null
         const isMissingFile = !!cleanKey
+
+        // Localizar a nota correspondente no sistema (se houver)
+        let noteFile = cleanKey ? (filesByKey.get(cleanKey) || (cleanKey.length === 44 && cleanKey.startsWith('0') ? filesByKey.get(cleanKey.substring(1)) : null) || (cleanKey.length === 43 ? filesByKey.get('0' + cleanKey) : null)) : null
+
+        const rawNFFromKey = cleanKey.length === 44 ? cleanKey.substring(25, 34) : ''
+        const derivedNF = extractNumeroNF(rowRec.numero || rawNFFromKey, cleanKey)
+
+        if (!noteFile && derivedNF && derivedNF !== 'N/I' && derivedNF !== 'N/A') {
+          noteFile = filesByNumero.get(derivedNF.replace(/^0+/, ''))
+        }
+
+        // Pega a data completa DIRETO DA NOTA (como o sistema já faz em outras planilhas)
+        const rawDateFromNote = noteFile?.parsedData?.dhEmi || noteFile?.parsedData?.dataEmissao || noteFile?.nfeData?.dataEmissao
+        const rawDateFromExcel = rowRec.dataEmissao || matchInfo?.dataEmissao
+        const rawDate = rawDateFromNote || rawDateFromExcel
+
+        const dtEmissao = cleanKey || rawDate ? extractDataEmissao(rawDate, cleanKey) : 'N/A'
+        const numNF = noteFile ? extractNumeroNF(noteFile.parsedData?.nNF || noteFile.nfeData?.numero, cleanKey) : (derivedNF || 'N/A')
+
+        const emitCNPJ = noteFile?.parsedData?.emitCNPJ || noteFile?.nfeData?.emitente?.cnpj || (cleanKey.length === 44 ? formatCNPJ(cleanKey.substring(6, 20)) : '')
+        const destCNPJ = noteFile?.parsedData?.destCNPJ || noteFile?.nfeData?.destinatario?.cpfCnpj || ''
+        const vCNPJ = (cleanKey ? verifyChaveCNPJ(cleanKey, emitCNPJ, destCNPJ) : { chaveCnpj: '', confrontoChaveXDest: 'Não confrontado', statusLabel: 'N/A', details: '' })
+        const serie = noteFile?.parsedData?.serie || noteFile?.nfeData?.serie || (cleanKey.length === 44 ? cleanKey.substring(22, 25).replace(/^0+/, '') : '')
+        const qtdNota = noteFile ? getResultQuantidade(noteFile) : 0
+        const valorTotal = noteFile?.parsedData?.vNF || noteFile?.nfeData?.impostos?.valorTotal || 0
+        const emitNome = noteFile?.parsedData?.emitNome || noteFile?.nfeData?.emitente?.nome || ''
+        const destNome = noteFile?.parsedData?.destNome || noteFile?.nfeData?.destinatario?.nome || ''
+        const fileName = noteFile?.fileName || (isMissingFile ? 'Nenhum arquivo importado' : '-')
+        const tipoDoc = noteFile ? (noteFile.xmlContent ? 'XML' : 'PDF') : (isMissingFile ? 'Sem Arquivo' : '-')
+
         return {
+          'Status Conferência': isMissingFile
+            ? (noteFile ? 'CONSTA NA PLANILHA EXCEL (VINCULADA)' : 'FALTANDO ARQUIVO DE NOTA (PDF/XML)')
+            : 'LINHA NO EXCEL SEM CHAVE DE ACESSO',
+          'Chave de Acesso': cleanKey || 'SEM CHAVE NA LINHA',
+          'Número NF': cleanKey ? numNF : 'N/A',
+          'Data de Emissão': cleanKey ? dtEmissao : 'N/A',
+          'CNPJ na Chave': vCNPJ.chaveCnpj || (cleanKey.length === 44 ? formatCNPJ(cleanKey.substring(6, 20)) : '-'),
+          'Destinatário CNPJ': destCNPJ || '-',
+          'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest || '-',
+          'Validação CNPJ': vCNPJ.statusLabel || '-',
+          'Nº Nota (nNF)': cleanKey ? numNF : 'N/A',
+          'Série': serie || '-',
+          'Quantidade Extraída (Nota)': qtdNota,
+          'Valor Total (R$)': valorTotal,
+          'Emitente': emitNome || '-',
+          'CNPJ Emitente': emitCNPJ || '-',
+          'Destinatário': destNome || '-',
+          'Nome do Arquivo': fileName,
+          'Tipo Documento': tipoDoc,
           'Linha no Excel': `Linha ${rowRec.row}`,
           'Aba no Excel': rowRec.sheetName,
           'Chave de Acesso (Excel)': cleanKey || 'SEM CHAVE NA LINHA',
@@ -2653,16 +2832,35 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           'Tara (Excel)': rowRec.taraStr || matchInfo?.taraStr || 'N/A',
           'Peso Bruto do Vagão': rowRec.pesoBrutoStr || matchInfo?.pesoBrutoStr || 'N/A',
           'Conteúdo Original Célula': rowRec.rawValue || matchInfo?.rawValue || '',
-          'Status': isMissingFile ? 'FALTANDO ARQUIVO DE NOTA (PDF/XML)' : 'LINHA NO EXCEL SEM CHAVE DE ACESSO',
-          'Observação': isMissingFile
-            ? 'Chave de 44 dígitos consta na planilha Excel, porém nenhum arquivo correspondente foi importado'
-            : 'Linha presente na planilha Excel sem chave de acesso de 44 dígitos identificada',
+          'Status': isMissingFile ? (noteFile ? 'ARQUIVO LOCALIZADO / VINCULADO' : 'FALTANDO ARQUIVO DE NOTA (PDF/XML)') : 'LINHA NO EXCEL SEM CHAVE DE ACESSO',
+          'Observação': noteFile
+            ? 'Nota fiscal identificada no sistema para esta chave da planilha Excel'
+            : (isMissingFile
+              ? 'Chave de 44 dígitos consta na planilha Excel, porém nenhum arquivo correspondente foi importado'
+              : 'Linha presente na planilha Excel sem chave de acesso de 44 dígitos identificada'),
         }
       })
 
-      // Se todas as notas estiverem 100% presentes, exibe uma linha informativa clara
+      // Se todas as notas estiverem 100% presentes, exibe uma linha informativa clara com todas as colunas
       if (rowsExcelOnly.length === 0) {
         rowsExcelOnly.push({
+          'Status Conferência': 'TODAS AS CHAVES FORAM ENCONTRADAS (100% CONFERIDO)',
+          'Chave de Acesso': '-',
+          'Número NF': '-',
+          'Data de Emissão': '-',
+          'CNPJ na Chave': '-',
+          'Destinatário CNPJ': '-',
+          'Confronto (Chave vs Destinatário)': '-',
+          'Validação CNPJ': '-',
+          'Nº Nota (nNF)': '-',
+          'Série': '-',
+          'Quantidade Extraída (Nota)': 0,
+          'Valor Total (R$)': 0,
+          'Emitente': '-',
+          'CNPJ Emitente': '-',
+          'Destinatário': '-',
+          'Nome do Arquivo': '-',
+          'Tipo Documento': '-',
           'Linha no Excel': 'Nenhuma pendência',
           'Aba no Excel': '-',
           'Chave de Acesso (Excel)': '-',
@@ -3491,23 +3689,48 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                   </div>
                   <div className="divide-y divide-indigo-100 dark:divide-indigo-900/30 max-h-96 overflow-y-auto">
                     {excelKeysWithoutFiles.map((key, idx) => {
-                      const matchInfo = getExcelMatchInfo(key)
+                      const cleanKey = (key || '').replace(/\D/g, '')
+                      const matchInfo = getExcelMatchInfo(cleanKey)
+                      const rawNFFromKey = cleanKey.length === 44 ? cleanKey.substring(25, 34) : ''
+                      const derivedNF = extractNumeroNF(matchInfo?.numero || rawNFFromKey, cleanKey)
+                      const noteFile = cleanKey ? results.find((r) => {
+                        const fk = (r.nfeData?.chaveAcesso || r.parsedData?.chave || '').replace(/\D/g, '')
+                        if (fk === cleanKey) return true
+                        if (derivedNF && (r.nfeData?.numero === derivedNF || r.parsedData?.nNF === derivedNF)) return true
+                        return false
+                      }) : null
+                      const rawDate = noteFile?.parsedData?.dhEmi || noteFile?.parsedData?.dataEmissao || noteFile?.nfeData?.dataEmissao || matchInfo?.dataEmissao
+                      const dtEmissao = cleanKey || rawDate ? extractDataEmissao(rawDate, cleanKey) : ''
+                      const numNF = noteFile ? extractNumeroNF(noteFile.parsedData?.nNF || noteFile.nfeData?.numero, cleanKey) : (derivedNF || '')
                       return (
                         <div key={idx} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-2 font-mono font-semibold text-zinc-800 dark:text-zinc-200">
-                              <span>{key}</span>
-                              <button
-                                type="button"
-                                onClick={() => copyToClipboard(key)}
-                                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors"
-                                title="Copiar chave"
-                              >
-                                {copiedKey === key ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
-                              </button>
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              {cleanKey && numNF && (
+                                <span className="text-[11px] font-bold text-indigo-900 dark:text-indigo-200 bg-indigo-100 dark:bg-indigo-950/80 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-800">
+                                  NF {numNF}
+                                </span>
+                              )}
+                              {cleanKey && dtEmissao && dtEmissao !== 'N/I' && (
+                                <span className="text-[11px] font-medium text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                                  Emissão: {dtEmissao}
+                                </span>
+                              )}
+                              <div className="flex items-center gap-2 font-mono font-semibold text-zinc-800 dark:text-zinc-200">
+                                <span>{key}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => copyToClipboard(key)}
+                                  className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors"
+                                  title="Copiar chave"
+                                >
+                                  {copiedKey === key ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+                                </button>
+                              </div>
                             </div>
                             <p className="text-[11px] text-zinc-500">
                               Encontrada na <span className="font-semibold">{matchInfo?.sheetName || 'Planilha'}</span> (Linha {matchInfo?.row})
+                              {matchInfo?.vagao && <span className="ml-2 font-bold text-indigo-600">| Vagão: {matchInfo.vagao}</span>}
                               {matchInfo?.pesoSelecionadoStr && (
                                 <span className="ml-2 font-medium text-emerald-700 dark:text-emerald-400">
                                   | Peso Excel: {matchInfo.pesoSelecionadoStr}
