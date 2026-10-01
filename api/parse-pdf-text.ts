@@ -1,4 +1,4 @@
-import { PDFParse } from "pdf-parse";
+import { getPDFParse } from "./pdf-runtime";
 
 export const config = {
   api: {
@@ -40,6 +40,7 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "Nenhum arquivo PDF enviado no corpo da requisição." });
     }
 
+    const { PDFParse } = await getPDFParse();
     const pdfBuffer = Buffer.from(fileBase64, "base64");
     const parser = new PDFParse({ data: pdfBuffer });
     try {

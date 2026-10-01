@@ -1,4 +1,4 @@
-import { PDFParse } from "pdf-parse";
+import { getPDFParse } from "./pdf-runtime";
 
 function cleanControlChars(val: any): any {
   if (typeof val === "string") {
@@ -57,6 +57,7 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "Nenhum arquivo PDF enviado no corpo da requisição." });
     }
 
+    const { PDFParse } = await getPDFParse();
     const pdfBuffer = Buffer.from(fileBase64, "base64");
     let text = "";
     let pages: { num: number; text: string }[] = [];
