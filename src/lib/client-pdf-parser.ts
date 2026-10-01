@@ -1,4 +1,5 @@
 import * as pdfjsLib from 'pdfjs-dist'
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { parseMultiDanfePdf } from './pdf-text-parser'
 import { parseNFE } from './nfe-parser'
 
@@ -6,7 +7,7 @@ import { parseNFE } from './nfe-parser'
 if (typeof window !== 'undefined') {
   try {
     if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version || '4.10.38'}/build/pdf.worker.min.mjs`
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc
     }
   } catch (e) {
     console.warn('Configuração de worker pdf.js:', e)
@@ -32,7 +33,7 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
 export async function extractPdfTextWithPdfJs(arrayBuffer: ArrayBuffer): Promise<{ text: string; pages: { num: number; text: string }[] }> {
   try {
     if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version || '4.10.38'}/build/pdf.worker.min.mjs`
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc
     }
     const data = new Uint8Array(arrayBuffer)
     const loadingTask = pdfjsLib.getDocument({

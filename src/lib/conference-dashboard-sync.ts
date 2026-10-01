@@ -587,7 +587,7 @@ export function buildConferenceDashboardSnapshot(
     id,
     sessionId,
     operatorName,
-    operatorEmail: operatorEmailInput,
+    operatorEmail: operatorEmailInput || '',
     title: `Conferência Fiscal - ${validFiles.length} nota(s)`,
     timestamp: now,
     dateFormatted: formatDateBR(now),
