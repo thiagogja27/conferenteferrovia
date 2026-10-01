@@ -8,9 +8,10 @@ import {
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: "25mb",
+      sizeLimit: "50mb",
     },
   },
+  maxDuration: 60,
 };
 
 export default async function handler(req: any, res: any) {

@@ -178,6 +178,17 @@ export function parseMultiDanfePdf(
   defaultFileName: string,
   pagesText?: Array<{ num: number; text: string }>
 ): { items: PDFDanfeItem[]; xml: string; data: ParsedNFeData } {
+  const hasAccessKey = findKeysInText(fullText).length > 0
+  const hasDanfeHeader = /DANFE|DOCUMENTO AUXILIAR DA NOTA FISCAL/i.test(fullText)
+  const hasNfeStructure =
+    /IDENTIFICA[ÇC][ÃA]O\s+DO\s+EMITENTE/i.test(fullText) &&
+    /DESTINAT[ÁA]RIO/i.test(fullText) &&
+    /(?:CHAVE\s+DE\s+ACESSO|VALOR\s+TOTAL\s+DA\s+NOTA|NATUREZA\s+DA\s+OPERA[ÇC][ÃA]O)/i.test(fullText)
+
+  if (!hasAccessKey || (!hasDanfeHeader && !hasNfeStructure)) {
+    throw new Error('O PDF informado não apresenta estrutura de DANFE/NF-e e foi ignorado.')
+  }
+
   const baseName = defaultFileName ? defaultFileName.replace(/\.pdf$/i, '') : 'nota';
 
   // 1. Estratégia Principal: Agrupamento Inteligente por Páginas com Detecção de DANFE x DCL/Romaneio
@@ -188,8 +199,6 @@ export function parseMultiDanfePdf(
     for (const page of pagesText) {
       const pText = page.text || '';
       const isDanfe = /DANFE|DOCUMENTO AUXILIAR DA NOTA|DOCUMENTO AUXILIAR/i.test(pText);
-      const isDCL = /\bDCL\b/i.test(pText) && /Documento de Carga|Fluxo Comercial|Rumo/i.test(pText);
-      const isRomaneio = /Notas Fiscais Carregadas|Romaneio|Ticket de Pesagem/i.test(pText);
 
       const pageKeys = findKeysInText(pText);
       const mainKey = pageKeys[0] || '';
@@ -220,46 +229,9 @@ export function parseMultiDanfePdf(
           currentGroup = { key: mainKey, nfNum: pageNFNum, pagesText: [pText] };
           groupedItems.push(currentGroup);
         }
-      } else if (isDCL || isRomaneio || pageKeys.length > 1) {
-        // É página de DCL, Romaneio ou Manifesto que referencia múltiplas chaves
-        // Anexa o texto do DCL/Romaneio a todos os grupos de notas correspondentes
-        let matchedAnyGroup = false;
-        for (const g of groupedItems) {
-          if ((g.key && pageKeys.includes(g.key)) || (g.nfNum && pText.includes(g.nfNum))) {
-            g.pagesText.push(pText);
-            matchedAnyGroup = true;
-          }
-        }
-        if (!matchedAnyGroup) {
-          if (currentGroup) {
-            currentGroup.pagesText.push(pText);
-          } else if (pageKeys.length > 0) {
-            // Se for um DCL puro sem páginas DANFE anteriores, cria grupos para as chaves
-            for (const k of pageKeys) {
-              groupedItems.push({ key: k, pagesText: [pText] });
-            }
-          } else {
-            currentGroup = { key: '', pagesText: [pText] };
-            groupedItems.push(currentGroup);
-          }
-        }
-      } else if (pageKeys.length === 1) {
-        const k = pageKeys[0];
-        if (!currentGroup || (currentGroup.key && currentGroup.key !== k)) {
-          currentGroup = { key: k, nfNum: pageNFNum, pagesText: [pText] };
-          groupedItems.push(currentGroup);
-        } else {
-          currentGroup.pagesText.push(pText);
-          if (!currentGroup.key) currentGroup.key = k;
-        }
       } else {
-        // Página sem chave expressa (continuação de informações complementares, etc.)
-        if (currentGroup) {
-          currentGroup.pagesText.push(pText);
-        } else {
-          currentGroup = { key: '', pagesText: [pText] };
-          groupedItems.push(currentGroup);
-        }
+        // Documentos auxiliares não devem alimentar a extração da NF.
+        continue;
       }
     }
 
@@ -1280,6 +1252,9 @@ function extractTerminalEntrega(text: string): string {
   }
   if (/\bCLI\b/i.test(text) || uppercase.includes('CORREDOR LOGISTICO INTEGRADO')) {
     return 'CLI - CORREDOR LOGISTICO INTEGRADO';
+  }
+  if (/\bXXXIX\b/i.test(text) || uppercase.includes('TERMINAL XXXIX DE SANTOS')) {
+    return 'TERMINAL XXXIX DE SANTOS';
   }
   if (uppercase.includes('SANTOS BRASIL')) return 'SANTOS BRASIL';
   if (uppercase.includes('DP WORLD')) return 'DP WORLD SANTOS';
