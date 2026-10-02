@@ -391,6 +391,10 @@ export function DocumentationPanel() {
                     <strong className="text-red-600 dark:text-red-400">4. Notas Ausentes no Excel / Chaves Sem Arquivo:</strong>
                     <p className="text-zinc-600 dark:text-zinc-400 mt-0.5">Mapeamento de inconsistências: notas que não estão na planilha ou chaves do Excel sem o arquivo PDF correspondente.</p>
                   </div>
+                  <div className="p-2.5 bg-white dark:bg-zinc-800/80 rounded-lg border sm:col-span-2">
+                    <strong className="text-blue-600 dark:text-blue-400">5. CCT (Sem Duplicadas):</strong>
+                    <p className="text-zinc-600 dark:text-zinc-400 mt-0.5">Aba exclusiva sem chaves duplicadas contendo: <code>CHAVE NFE</code>, <code>DATA NFE</code>, <code>PESO NFE</code> (quantidade fiscal conferida), <code>CLIENTE</code> e <code>NUMERO de CARACTERES CHAVE</code>.</p>
+                  </div>
                 </div>
               </div>
             </CardContent>

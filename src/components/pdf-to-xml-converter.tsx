@@ -2878,6 +2878,53 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       XLSX.utils.book_append_sheet(wb, wsExcelOnly, 'Chaves Excel Sem Arquivo')
     }
 
+    // 6. ABA CCT (SEM DUPLICADAS - EXTRAÍDO DAS NOTAS)
+    const uniqueNotesMap = new Map<string, any>()
+    const candidates = results.filter((r) => r.parsedData || r.nfeData || r.xmlContent)
+
+    candidates.forEach((res) => {
+      const keyRaw = getNormalizedKey(res) || res.parsedData?.chave || res.nfeData?.chaveAcesso || ''
+      const cleanKey = keyRaw.replace(/\D/g, '').trim() || keyRaw.trim()
+      const dedupeKey = cleanKey || res.fileName
+
+      if (!dedupeKey || uniqueNotesMap.has(dedupeKey)) return
+
+      const rawDate = res.nfeData?.dataEmissao || res.parsedData?.dhEmi || res.parsedData?.dataEmissao
+      const dtEmissao = extractDataEmissao(rawDate, cleanKey) || 'N/A'
+      const qtdNota = getResultQuantidade(res)
+      const cliente =
+        res.nfeData?.destinatario?.nome ||
+        res.parsedData?.destNome ||
+        res.parsedData?.destFant ||
+        res.nfeData?.destinatario?.cpfCnpj ||
+        res.parsedData?.destCNPJ ||
+        'NÃO INFORMADO'
+
+      uniqueNotesMap.set(dedupeKey, {
+        'CHAVE NFE': String(cleanKey || 'SEM CHAVE IDENTIFICADA'),
+        'DATA NFE': String(dtEmissao),
+        'PESO NFE': Number(qtdNota) || 0,
+        'CLIENTE': String(cliente),
+        'NUMERO de CARACTERES CHAVE': Number(cleanKey ? cleanKey.length : 0),
+      })
+    })
+
+    const rowsUniqueChaves = Array.from(uniqueNotesMap.values())
+    const wsUnique = createFormattedWorksheet(
+      rowsUniqueChaves.length > 0
+        ? rowsUniqueChaves
+        : [
+            {
+              'CHAVE NFE': 'NENHUMA NOTA PROCESSADA',
+              'DATA NFE': '-',
+              'PESO NFE': 0,
+              'CLIENTE': '-',
+              'NUMERO de CARACTERES CHAVE': 0,
+            },
+          ]
+    )
+    XLSX.utils.book_append_sheet(wb, wsUnique, 'CCT')
+
     XLSX.writeFile(wb, `relatorio_conferencia_chaves_${new Date().toISOString().slice(0, 10)}.xlsx`)
   }
 

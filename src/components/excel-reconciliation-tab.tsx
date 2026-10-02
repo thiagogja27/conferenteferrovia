@@ -2081,6 +2081,51 @@ export function ExcelReconciliationTab({
       XLSX.utils.book_append_sheet(wb, createFormattedWorksheet(divergentWeightRows), 'Divergências de Peso')
     }
 
+    // ABA CCT (SEM DUPLICADAS - EXTRAÍDO DAS NOTAS)
+    const uniqueNotesMap = new Map<string, any>()
+    validFiles.forEach((f) => {
+      const keyRaw = getNormalizedKey(f) || f.parsedData?.chave || f.nfeData?.chaveAcesso || ''
+      const cleanKey = keyRaw.replace(/\D/g, '').trim() || keyRaw.trim()
+      const dedupeKey = cleanKey || f.fileName
+
+      if (!dedupeKey || uniqueNotesMap.has(dedupeKey)) return
+
+      const rawDate = f.nfeData?.dataEmissao || f.parsedData?.dhEmi || f.parsedData?.dataEmissao
+      const dtEmissao = extractDataEmissao(rawDate, cleanKey) || 'N/A'
+      const qtdNota = getFileQuantidade(f)
+      const cliente =
+        f.nfeData?.destinatario?.nome ||
+        f.parsedData?.destNome ||
+        f.parsedData?.destFant ||
+        f.nfeData?.destinatario?.cpfCnpj ||
+        f.parsedData?.destCNPJ ||
+        'NÃO INFORMADO'
+
+      uniqueNotesMap.set(dedupeKey, {
+        'CHAVE NFE': String(cleanKey || 'SEM CHAVE IDENTIFICADA'),
+        'DATA NFE': String(dtEmissao),
+        'PESO NFE': Number(qtdNota) || 0,
+        'CLIENTE': String(cliente),
+        'NUMERO de CARACTERES CHAVE': Number(cleanKey ? cleanKey.length : 0),
+      })
+    })
+
+    const rowsUniqueChaves = Array.from(uniqueNotesMap.values())
+    const wsUnique = createFormattedWorksheet(
+      rowsUniqueChaves.length > 0
+        ? rowsUniqueChaves
+        : [
+            {
+              'CHAVE NFE': 'NENHUMA NOTA PROCESSADA',
+              'DATA NFE': '-',
+              'PESO NFE': 0,
+              'CLIENTE': '-',
+              'NUMERO de CARACTERES CHAVE': 0,
+            },
+          ]
+    )
+    XLSX.utils.book_append_sheet(wb, wsUnique, 'CCT')
+
     XLSX.writeFile(wb, `relatorio_conferencia_chaves_${new Date().toISOString().slice(0, 10)}.xlsx`)
 
     logRealtimeActivity(
