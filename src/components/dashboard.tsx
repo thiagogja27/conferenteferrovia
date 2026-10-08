@@ -5,8 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { parseNFE, type NFEData } from "@/lib/nfe-parser"
+import { parseNFE, verifyChaveCNPJ, type NFEData } from "@/lib/nfe-parser"
 import { type ParsedNFeData } from "@/lib/pdf-text-parser"
+import { ChaveDestinatarioDashboard } from "@/components/chave-destinatario-dashboard"
 import {
   auditarLogisticaComIA,
   type LogisticsAuditInputItem,
@@ -150,6 +151,31 @@ export function getNoteDetails(
       destCNPJ = ""
     }
   }
+
+  // Limpeza de segurança extra contra cabeçalhos de tabela do DANFE / volumes
+  if (
+    /QUANTIDADE.*(?:ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO)|PESO\s+BRUTO\s+PESO\s+L[ÍI]QUIDO|PESO\s+BRUTO\s+PESO\s+LIQUIDO/i.test(
+      destNome
+    ) ||
+    /^(?:QUANTIDADE|ESP[EÉ]CIE|MARCA|N[UÚ]MERO|PESO\s+BRUTO|PESO\s+L[ÍI]QUIDO|PESO\s+LIQUIDO|VOLUMES\s+TRANSPORTADOS|FRETE\s+POR\s+CONTA|DADOS\s+DO\s+TRANSPORTADOR)\b/i.test(
+      destNome
+    )
+  ) {
+    destNome = "Não informado"
+  }
+  if (isCarrierCnpj(destCNPJ)) {
+    destCNPJ = ""
+  }
+
+  // Verificação oficial de CNPJ Chave de Acesso x Destinatário
+  const vCNPJ =
+    nfe?.verificacaoCNPJ ||
+    (chave && chave !== "Sem Chave" && emitCNPJ && destCNPJ
+      ? verifyChaveCNPJ(chave, emitCNPJ, destCNPJ)
+      : null)
+  const confrontoChaveXDest = vCNPJ?.confrontoChaveXDest || "NÃO INFORMADO"
+  const isDivergenteCNPJ = confrontoChaveXDest === "DIVERGENTES"
+  const isConformeCNPJ = confrontoChaveXDest === "IGUAIS"
 
   let produto = "Outros"
   if (nfe?.tipoProduto && nfe.tipoProduto !== "OUTRO") {
@@ -368,6 +394,10 @@ export function getNoteDetails(
     aiCamposAjustados,
     aiAuditResult: override?.auditResult,
     hasMissingLogistics,
+    vCNPJ,
+    confrontoChaveXDest,
+    isDivergenteCNPJ,
+    isConformeCNPJ,
   }
 }
 
@@ -378,6 +408,7 @@ export function Dashboard({ files }: DashboardProps) {
     files: DashboardFileItem[]
   } | null>(null)
 
+  const [dashboardView, setDashboardView] = useState<"logistica" | "chave-destinatario">("logistica")
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [modalSearch, setModalSearch] = useState("")
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
@@ -389,6 +420,13 @@ export function Dashboard({ files }: DashboardProps) {
     type: "success" | "info" | "warning"
     message: string
   } | null>(null)
+
+  const totalChaveDivergencias = useMemo(() => {
+    return files.filter((f) => {
+      const details = getNoteDetails(f, logisticsOverrides)
+      return details.isDivergenteCNPJ
+    }).length
+  }, [files, logisticsOverrides])
 
   // Transmite espelho automaticamente em tempo real para o Monitor Realtime
   const [lastMirrorSyncTime, setLastMirrorSyncTime] = useState<string | null>(null)
@@ -938,12 +976,56 @@ export function Dashboard({ files }: DashboardProps) {
 
   return (
     <div className="space-y-6">
-      {/* Banner de Auditoria e Ajuste com IA para Dados Não Informados */}
-      <div className="p-4 bg-gradient-to-r from-indigo-50 via-purple-50 to-blue-50 dark:from-indigo-950/40 dark:via-purple-950/30 dark:to-blue-950/40 border border-indigo-200/80 dark:border-indigo-800/80 rounded-2xl shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <div className="p-2 bg-indigo-600 text-white rounded-xl shadow-xs shrink-0 mt-0.5">
-            <Bot className="h-5 w-5" />
-          </div>
+      {/* Seletor de Visão do Dashboard: Logístico vs Divergência Chave vs Destinatário */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-1.5 bg-zinc-100 dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800">
+        <div className="flex items-center gap-1.5 w-full sm:w-auto">
+          <button
+            type="button"
+            onClick={() => setDashboardView("logistica")}
+            className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              dashboardView === "logistica"
+                ? "bg-white dark:bg-zinc-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+            }`}
+          >
+            <BarChart3 className="h-4 w-4" />
+            <span>Dashboard Logístico (Produtos, Rotas e Vagões)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setDashboardView("chave-destinatario")}
+            className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              dashboardView === "chave-destinatario"
+                ? "bg-white dark:bg-zinc-800 text-rose-600 dark:text-rose-400 shadow-xs"
+                : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
+            }`}
+          >
+            <AlertTriangle className="h-4 w-4 text-rose-500" />
+            <span>Divergência: Chave vs Destinatário</span>
+            {totalChaveDivergencias > 0 ? (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500 text-white shadow-2xs">
+                {totalChaveDivergencias} div.
+              </span>
+            ) : (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                Conforme
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {dashboardView === "chave-destinatario" ? (
+        <ChaveDestinatarioDashboard files={files} />
+      ) : (
+        <>
+          {/* Banner de Auditoria e Ajuste com IA para Dados Não Informados */}
+          <div className="p-4 bg-gradient-to-r from-indigo-50 via-purple-50 to-blue-50 dark:from-indigo-950/40 dark:via-purple-950/30 dark:to-blue-950/40 border border-indigo-200/80 dark:border-indigo-800/80 rounded-2xl shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-indigo-600 text-white rounded-xl shadow-xs shrink-0 mt-0.5">
+                <Bot className="h-5 w-5" />
+              </div>
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-bold text-indigo-950 dark:text-indigo-100 flex items-center gap-1.5">
@@ -1976,6 +2058,8 @@ export function Dashboard({ files }: DashboardProps) {
           </div>
         </DialogContent>
       </Dialog>
+        </>
+      )}
     </div>
   )
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useCallback, useRef, useEffect } from 'react'
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -16,6 +16,8 @@ import { parseNFE, verifyChaveCNPJ, type NFEData } from '@/lib/nfe-parser'
 import { parsePdfClientSide } from '@/lib/client-pdf-parser'
 import { generatePDF } from '@/lib/pdf-generator'
 import { Dashboard } from '@/components/dashboard'
+import { ChaveDestinatarioDashboard } from '@/components/chave-destinatario-dashboard'
+import { isCarrierCnpj } from '@/lib/destinatario-utils'
 import { SearchPanel } from '@/components/search-panel'
 import { MapPanel } from '@/components/map-panel'
 import { ExcelReconciliationTab } from '@/components/excel-reconciliation-tab'
@@ -238,6 +240,18 @@ export function XMLConverter() {
 
   const answeredSuggestionsCount = suggestionsList.filter((s) => s.status === 'respondida').length
   const pendingSuggestionsCount = suggestionsList.filter((s) => s.status === 'pendente').length
+
+  const chaveDivergencesCount = useMemo(() => {
+    return files.filter((f) => {
+      const n = f.nfeData
+      const chave = (n?.chaveAcesso || f.parsedData?.chave || '').replace(/\D/g, '')
+      const emit = (n?.emitente?.cnpj || f.parsedData?.emitCNPJ || '').replace(/\D/g, '')
+      let dest = (n?.destinatario?.cpfCnpj || f.parsedData?.destCNPJ || '').replace(/\D/g, '')
+      if (isCarrierCnpj(dest)) dest = ''
+      if (!chave || chave.length !== 44 || !dest) return false
+      return verifyChaveCNPJ(chave, emit, dest).confrontoChaveXDest === 'DIVERGENTES'
+    }).length
+  }, [files])
 
   // Proteção de rota interna para o Monitor Realtime (exclusivo para supervisores)
   useEffect(() => {
@@ -1961,6 +1975,31 @@ export function XMLConverter() {
                     </TabsTrigger>
 
                     <TabsTrigger
+                      value='chave-destinatario'
+                      className={`w-full justify-between text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        activeTab === 'chave-destinatario'
+                          ? 'bg-indigo-600 text-white shadow-xs dark:bg-indigo-600 dark:text-white font-extrabold'
+                          : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Scale className={`h-4 w-4 shrink-0 ${activeTab === 'chave-destinatario' ? 'text-white' : 'text-rose-600 dark:text-rose-400'}`} />
+                        <span>Chave vs Destinatário</span>
+                      </div>
+                      {chaveDivergencesCount > 0 ? (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500 text-white shadow-2xs">
+                          {chaveDivergencesCount} div.
+                        </span>
+                      ) : (
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                          activeTab === 'chave-destinatario' ? 'bg-white/20 text-white' : 'bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border border-rose-200/60 dark:border-rose-800/40'
+                        }`}>
+                          Auditoria
+                        </span>
+                      )}
+                    </TabsTrigger>
+
+                    <TabsTrigger
                       value='search'
                       className={`w-full justify-between text-left px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                         activeTab === 'search'
@@ -2591,6 +2630,23 @@ export function XMLConverter() {
 
             <TabsContent value='dashboard'>
               <Dashboard files={files} />
+            </TabsContent>
+
+            <TabsContent value='chave-destinatario'>
+              <ChaveDestinatarioDashboard
+                files={files}
+                onSelectFile={(selectedFile) => {
+                  const idx = files.findIndex((f) => f === selectedFile || f.fileName === selectedFile?.fileName)
+                  if (idx >= 0) {
+                    setActiveTab('list')
+                    setExpandedIndex(idx)
+                    setTimeout(() => {
+                      const card = document.querySelector(`[data-file-index="${idx}"]`)
+                      card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                    }, 100)
+                  }
+                }}
+              />
             </TabsContent>
 
             <TabsContent value='search'>

@@ -2642,7 +2642,7 @@ export function ExcelReconciliationTab({
 
                       return (
                         <div
-                          key={cte.chaveAcesso || cte.fileName || idx}
+                          key={`${cte.chaveAcesso || 'cte'}_${cte.fileName || 'file'}_${idx}`}
                           className="p-2.5 rounded-lg bg-white dark:bg-zinc-900 border border-sky-200 dark:border-sky-900/60 text-xs flex flex-col justify-between space-y-1.5"
                         >
                           <div className="flex items-start justify-between gap-2">
