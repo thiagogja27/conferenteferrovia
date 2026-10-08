@@ -942,13 +942,22 @@ function getKnownTransbordo(str: string): string | null {
   return null
 }
 
-function extractTransbordo(infComplementares: string): string {
-  if (!infComplementares) return ""
+function extractTransbordo(infComplementares: string, context?: string): string {
+  if (!infComplementares && !context) return ""
 
-  const uppercase = infComplementares.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const fullText = `${infComplementares || ''} ${context || ''}`
+  const uppercase = fullText.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 
-  // 1. Procurar por trechos específicos perto das palavras-chave indicadas (CIDADE:, ALFANDEGADO, ALFADEGADO, LOCAL DE TRANSBORDO, TRANSBORDO, LOCAL DE ENTREGA, ENTREGA)
-  const transbordoKeywordsRegex = /(?:TRANSBORDO|ALFANDEGADO|ALFADEGADO|CIDADE DE TRANSBORDO|LOCAL DE TRANSBORDO|LOCAL DE ENTREGA|TERMINAL DE ENTREGA|RECINTO ALFANDEGADO|RECINTO ALFADEGADO|ENTREGA EM|CIDADE\s*:)\s*[:=-]?\s*([\s\S]{1,300})/gi
+  // 1. Prioridade máxima: validar se locais de transbordo cadastrados (Pradópolis, Pederneiras, etc.) constam no documento
+  if (/PRADOPOLIS|PRADÓPOLIS|SAO\s*MARTINHO|SÃO\s*MARTINHO/i.test(uppercase)) {
+    return 'PRADOPOLIS'
+  }
+  if (/PEDERNEIRAS/i.test(uppercase)) {
+    return 'PEDERNEIRAS (RUMO)'
+  }
+
+  // 2. Procurar por trechos específicos perto das palavras-chave indicadas (NUNCA incluir RECINTO ALFANDEGADO ou LOCAL DE ENTREGA)
+  const transbordoKeywordsRegex = /(?:TRANSBORDO|CIDADE DE TRANSBORDO|LOCAL DE TRANSBORDO|SOFRERA\s+TRANSBORDO|MERCADORIA\s+SOFRERA\s+TRANSBORDO|TRANSBORDO\s+NA|TRANSBORDO\s+EM|TRANSBORDO\s+DE|TRANSBORDO\s+NO|CIDADE\s*:)\s*[:=-]?\s*([\s\S]{1,300})/gi
 
   let match: RegExpExecArray | null
   while ((match = transbordoKeywordsRegex.exec(infComplementares)) !== null) {
@@ -957,12 +966,12 @@ function extractTransbordo(infComplementares: string): string {
     if (known) return known
   }
 
-  // 2. Se não encontrou no chunk das palavras-chave, verificar em infComplementares inteira
+  // 3. Se não encontrou no chunk das palavras-chave, verificar em infComplementares inteira
   const knownInInf = getKnownTransbordo(infComplementares)
   if (knownInInf) return knownInInf
 
-  // 3. Se houver menção explícita após palavras-chave sem local pré-mapeado, extrair texto limpo
-  const explicitMatch = infComplementares.match(/(?:SOFRERA\s+TRANSBORDO|MERCADORIA\s+SOFRERA\s+TRANSBORDO|LOCAL\s+DE\s+TRANSBORDO|LOCAL\s+TRANSBORDO|TRANSBORDO\s+NA|TRANSBORDO\s+EM|TRANSBORDO\s+DE|TRANSBORDO\s+NO|TRANSBORDO|RECINTO\s+ALFANDEGADO|RECINTO\s+ALFADEGADO|ALFANDEGADO|ALFADEGADO|LOCAL\s+DE\s+ENTREGA)\s*[:=-]?\s*([\s\S]{1,300})/i)
+  // 4. Se houver menção explícita após palavras-chave sem local pré-mapeado, extrair texto limpo
+  const explicitMatch = infComplementares.match(/(?:SOFRERA\s+TRANSBORDO|MERCADORIA\s+SOFRERA\s+TRANSBORDO|LOCAL\s+DE\s+TRANSBORDO|LOCAL\s+TRANSBORDO|TRANSBORDO\s+NA|TRANSBORDO\s+EM|TRANSBORDO\s+DE|TRANSBORDO\s+NO|TRANSBORDO)\s*[:=-]?\s*([\s\S]{1,300})/i)
 
   if (explicitMatch && explicitMatch[1]) {
     let chunk = explicitMatch[1].trim()
@@ -982,7 +991,9 @@ function extractTransbordo(infComplementares: string): string {
 
     const words = chunk.split(/\s+/).filter(Boolean).slice(0, 10)
     let val = words.join(' ').replace(/[:=\-.,;]+$/, '').trim()
-    if (val.length > 2 && !/^\d+$/.test(val) && !['NÃO', 'NAO', 'DE', 'EM', 'SP', 'MT', 'MS', 'GO', 'MG', 'PR'].includes(val.toUpperCase())) {
+    const valUpper = val.toUpperCase()
+    const isPortTerminal = /\bTEAG\b|\bTEG\b|\bTES\b|\bTGG\b|\bCLI\b|\bSANTOS\b|\bGUARUJ[AÁ]\b|\bTIPLAM\b|TERMINAL.*EXPORTA[CÇ]|RECINTO/i.test(valUpper)
+    if (!isPortTerminal && val.length > 2 && !/^\d+$/.test(val) && !['NÃO', 'NAO', 'DE', 'EM', 'SP', 'MT', 'MS', 'GO', 'MG', 'PR'].includes(valUpper)) {
       if (uppercase.includes('RUMO') || uppercase.includes('MALHA NORTE')) {
         return val.toUpperCase().includes('RUMO') ? val : `${val} (RUMO)`
       }
@@ -991,6 +1002,15 @@ function extractTransbordo(infComplementares: string): string {
       }
       return val
     }
+  }
+
+  // 5. Fallback final: verificar se qualquer local conhecido de transbordo aparece no texto todo
+  const knownGlobal = getKnownTransbordo(fullText)
+  if (knownGlobal) return knownGlobal
+
+  // Se o emitente for São Martinho (usina em Pradópolis) e nenhum outro transbordo foi indicado
+  if (/SAO\s*MARTINHO|SÃO\s*MARTINHO/i.test(uppercase)) {
+    return 'PRADOPOLIS'
   }
 
   return ""

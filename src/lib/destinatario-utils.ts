@@ -23,6 +23,23 @@ export function extractCNPJFilial(cnpj: string): string {
 }
 
 /**
+ * Identifica se um determinado CNPJ pertence a uma transportadora conhecida ou terminal portuário
+ * para evitar que seja indevidamente atribuído como destinatário da mercadoria.
+ */
+export function isCarrierCnpj(cnpj?: string): boolean {
+  const digits = (cnpj || '').replace(/\D/g, '')
+  if (!digits) return false
+  // 02.387.241 (Rumo S.A.)
+  // 10.991.380 (Liderança Transportes Iturama Ltda)
+  // 49.964.752 (Transportadora Guardia - Gama Logística)
+  // 13.370.835 / 52.618.139 (JSL / Julio Simoes)
+  // 04.286.197 (VLI Multimodal)
+  // 04.721.589 (TEAG - Terminal de Exportação de Açúcar do Guarujá)
+  // 00.414.545 (TEG - Terminal Exportador do Guarujá)
+  return /^(?:02387241|10991380|49964752|13370835|52618139|04286197|04721589|00414545)/.test(digits)
+}
+
+/**
  * Higieniza o nome do destinatário removendo rótulos residuais de formulário do DANFE/OCR
  * (ex: "CNPJ / CPF DATA DA EMISSÃO CARGILL AGRICOLA SA" -> "CARGILL AGRICOLA SA")
  * e normaliza grandes empresas conhecidas.
@@ -33,6 +50,18 @@ export function sanitizeDestinatarioNome(
   fullText?: string
 ): string {
   let nome = (rawNome || '').trim()
+
+  // 0. Rejeitar ou limpar ruídos graves de tabelas do DANFE (volumes, transporte, frete)
+  if (
+    /QUANTIDADE.*(?:ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO)|PESO\s+BRUTO\s+PESO\s+L[ÍI]QUIDO|PESO\s+BRUTO\s+PESO\s+LIQUIDO/i.test(
+      nome
+    ) ||
+    /^(?:QUANTIDADE|ESP[EÉ]CIE|MARCA|N[UÚ]MERO|PESO\s+BRUTO|PESO\s+L[ÍI]QUIDO|PESO\s+LIQUIDO|VOLUMES\s+TRANSPORTADOS|FRETE\s+POR\s+CONTA|DADOS\s+DO\s+TRANSPORTADOR|TRANSPORTE\s+[\/\-]?\s+VOLUMES|DADOS\s+DOS\s+PRODUTOS)\b/i.test(
+      nome
+    )
+  ) {
+    nome = ''
+  }
 
   // 1. Remover ruídos de rótulos do cabeçalho do DANFE que possam ter sido lidos no mesmo bloco
   nome = nome
@@ -152,6 +181,9 @@ export function sanitizeDestinatarioNome(
     nome.length < 3 ||
     /^(?:DESTINAT[AÁ]RIO(?:\s*[\/\-]?\s*REMETENTE)?|CLIENTE|EMPRESA|NAO INFORMADO|NÃO INFORMADO|DESTINAT[AÁ]RIO N[ÃA]O IDENTIFICADO|N[ÃA]O IDENTIFICADO|NAO IDENTIFICADO|SEM DESTINAT[AÁ]RIO)$/i.test(
       nome
+    ) ||
+    /QUANTIDADE|ESP[EÉ]CIE|PESO\s+BRUTO|PESO\s+L[ÍI]QUIDO|PESO\s+LIQUIDO|VOLUMES\s+TRANSPORTADOS|FRETE\s+POR\s+CONTA|DADOS\s+DO\s+TRANSPORTADOR|TRANSPORTE\s+[\/\-]?\s+VOLUMES/i.test(
+      nome
     )
 
   // 3. Prioridade 2: Se o nome estiver vazio/boilerplate, ou se houver cliente explícito nos dados adicionais
@@ -181,7 +213,7 @@ export function sanitizeDestinatarioNome(
 
   // 4. Validações finais
   if (isGenericOrBoilerplate) {
-    if (rawCnpj) {
+    if (rawCnpj && !isCarrierCnpj(rawCnpj)) {
       return `DESTINATÁRIO (${formatCNPJ(rawCnpj)})`
     }
     return 'Não informado'

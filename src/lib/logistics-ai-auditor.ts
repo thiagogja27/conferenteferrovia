@@ -1,4 +1,4 @@
-import { sanitizeDestinatarioNome } from './destinatario-utils'
+import { sanitizeDestinatarioNome, isCarrierCnpj } from './destinatario-utils'
 
 export interface LogisticsAuditInputItem {
   id: string
@@ -247,7 +247,7 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
     if (cleanDest && !isNaoInformado(cleanDest)) {
       destinatarioCorrigido = cleanDest
       camposAjustados.push('destinatario')
-    } else if (item.destCNPJ) {
+    } else if (item.destCNPJ && !isCarrierCnpj(item.destCNPJ)) {
       destinatarioCorrigido = `DESTINATÁRIO (${item.destCNPJ})`
       camposAjustados.push('destinatario')
     }

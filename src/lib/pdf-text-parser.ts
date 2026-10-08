@@ -1,6 +1,4 @@
-// Utilitário de análise de texto de DANFE para conversão em XML (Processamento Local e Sem IA)
-
-import { sanitizeDestinatarioNome } from './destinatario-utils';
+import { sanitizeDestinatarioNome, isCarrierCnpj } from './destinatario-utils';
 
 export interface ParsedNFeData {
   chave: string;
@@ -498,22 +496,38 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   let destIE = '';
 
   // Localizar especificamente o QUADRO de Destinatário / Remetente
-  // CRÍTICO: Evitar o canhoto do topo da página ("DESTINATÁRIO: ...")
+  // CRÍTICO: Isolar o texto do documento ANTES da seção de Transportador / Volumes para NUNCA confundir
+  // com "FRETE POR CONTA: 1 - DESTINATÁRIO / REMETENTE" nem com a tabela de volumes
+  // "QUANTIDADE ESPÉCIE MARCA NÚMERO PESO BRUTO PESO LÍQUIDO"
+  const transpStartIdx = text.search(
+    /(?:DADOS\s+DO\s+TRANSPORTADOR|TRANSPORTADOR\s*[\/\-]?\s*VOLUMES|TRANSPORTE\s*[\/\-]?\s*VOLUMES|VOLUMES\s+TRANSPORTADOS|FRETE\s+POR\s+CONTA)/i
+  );
+  const upperDocText = transpStartIdx > 0 ? text.substring(0, transpStartIdx) : text;
+
+  // Evitar o canhoto do topo da página ("DESTINATÁRIO: ...")
+  let searchScope = upperDocText;
+  const canhotoEndIdx = upperDocText.search(/(?:SÉRIE|SERIE|Nº|NUMERO|CHAVE\s+DE\s+ACESSO|DANFE|0\s*-\s*ENTRADA|1\s*-\s*SA[IÍ]DA)/i);
+  if (canhotoEndIdx > 0 && canhotoEndIdx < 400) {
+    searchScope = upperDocText.substring(canhotoEndIdx);
+  }
+
   let destBlock = '';
-  const quadroRegex = /(?:DESTINAT[AÁ]RIO\s*[\/\-]?\s*REMETENTE|DADOS\s+DO\s+DESTINAT[AÁ]RIO|IDENTIFICA[ÇC][ÃA]O\s+DO\s+DESTINAT[AÁ]RIO)([\s\S]{1,1600})/i;
-  const qMatch = text.match(quadroRegex);
+  const quadroRegex = /(?:DESTINAT[AÁ]RIO\s*[\/\-]?\s*REMETENTE|DADOS\s+DO\s+DESTINAT[AÁ]RIO|IDENTIFICA[ÇC][ÃA]O\s+DO\s+DESTINAT[AÁ]RIO|DESTINAT[AÁ]RIO)([\s\S]{1,1600})/i;
+  const qMatch = searchScope.match(quadroRegex);
   if (qMatch) {
     destBlock = qMatch[1];
   } else {
-    // Fallback: procurar DESTINATÁRIO que NÃO seja o canhoto (não seguido por dois-pontos)
-    const altMatch = text.match(/DESTINAT[AÁ]RIO(?!\s*:)([\s\S]{1,1400})/i);
+    // Fallback no texto completo se não encontrou no searchScope
+    const altMatch = text.match(/(?:DESTINAT[AÁ]RIO\s*[\/\-]?\s*REMETENTE|DADOS\s+DO\s+DESTINAT[AÁ]RIO)([\s\S]{1,1600})/i);
     if (altMatch) {
       destBlock = altMatch[1];
     }
   }
 
   if (destBlock) {
-    const endBlockIdx = destBlock.search(/(?:CÁLCULO\s+DO\s+IMPOSTO|CALCULO\s+DO\s+IMPOSTO|BASE\s+DE\s+CÁLCULO|TRANSPORTADOR|DADOS\s+DOS\s+PRODUTOS)/i);
+    const endBlockIdx = destBlock.search(
+      /(?:CÁLCULO\s+DO\s+IMPOSTO|CALCULO\s+DO\s+IMPOSTO|BASE\s+DE\s+CÁLCULO|FATURA|DUPLICATAS|PAGAMENTO|DADOS\s+DO\s+TRANSPORTADOR|TRANSPORTADOR|TRANSPORTE|DADOS\s+DOS\s+PRODUTOS)/i
+    );
     if (endBlockIdx > 0) {
       destBlock = destBlock.substring(0, endBlockIdx);
     }
@@ -541,14 +555,27 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
         raw = raw.substring(0, stopIdx).trim();
       }
       destNome = raw.replace(/[:=\-.,;]+$/, '').trim();
-    } else {
+    }
+
+    // Função de verificação de ruído de tabela de volumes / cabeçalhos no nome
+    const isNoiseName = (s: string) =>
+      !s ||
+      s.length < 3 ||
+      /QUANTIDADE|ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO|VOLUMES|TRANSPORTADOR|FRETE|C[AÁ]LCULO|BASE|VALOR/i.test(s);
+
+    if (isNoiseName(destNome)) {
       // Fallback: pegar as primeiras linhas não vazias do bloco de destinatário que não sejam rótulos
       const blockLines = mainDestBlock.split(/[\r\n]+/).map(l => l.trim()).filter(l => l.length > 3);
       for (const line of blockLines) {
-        if (!/^(?:DESTINAT|ENDERE|BAIRRO|MUNIC|CNPJ|CPF|CEP|INSC|UF|TELEFONE|FONE|DATA)/i.test(line)) {
-          const stopIdx = line.search(/(?:ROD|RODOVIA|RUA|AV|AVENIDA|ALAMEDA|CNPJ|CPF|CEP)/i);
-          destNome = (stopIdx > 0 ? line.substring(0, stopIdx) : line).trim();
-          if (destNome.length > 3) break;
+        if (!/^(?:DESTINAT|ENDERE|BAIRRO|MUNIC|CNPJ|CPF|CEP|INSC|UF|TELEFONE|FONE|DATA|HORA|C[AÁ]LCULO|BASE|VALOR|FATURA|PAGAMENTO)/i.test(line)) {
+          if (!isNoiseName(line)) {
+            const stopIdx = line.search(/(?:ROD|RODOVIA|RUA|AV|AVENIDA|ALAMEDA|CNPJ|CPF|CEP)/i);
+            const candidate = (stopIdx > 0 ? line.substring(0, stopIdx) : line).trim();
+            if (!isNoiseName(candidate)) {
+              destNome = candidate;
+              break;
+            }
+          }
         }
       }
     }
@@ -563,26 +590,29 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       || destBlock.match(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g);
 
     if (formattedCnpjs && formattedCnpjs.length > 0) {
-      destCNPJ = formattedCnpjs[0].replace(/\D/g, '');
+      const validCnpj = formattedCnpjs.find(c => !isCarrierCnpj(c));
+      if (validCnpj) {
+        destCNPJ = validCnpj.replace(/\D/g, '');
+      }
     } else if (formattedCpfs && formattedCpfs.length > 0) {
       destCNPJ = formattedCpfs[0].replace(/\D/g, '');
     } else {
-      // Buscar após rótulo CNPJ / CPF garantindo não capturar Inscrição Estadual (IE)
+      // Buscar após rótulo CNPJ / CPF garantindo não capturar Inscrição Estadual (IE) nem transportadora
       const cnpjsInBlock = mainDestBlock.match(/(?:CNPJ\s*\/\s*CPF|CNPJ|CPF)[^\d]{1,50}(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}|\d{14}|\d{11})/i)
         || destBlock.match(/(?:CNPJ\s*\/\s*CPF|CNPJ|CPF)[^\d]{1,50}(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}|\d{14}|\d{11})/i);
       if (cnpjsInBlock) {
         const candidate = cnpjsInBlock[1].replace(/\D/g, '');
-        // Garantir que não é a Inscrição Estadual
-        if (candidate !== destIE && candidate !== emitIE && candidate.length !== 12) {
+        // Garantir que não é a Inscrição Estadual nem de transportadora
+        if (candidate !== destIE && candidate !== emitIE && candidate.length !== 12 && !isCarrierCnpj(candidate)) {
           destCNPJ = candidate;
         }
       }
 
       if (!destCNPJ) {
-        // Tentar capturar sequência de 14 dígitos no bloco de destinatário (excluindo IEs e chave de 44 dígitos)
+        // Tentar capturar sequência de 14 dígitos no bloco de destinatário (excluindo IEs, transportador e chave de 44 dígitos)
         const digits14 = mainDestBlock.match(/\b\d{14}\b/g) || destBlock.match(/\b\d{14}\b/g);
         if (digits14) {
-          const candidate = digits14.find(c => c !== destIE && c !== emitIE && c.length === 14);
+          const candidate = digits14.find(c => c !== destIE && c !== emitIE && c.length === 14 && !isCarrierCnpj(c));
           if (candidate) {
             destCNPJ = candidate;
           }
@@ -591,16 +621,16 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     }
   }
 
-  // Se o destCNPJ ainda não foi encontrado ou pegou a IE por engano, buscar em todo o texto
-  if (!destCNPJ || destCNPJ === destIE || destCNPJ === emitIE || destCNPJ.length === 12) {
-    const allCnpjsInText = text.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g);
-    if (allCnpjsInText && allCnpjsInText.length > 0) {
-      // Se houver um CNPJ diferente do emitente, é o destinatário!
-      const nonEmit = allCnpjsInText.find(c => c.replace(/\D/g, '') !== emitCNPJRaw);
+  // Se o destCNPJ ainda não foi encontrado ou pegou a IE/transportadora por engano, buscar no searchScope
+  if (!destCNPJ || destCNPJ === destIE || destCNPJ === emitIE || destCNPJ.length === 12 || isCarrierCnpj(destCNPJ)) {
+    const cnpjsInScope = searchScope.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g);
+    if (cnpjsInScope && cnpjsInScope.length > 0) {
+      const nonCarrier = cnpjsInScope.filter(c => !isCarrierCnpj(c));
+      const nonEmit = nonCarrier.find(c => c.replace(/\D/g, '') !== emitCNPJRaw);
       if (nonEmit) {
         destCNPJ = nonEmit.replace(/\D/g, '');
-      } else {
-        destCNPJ = allCnpjsInText[0].replace(/\D/g, '');
+      } else if (nonCarrier.length > 0) {
+        destCNPJ = nonCarrier[0].replace(/\D/g, '');
       }
     }
   }
@@ -1464,8 +1494,8 @@ function extractTransbordo(text: string): string {
     infCpl = infMatch[1];
   }
 
-  // 2. Procurar por trechos específicos perto das palavras-chave indicadas de transbordo (não incluir LOCAL DE ENTREGA)
-  const transbordoKeywordsRegex = /(?:CIDADE DE TRANSBORDO|LOCAL DE TRANSBORDO|SOFRERA\s+TRANSBORDO|TRANSBORDO|RECINTO ALFANDEGADO|RECINTO ALFADEGADO|ALFANDEGADO|ALFADEGADO|CIDADE\s*:)\s*[:=-]?\s*([\s\S]{1,300})/gi;
+  // 2. Procurar por trechos específicos perto das palavras-chave indicadas de transbordo (NUNCA incluir RECINTO ALFANDEGADO ou LOCAL DE ENTREGA)
+  const transbordoKeywordsRegex = /(?:CIDADE DE TRANSBORDO|LOCAL DE TRANSBORDO|SOFRERA\s+TRANSBORDO|MERCADORIA\s+SOFRERA\s+TRANSBORDO|TRANSBORDO\s+NA|TRANSBORDO\s+EM|TRANSBORDO\s+DE|TRANSBORDO\s+NO|TRANSBORDO|CIDADE\s*:)\s*[:=-]?\s*([\s\S]{1,300})/gi;
 
   let match: RegExpExecArray | null;
   // Procurar primeiro nas informações complementares
@@ -1479,7 +1509,7 @@ function extractTransbordo(text: string): string {
   const knownInInf = getKnownTransbordo(infCpl);
   if (knownInInf) return knownInInf;
 
-  // 4. Procurar nas palavras-chave no texto total
+  // 5. Procurar nas palavras-chave no texto total
   transbordoKeywordsRegex.lastIndex = 0;
   while ((match = transbordoKeywordsRegex.exec(text)) !== null) {
     const chunk = match[1];
@@ -1487,7 +1517,7 @@ function extractTransbordo(text: string): string {
     if (known) return known;
   }
 
-  // 5. Se houver menção explícita após palavas-chave sem local pré-mapeado, extrair texto limpo
+  // 6. Se houver menção explícita após palavras-chave sem local pré-mapeado, extrair texto limpo
   const explicitMatch = infCpl.match(/(?:SOFRERA\s+TRANSBORDO|MERCADORIA\s+SOFRERA\s+TRANSBORDO|LOCAL\s+DE\s+TRANSBORDO|LOCAL\s+TRANSBORDO|TRANSBORDO\s+NA|TRANSBORDO\s+EM|TRANSBORDO\s+DE|TRANSBORDO\s+NO|TRANSBORDO)\s*[:=-]?\s*([\s\S]{1,300})/i);
 
   if (explicitMatch && explicitMatch[1]) {
@@ -1509,7 +1539,7 @@ function extractTransbordo(text: string): string {
     const words = chunk.split(/\s+/).filter(Boolean).slice(0, 10);
     let val = words.join(' ').replace(/[:=\-.,;]+$/, '').trim();
     const valUpper = val.toUpperCase();
-    const isPortTerminal = /^TEAG\b|^TEG\b|^TES\b|^TGG\b|^CLI\b|^SANTOS\b|^GUARUJ[AÁ]\b|^TIPLAM\b/i.test(valUpper);
+    const isPortTerminal = /\bTEAG\b|\bTEG\b|\bTES\b|\bTGG\b|\bCLI\b|\bSANTOS\b|\bGUARUJ[AÁ]\b|\bTIPLAM\b|TERMINAL.*EXPORTA[CÇ]|RECINTO/i.test(valUpper);
     if (!isPortTerminal && val.length > 2 && !/^\d+$/.test(val) && !['NÃO', 'NAO', 'DE', 'EM', 'SP', 'MT', 'MS', 'GO', 'MG', 'PR'].includes(valUpper)) {
       if (uppercase.includes('RUMO') || uppercase.includes('MALHA NORTE')) {
         return val.toUpperCase().includes('RUMO') ? val : `${val} (RUMO)`;
@@ -1524,6 +1554,11 @@ function extractTransbordo(text: string): string {
   // 6. Fallback final: verificar se qualquer local conhecido de transbordo aparece no texto todo
   const knownGlobal = getKnownTransbordo(text);
   if (knownGlobal) return knownGlobal;
+
+  // Se o emitente for São Martinho (usina sediada em Pradópolis) e nenhum outro transbordo foi indicado
+  if (/SAO\s*MARTINHO|SÃO\s*MARTINHO/i.test(uppercase)) {
+    return 'PRADOPOLIS';
+  }
 
   return '';
 }

@@ -17,6 +17,7 @@ import {
   sanitizeDestinatarioNome,
   formatCNPJ,
   extractCNPJFilial,
+  isCarrierCnpj,
 } from "@/lib/destinatario-utils"
 
 import {
@@ -139,7 +140,16 @@ export function getNoteDetails(
     rawDestCnpj,
     `${infCpl} ${rawXml} ${f.rawSnippet || ""}`
   )
-  const destCNPJ = rawDestCnpj ? formatCNPJ(rawDestCnpj) : ""
+  let destCNPJ = rawDestCnpj ? formatCNPJ(rawDestCnpj) : ""
+  // Se o CNPJ capturado pertence a uma transportadora (ex: Liderança 10.991.380 ou Rumo 02.387.241), NÃO é o CNPJ do destinatário!
+  if (isCarrierCnpj(rawDestCnpj)) {
+    // Se o destinatário for a própria usina emitente (ex: Usina São Martinho em remessa)
+    if (destNome && /SAO\s*MARTINHO/i.test(destNome) && (nfe?.emitente?.cnpj || parsed?.emitCNPJ)) {
+      destCNPJ = formatCNPJ(nfe?.emitente?.cnpj || parsed?.emitCNPJ || "")
+    } else {
+      destCNPJ = ""
+    }
+  }
 
   let produto = "Outros"
   if (nfe?.tipoProduto && nfe.tipoProduto !== "OUTRO") {
@@ -186,7 +196,7 @@ export function getNoteDetails(
   }
 
   if (transbordo === "Não Informado" || !transbordo || isPortTerminalName(transbordo)) {
-    const fullContext = `${infCpl} ${rawXml} ${f.rawSnippet || ""} ${nfe?.emitente?.endereco?.municipio || ""} ${nfe?.emitente?.nome || ""} ${parsed?.emitNome || ""}`.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    const fullContext = `${infCpl} ${rawXml} ${f.rawSnippet || ""} ${nfe?.emitente?.cidade || ""} ${nfe?.emitente?.nome || ""} ${parsed?.emitNome || ""}`.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     if (/PRADOPOLIS|PRADÓPOLIS|SAO MARTINHO|SÃO MARTINHO/i.test(fullContext)) transbordo = "PRADOPOLIS"
     else if (/PEDERNEIRAS/i.test(fullContext)) transbordo = "PEDERNEIRAS (RUMO)"
     else if (/FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(fullContext)) transbordo = "FERNANDOPOLIS"
