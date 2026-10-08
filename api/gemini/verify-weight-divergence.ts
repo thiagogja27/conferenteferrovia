@@ -243,7 +243,7 @@ export default async function handler(req: any, res: any) {
 
       try {
         const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
+          model: "gemini-2.5-flash",
           contents: `Você é um Auditor Sênior Especialista em Pesagem Fiscal, Transporte Ferroviário e Rodoviário (MDF-e / NF-e vs Planilha Excel).
 Sua missão fundamental é conferir TODAS as notas/vagões com divergência para ACHAR O VALOR REAL DA QUANTIDADE / PESO focando diretamente no campo "QUANT" / "QUANTIDADE" da DANFE.
 

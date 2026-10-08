@@ -60,6 +60,13 @@ const KNOWN_LOCATIONS: Record<string, { lat: number; lng: number; name: string }
   "CUIABA": { lat: -15.6010, lng: -56.0974, name: "Cuiabá - MT" },
   "RONDONOPOLIS": { lat: -16.4673, lng: -54.6358, name: "Rondonópolis - MT" },
   "RONDONÓPOLIS": { lat: -16.4673, lng: -54.6358, name: "Rondonópolis - MT" },
+  "FERNANDOPOLIS": { lat: -20.2828, lng: -50.2464, name: "Fernandópolis - SP" },
+  "FERNANDÓPOLIS": { lat: -20.2828, lng: -50.2464, name: "Fernandópolis - SP" },
+  "TES": { lat: -23.9667, lng: -46.3056, name: "TES - Terminal Exportador de Santos - SP" },
+  "TERMINAL EXPORTADOR DE SANTOS": { lat: -23.9667, lng: -46.3056, name: "TES - Terminal Exportador de Santos - SP" },
+  "TEAG": { lat: -23.9782, lng: -46.2921, name: "TEAG - Terminal de Açúcar do Guarujá - SP" },
+  "TERMINAL DE ACUCAR DO GUARUJA": { lat: -23.9782, lng: -46.2921, name: "TEAG - Terminal de Açúcar do Guarujá - SP" },
+  "TEG": { lat: -23.9774, lng: -46.2935, name: "TEG - Terminal Exportador do Guarujá - SP" },
 }
 
 export function MapPanel({ files }: MapPanelProps) {

@@ -395,6 +395,18 @@ export function parseDacteFromText(rawText: string, fileName?: string): CteData 
     if (!expedNome) expedNome = 'LDC - LOUIS DREYFUS'
     if (!expedMun) expedMun = 'PEDERNEIRAS'
     if (!expedUf) expedUf = 'SP'
+  } else if (/FERNAND[OÓ]POLIS/i.test(text) || /ATT\s*ARMAZENAGEM/i.test(text) || /72\.?451\.?917\/?0016-?08/.test(text)) {
+    if (!expedCnpj && (/ATT\s*ARMAZENAGEM/i.test(text) || /72\.?451\.?917\/?0016-?08/.test(text))) {
+      expedCnpj = '72.451.917/0016-08'
+    }
+    if (!expedNome && /ATT\s*ARMAZENAGEM/i.test(text)) {
+      expedNome = 'ATT ARMAZENAGEM, TRANSPORTE E TRANSBORDO LTDA'
+    }
+    if (!expedMun) expedMun = 'FERNANDOPOLIS'
+    if (!expedUf) expedUf = 'SP'
+  } else if (/UBERABA|TIUB/i.test(text)) {
+    if (!expedMun) expedMun = 'UBERABA'
+    if (!expedUf) expedUf = 'MG'
   }
 
   // Fallback caso não tenha encontrado pelo bloco específico:

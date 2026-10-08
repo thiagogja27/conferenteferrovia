@@ -82,16 +82,26 @@ export function auditarHeuristicaLocal(item: WeightAuditItemInput): WeightAuditI
         : (numVal >= 1000 ? Number((numVal / 1000).toFixed(3)) : numVal)
       
       const isMatchExcel = pesoExcel !== undefined && (Math.abs(valInTons - pesoExcel) <= 0.01 || (pesoExcel >= 1000 && Math.abs(valInTons * 1000 - pesoExcel) <= 1))
-      
+      const isMatchDoc = pesoMDF !== undefined && (Math.abs(valInTons - pesoMDF) <= 0.01 || (pesoMDF >= 1000 && Math.abs(valInTons * 1000 - pesoMDF) <= 1))
+
+      let statusVal: VereditoTipo = 'DIVERGENCIA_REAL'
+      if (pesoExcel !== undefined) {
+        statusVal = isMatchExcel ? 'ERRO_LEITURA_SISTEMA' : 'DIVERGENCIA_REAL'
+      } else {
+        statusVal = (pesoMDF === undefined || pesoMDF === 0 || !isMatchDoc) ? 'ERRO_LEITURA_SISTEMA' : 'CONFERIDO_CORRETO'
+      }
+
       return {
         id: item.id,
         identificador,
-        status: isMatchExcel ? 'ERRO_LEITURA_SISTEMA' : 'DIVERGENCIA_REAL',
-        veredito: `Valor Real no Campo QUANT: ${valInTons.toFixed(3)} t (${rawVal} ${unit})`,
+        status: statusVal,
+        veredito: statusVal === 'ERRO_LEITURA_SISTEMA' 
+          ? `Quantidade Corrigida pela IA: ${valInTons.toFixed(3)} t (${rawVal} ${unit})`
+          : `Quantidade Real no Campo QUANT: ${valInTons.toFixed(3)} t (${rawVal} ${unit})`,
         pesoCorrigidoDoc: valInTons,
         pesoExcel,
         diferencaReal: pesoExcel !== undefined ? Number((valInTons - (pesoExcel >= 1000 ? pesoExcel / 1000 : pesoExcel)).toFixed(3)) : 0,
-        explicacao: `Localizado na coluna QUANT dos Dados dos Produtos/Serviços: ${rawVal} ${unit} (${valInTons.toFixed(3)} t)${isMatchExcel ? ', conferindo com a planilha Excel.' : ', divergindo do peso da planilha.'}`,
+        explicacao: `Localizado na coluna QUANT dos Dados dos Produtos/Serviços: ${rawVal} ${unit} (${valInTons.toFixed(3)} t)${pesoExcel !== undefined ? (isMatchExcel ? ', conferindo com a planilha Excel.' : ', divergindo do peso da planilha.') : (statusVal === 'ERRO_LEITURA_SISTEMA' ? `, corrigindo a leitura inicial do sistema (${pesoMDF ?? 0} t).` : ', conferido com precisão pela IA.')}`,
         confianca: 'ALTA',
         modoUtilizado: 'HEURISTICA_LOCAL',
       }
@@ -108,16 +118,26 @@ export function auditarHeuristicaLocal(item: WeightAuditItemInput): WeightAuditI
     if (numPesoL > 0) {
       const pesoLInTons = numPesoL >= 1000 ? Number((numPesoL / 1000).toFixed(3)) : numPesoL
       const isMatchExcel = pesoExcel !== undefined && (Math.abs(pesoLInTons - pesoExcel) <= 0.01 || (pesoExcel >= 1000 && Math.abs(pesoLInTons * 1000 - pesoExcel) <= 1))
+      const isMatchDoc = pesoMDF !== undefined && (Math.abs(pesoLInTons - pesoMDF) <= 0.01 || (pesoMDF >= 1000 && Math.abs(pesoLInTons * 1000 - pesoMDF) <= 1))
       
+      let statusVal: VereditoTipo = 'DIVERGENCIA_REAL'
+      if (pesoExcel !== undefined) {
+        statusVal = isMatchExcel ? 'ERRO_LEITURA_SISTEMA' : 'DIVERGENCIA_REAL'
+      } else {
+        statusVal = (pesoMDF === undefined || pesoMDF === 0 || !isMatchDoc) ? 'ERRO_LEITURA_SISTEMA' : 'CONFERIDO_CORRETO'
+      }
+
       return {
         id: item.id,
         identificador,
-        status: isMatchExcel ? 'ERRO_LEITURA_SISTEMA' : 'DIVERGENCIA_REAL',
-        veredito: `Peso Líquido da DANFE: ${pesoLInTons.toFixed(3)} t (${rawPesoL} kg)`,
+        status: statusVal,
+        veredito: statusVal === 'ERRO_LEITURA_SISTEMA'
+          ? `Peso Líquido Corrigido pela IA: ${pesoLInTons.toFixed(3)} t (${rawPesoL} kg)`
+          : `Peso Líquido da DANFE: ${pesoLInTons.toFixed(3)} t (${rawPesoL} kg)`,
         pesoCorrigidoDoc: pesoLInTons,
         pesoExcel,
         diferencaReal: pesoExcel !== undefined ? Number((pesoLInTons - (pesoExcel >= 1000 ? pesoExcel / 1000 : pesoExcel)).toFixed(3)) : 0,
-        explicacao: `Localizado na seção de Transporte/Peso Líquido da DANFE: ${rawPesoL} kg (${pesoLInTons.toFixed(3)} t)${isMatchExcel ? ', alinhado com a planilha Excel.' : '.'}`,
+        explicacao: `Localizado na seção de Transporte/Peso Líquido da DANFE: ${rawPesoL} kg (${pesoLInTons.toFixed(3)} t)${pesoExcel !== undefined ? (isMatchExcel ? ', alinhado com a planilha Excel.' : '.') : (statusVal === 'ERRO_LEITURA_SISTEMA' ? `, corrigindo a leitura inicial do sistema (${pesoMDF ?? 0} t).` : ', conferido com precisão pela IA.')}`,
         confianca: 'ALTA',
         modoUtilizado: 'HEURISTICA_LOCAL',
       }
@@ -132,19 +152,74 @@ export function auditarHeuristicaLocal(item: WeightAuditItemInput): WeightAuditI
     const quantNum = parseFloat(rawQuantStr.replace(/\./g, '').replace(',', '.'))
     if (quantNum > 0) {
       const quantInTons = quantNum >= 1000 ? Number((quantNum / 1000).toFixed(3)) : Number(quantNum.toFixed(3))
-      if (pesoExcel !== undefined && Math.abs(quantInTons - pesoExcel) <= 0.01) {
+      const isMatchExcel = pesoExcel !== undefined && Math.abs(quantInTons - pesoExcel) <= 0.01
+      const isMatchDoc = pesoMDF !== undefined && Math.abs(quantInTons - pesoMDF) <= 0.01
+
+      let statusVal: VereditoTipo = 'DIVERGENCIA_REAL'
+      if (pesoExcel !== undefined) {
+        statusVal = isMatchExcel ? 'ERRO_LEITURA_SISTEMA' : 'DIVERGENCIA_REAL'
+      } else {
+        statusVal = (pesoMDF === undefined || pesoMDF === 0 || !isMatchDoc) ? 'ERRO_LEITURA_SISTEMA' : 'CONFERIDO_CORRETO'
+      }
+
+      if (pesoExcel !== undefined ? isMatchExcel : true) {
         return {
           id: item.id,
           identificador,
-          status: 'ERRO_LEITURA_SISTEMA',
-          veredito: `Valor Real no Campo QUANT: ${quantInTons.toFixed(3)} t`,
+          status: statusVal,
+          veredito: statusVal === 'ERRO_LEITURA_SISTEMA'
+            ? `Quantidade Corrigida pela IA no Campo QUANT: ${quantInTons.toFixed(3)} t`
+            : `Valor Real no Campo QUANT: ${quantInTons.toFixed(3)} t`,
           pesoCorrigidoDoc: quantInTons,
           pesoExcel,
-          diferencaReal: 0,
-          explicacao: `Localizado exatamente no campo QUANT da DANFE: ${rawQuantStr} (${quantInTons.toFixed(3)} t), batendo com a planilha Excel.`,
+          diferencaReal: pesoExcel !== undefined ? Number((quantInTons - pesoExcel).toFixed(3)) : 0,
+          explicacao: `Localizado exatamente no campo QUANT da DANFE: ${rawQuantStr} (${quantInTons.toFixed(3)} t)${pesoExcel !== undefined ? (isMatchExcel ? ', batendo com a planilha Excel.' : '.') : (statusVal === 'ERRO_LEITURA_SISTEMA' ? `, corrigindo a leitura inicial do sistema (${pesoMDF ?? 0} t).` : ', validado pela IA.')}`,
           confianca: 'ALTA',
           modoUtilizado: 'HEURISTICA_LOCAL',
         }
+      }
+    }
+  }
+
+  // 4. Busca tags XML <pesoL> ou <qCom>
+  const xmlPesoLMatch = cleanSnippet.match(/<pesoL>([^<]+)<\/pesoL>/i)
+  if (xmlPesoLMatch) {
+    const rawVal = xmlPesoLMatch[1].trim()
+    const num = parseFloat(rawVal.replace(/\./g, '').replace(',', '.'))
+    if (num > 0) {
+      const valInTons = num >= 1000 ? Number((num / 1000).toFixed(3)) : num
+      return {
+        id: item.id,
+        identificador,
+        status: (pesoMDF === undefined || pesoMDF === 0 || Math.abs(valInTons - pesoMDF) > 0.01) ? 'ERRO_LEITURA_SISTEMA' : 'CONFERIDO_CORRETO',
+        veredito: `Peso Líquido XML: ${valInTons.toFixed(3)} t`,
+        pesoCorrigidoDoc: valInTons,
+        pesoExcel,
+        diferencaReal: pesoExcel !== undefined ? Number((valInTons - (pesoExcel >= 1000 ? pesoExcel / 1000 : pesoExcel)).toFixed(3)) : 0,
+        explicacao: `Localizado na tag <pesoL> do documento fiscal: ${valInTons.toFixed(3)} t.`,
+        confianca: 'ALTA',
+        modoUtilizado: 'HEURISTICA_LOCAL',
+      }
+    }
+  }
+
+  const xmlQComMatch = cleanSnippet.match(/<qCom>([^<]+)<\/qCom>/i)
+  if (xmlQComMatch) {
+    const rawVal = xmlQComMatch[1].trim()
+    const num = parseFloat(rawVal.replace(/\./g, '').replace(',', '.'))
+    if (num > 0) {
+      const valInTons = num >= 1000 ? Number((num / 1000).toFixed(3)) : num
+      return {
+        id: item.id,
+        identificador,
+        status: (pesoMDF === undefined || pesoMDF === 0 || Math.abs(valInTons - pesoMDF) > 0.01) ? 'ERRO_LEITURA_SISTEMA' : 'CONFERIDO_CORRETO',
+        veredito: `Quantidade do Item XML: ${valInTons.toFixed(3)} t`,
+        pesoCorrigidoDoc: valInTons,
+        pesoExcel,
+        diferencaReal: pesoExcel !== undefined ? Number((valInTons - (pesoExcel >= 1000 ? pesoExcel / 1000 : pesoExcel)).toFixed(3)) : 0,
+        explicacao: `Localizado na tag <qCom> do produto no documento fiscal: ${valInTons.toFixed(3)} t.`,
+        confianca: 'ALTA',
+        modoUtilizado: 'HEURISTICA_LOCAL',
       }
     }
   }
@@ -369,3 +444,188 @@ export async function auditarDivergenciasComIA(items: WeightAuditItemInput[]): P
     provedor: 'HEURISTICA_INTELIGENTE',
   }
 }
+
+export interface ItemParaConferenciaIA {
+  id: string
+  fileName: string
+  chave?: string
+  numero?: string
+  serie?: string
+  pesoLido?: number // quantidade inicialmente lida pelo sistema
+  pesoExcel?: number // peso da planilha Excel se houver confronto
+  snippet?: string // rawSnippet ou texto extraído da DANFE
+  xmlContent?: string
+  isPdf?: boolean
+}
+
+/**
+ * Garante que todas as notas processadas a partir de PDF passem pela conferência da IA
+ * para que a quantidade exportada para o Excel seja 100% precisa e auditada.
+ */
+export async function conferirQuantidadesNotasPdfComIA(
+  items: ItemParaConferenciaIA[],
+  existingAuditMap: Record<string, WeightAuditItemResult> = {}
+): Promise<Record<string, WeightAuditItemResult>> {
+  if (!items || items.length === 0) return existingAuditMap
+
+  const resultMap: Record<string, WeightAuditItemResult> = { ...existingAuditMap }
+
+  // Filtra itens que ainda não têm conferência de IA no mapa
+  const itemsToAudit: WeightAuditItemInput[] = []
+
+  for (const item of items) {
+    const mainId = item.chave || item.id || item.fileName
+    const altId = item.fileName
+    const existing = resultMap[mainId] || resultMap[altId]
+
+    // Se já foi conferido pela IA com um peso identificado, reutiliza
+    if (existing && existing.pesoCorrigidoDoc !== undefined && existing.pesoCorrigidoDoc !== null) {
+      continue
+    }
+
+    const snippetText = `${item.snippet || ''} ${item.xmlContent ? item.xmlContent.substring(0, 1500) : ''}`.trim()
+    const prodInfo = `QUANTIDADE_SISTEMA: ${item.pesoLido ?? 0} t | NF: ${item.numero || ''} | CHAVE: ${item.chave || ''}`
+    const fullSnippet = snippetText ? `${prodInfo}\n${snippetText}` : prodInfo
+
+    itemsToAudit.push({
+      id: mainId,
+      identificador: item.numero ? `NF ${item.numero}` : item.fileName,
+      numeroApenas: item.numero || '',
+      serie: item.serie || '',
+      pesoMDF: item.pesoLido ?? 0,
+      pesoExcel: item.pesoExcel,
+      diferencaPeso: item.pesoExcel !== undefined && item.pesoLido !== undefined ? Number((item.pesoLido - item.pesoExcel).toFixed(3)) : undefined,
+      trechoTextoDocumento: fullSnippet,
+    })
+  }
+
+  if (itemsToAudit.length === 0) {
+    return resultMap
+  }
+
+  try {
+    const response = await auditarDivergenciasComIA(itemsToAudit)
+    for (const r of response.resultados) {
+      resultMap[r.id] = r
+    }
+  } catch (err) {
+    console.warn('Erro ao auditar notas em lote com IA, gerando conferência heurística:', err)
+    for (const it of itemsToAudit) {
+      resultMap[it.id] = auditarHeuristicaLocal(it)
+    }
+  }
+
+  return resultMap
+}
+
+/**
+ * Normaliza e converte a quantidade para KG multiplicando por 1000 quando os valores
+ * estiverem em Toneladas (valores < 1000, ex: 49,34 -> 49340, 48,76 -> 48760, 49 -> 49000).
+ * Se o valor já for >= 1000 (ex: 49340 kg), preserva o valor sem multiplicar novamente.
+ */
+export function normalizarQuantidadeKg(val: any): number {
+  if (val === undefined || val === null || val === '') return 0
+  if (typeof val === 'number') {
+    if (isNaN(val) || val === 0) return 0
+    if (Math.abs(val) < 1000) {
+      return Number((val * 1000).toFixed(3))
+    }
+    return Number(val.toFixed(3))
+  }
+
+  const sVal = String(val).trim()
+  if (!sVal) return 0
+
+  let num = 0
+  if (sVal.includes(',')) {
+    num = parseFloat(sVal.replace(/\./g, '').replace(',', '.'))
+  } else if (/^\d+\.\d{1,2}$/.test(sVal)) {
+    // Formato com ponto e até 2 casas decimais (ex: "49.34" ou "48.5")
+    num = parseFloat(sVal)
+  } else if (/^\d+\.\d{3}$/.test(sVal)) {
+    // Formato com 3 casas ou milhar brasileiro (ex: "49.340" -> 49340 kg)
+    num = parseFloat(sVal.replace('.', ''))
+  } else {
+    num = parseFloat(sVal)
+  }
+
+  if (isNaN(num) || num === 0) return 0
+
+  if (Math.abs(num) < 1000) {
+    return Number((num * 1000).toFixed(3))
+  }
+  return Number(num.toFixed(3))
+}
+
+/**
+ * Retorna a quantidade definitiva conferida pela IA para uma nota.
+ * Prioridade: Override manual > Peso corrigido pela IA > Peso original do sistema.
+ * Quando o valor for em Toneladas (< 1000, ex: 49,34, 48,76, 49), é sempre multiplicado por 1000 (ex: 49340, 48760, 49000).
+ */
+export function obterQuantidadeConferidaIA(
+  idOrKey: string,
+  initialQtd: number,
+  auditMap?: Record<string, WeightAuditItemResult>,
+  overridesMap?: Record<string, number>,
+  altKey?: string
+): {
+  quantidade: number
+  quantidadeKg: number
+  quantidadeToneladas: number
+  status: string
+  explicacao: string
+  foiCorrigido: boolean
+  modoUtilizado: string
+} {
+  let rawQtd = initialQtd
+  let status = 'SEM_AUDITORIA_IA'
+  let explicacao = 'Quantidade extraída inicialmente.'
+  let foiCorrigido = false
+  let modoUtilizado = 'PADRAO_SISTEMA'
+
+  // 1. Override manual
+  if (overridesMap) {
+    if (overridesMap[idOrKey] !== undefined) {
+      rawQtd = overridesMap[idOrKey]
+      status = 'AJUSTADO_MANUALMENTE'
+      explicacao = 'Quantidade ajustada manualmente pelo operador.'
+      foiCorrigido = overridesMap[idOrKey] !== initialQtd
+      modoUtilizado = 'MANUAL'
+    } else if (altKey && overridesMap[altKey] !== undefined) {
+      rawQtd = overridesMap[altKey]
+      status = 'AJUSTADO_MANUALMENTE'
+      explicacao = 'Quantidade ajustada manualmente pelo operador.'
+      foiCorrigido = overridesMap[altKey] !== initialQtd
+      modoUtilizado = 'MANUAL'
+    }
+  } else if (auditMap) {
+    const audit = auditMap[idOrKey] || (altKey ? auditMap[altKey] : undefined)
+    if (audit && audit.pesoCorrigidoDoc !== undefined && audit.pesoCorrigidoDoc !== null) {
+      rawQtd = audit.pesoCorrigidoDoc
+      foiCorrigido = Math.abs(rawQtd - initialQtd) > 0.005
+      status = audit.status === 'ERRO_LEITURA_SISTEMA' 
+        ? 'QUANTIDADE CORRIGIDA PELA IA (VALOR REAL ENCONTRADO)'
+        : (audit.status === 'DIVERGENCIA_REAL' 
+          ? 'DIVERGÊNCIA REAL DE PESAGEM' 
+          : 'CONFERIDO E CONFIRMADO PELA IA')
+      explicacao = audit.explicacao || audit.veredito || 'Conferido pela IA'
+      modoUtilizado = audit.modoUtilizado || 'GEMINI_IA'
+    }
+  }
+
+  // Quando os valores forem em toneladas (< 1000, ex: 49,34, 48,76, 49),
+  // a quantidade SEMPRE deve ser multiplicada por 1000 para converter para KG (ex: 49340, 48760, 49000).
+  const qtdKg = normalizarQuantidadeKg(rawQtd)
+  const qtdTon = rawQtd >= 1000 ? Number((rawQtd / 1000).toFixed(3)) : Number(rawQtd.toFixed(3))
+
+  return {
+    quantidade: qtdKg, // Sempre em KG (multiplicado por 1000 quando em Toneladas)
+    quantidadeKg: qtdKg,
+    quantidadeToneladas: qtdTon,
+    status,
+    explicacao,
+    foiCorrigido,
+    modoUtilizado,
+  }
+}
+

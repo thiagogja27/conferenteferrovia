@@ -266,6 +266,41 @@ export function buildConferenceDashboardSnapshot(
     let transbordo = nfe?.transbordo || parsed?.transbordo || 'Não Informado'
     const retirada = parsed?.retirada || ''
 
+    // Se o terminal capturado foi UBERABA / TIUB, corrigir para transbordo
+    if (/UBERABA|TIUB/i.test(terminal)) {
+      if (transbordo === 'Não Informado' || !transbordo) {
+        transbordo = 'UBERABA'
+      }
+      terminal = 'Não Informado'
+    } else if (/ATT\s*ARMAZENAGEM|FERNAND[OÓ]POLIS/i.test(terminal)) {
+      if (transbordo === 'Não Informado' || !transbordo) {
+        transbordo = 'FERNANDOPOLIS'
+      }
+      terminal = 'Não Informado'
+    }
+
+    // Se o terminal foi rotulado como TEG mas a nota é de açúcar, corrigir para TEAG
+    if (terminal.includes('TEG') && !terminal.includes('TEAG')) {
+      if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(`${infCpl} ${rawXml}`)) {
+        terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+      }
+    }
+
+    // Detecção prioritária de TEAG
+    if (
+      /\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|ACUCAR.*GUARUJ[AÁ]|TEAG|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO/i.test(`${infCpl} ${rawXml}`) ||
+      ((/GUARUJ[AÁ]/i.test(`${infCpl} ${rawXml}`)) && (/ACUCAR|AÇÚCAR/i.test(`${infCpl} ${rawXml}`)))
+    ) {
+      terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+    } else if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(`${infCpl} ${rawXml}`)) {
+      terminal = 'TES - TERMINAL EXPORTADOR DE SANTOS'
+    }
+
+    // Detecção de Fernandópolis
+    if ((transbordo === 'Não Informado' || !transbordo) && /FERNAND[OÓ]POLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(`${infCpl} ${rawXml}`)) {
+      transbordo = 'FERNANDOPOLIS'
+    }
+
     if (logisticsOverridesInput && chave && logisticsOverridesInput[chave]) {
       const ov = logisticsOverridesInput[chave]
       if (ov.terminal) terminal = ov.terminal

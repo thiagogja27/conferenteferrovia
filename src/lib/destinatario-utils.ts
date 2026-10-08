@@ -51,93 +51,136 @@ export function sanitizeDestinatarioNome(
     .replace(/[:=\-.,;/]+$/, '')
     .trim()
 
-  const combined = `${nome} ${rawCnpj || ''} ${fullText || ''}`.toUpperCase()
+  // Função auxiliar de correspondência corporativa
+  const matchCompany = (target: string): string | null => {
+    if (!target) return null
+    if (target.includes('BTG PACTUAL') || target.includes('SERTRADING') || /04\.?626\.?426/i.test(target)) {
+      return 'BTG PACTUAL COMMODITIES SERTRADING S.A.'
+    }
+    if (target.includes('TIETE') || target.includes('TIETÊ') || /51\.?843\.?514/i.test(target)) {
+      return 'TIETE AGROINDUSTRIAL S.A.'
+    }
+    if (target.includes('ALCOESTE') || /43\.?545\.?284/i.test(target)) {
+      return 'ALCOESTE BIOENERGIA FERNANDOPOLIS S/A'
+    }
+    // CRÍTICO: Cargill é CNPJ 44.934.648. O CNPJ 02.387.241 é da RUMO S.A. (transportadora) e NUNCA deve ser Cargill!
+    if (target.includes('CARGILL') || /44\.?934\.?648/i.test(target)) {
+      return 'CARGILL AGRICOLA SA'
+    }
+    if (target.includes('CORURIPE') || /12\.?229\.?415/i.test(target)) {
+      return 'S/A USINA CORURIPE ACUCAR E ALCOOL'
+    }
+    if (target.includes('COPERSUCAR') || /60\.?643\.?236/i.test(target)) {
+      return 'COPERSUCAR S.A.'
+    }
+    if (target.includes('RAIZEN') || target.includes('RAÍZEN') || /08\.?070\.?508/i.test(target)) {
+      return 'RAIZEN ENERGIA S.A.'
+    }
+    if (target.includes('SAO MARTINHO') || target.includes('SÃO MARTINHO') || /51\.?466\.?860/i.test(target)) {
+      return 'USINA SAO MARTINHO S/A'
+    }
+    if (target.includes('ADECOAGRO') || /05\.?950\.?358/i.test(target)) {
+      return 'ADECOAGRO VALE DO IVINHEMA S.A.'
+    }
+    if (target.includes('ALTA MOGIANA') || /44\.?248\.?957/i.test(target)) {
+      return 'USINA ALTA MOGIANA S/A - ACUCAR E ALCOOL'
+    }
+    if (target.includes('BATATAIS') || /44\.?952\.?665/i.test(target)) {
+      return 'USINA BATATAIS S/A ACUCAR E ALCOOL'
+    }
+    if (target.includes('TEREOS') || target.includes('GUARANI') || /47\.?080\.?619/i.test(target)) {
+      return 'TEREOS ACUCAR E ENERGIA BRASIL S.A.'
+    }
+    if (target.includes('BP BUNGE') || (target.includes('BIOENERGIA') && !target.includes('ALCOESTE')) || /10\.?779\.?985/i.test(target)) {
+      return 'BP BUNGE BIOENERGIA S.A.'
+    }
+    if (target.includes('BOM FUTURO') || /01\.?249\.?863/i.test(target)) {
+      return 'BOM FUTURO AGRICOLA LTDA'
+    }
+    if (target.includes('ADM DO BRASIL') || (target.includes('ADM ') && !target.includes('ADMINISTR')) || /02\.?012\.?862/i.test(target)) {
+      return 'ADM DO BRASIL LTDA'
+    }
+    if (target.includes('LOUIS DREYFUS') || target.includes('LOUIS DREUFUS') || target.includes('DREYFUS') || target.includes('LDC') || /47\.?067\.?525/i.test(target)) {
+      return 'LOUIS DREYFUS COMPANY BRASIL S.A.'
+    }
+    if (target.includes('BUNGE') || /84\.?046\.?101/i.test(target)) {
+      return 'BUNGE ALIMENTOS S.A.'
+    }
+    if (target.includes('AMAGGI') || /00\.?299\.?056/i.test(target)) {
+      return 'AMAGGI EXPORTACAO E IMPORTACAO LTDA'
+    }
+    if (target.includes('COAMO') || /75\.?904\.?383/i.test(target)) {
+      return 'COAMO AGROINDUSTRIAL COOPERATIVA'
+    }
+    if (target.includes('C.VALE') || target.includes('C VALE') || /77\.?858\.?645/i.test(target)) {
+      return 'C.VALE COOPERATIVA AGROINDUSTRIAL'
+    }
+    if (target.includes('VITERRA') || target.includes('GLENCORE') || /02\.?638\.?994/i.test(target)) {
+      return 'VITERRA BRASIL S.A.'
+    }
+    if (target.includes('COFCO') || /06\.?315\.?338/i.test(target)) {
+      return 'COFCO INTERNATIONAL BRASIL S.A.'
+    }
+    if (target.includes('JALLES MACHADO') || /02\.?635\.?522/i.test(target)) {
+      return 'JALLES MACHADO S.A.'
+    }
+    if (target.includes('AGROVALE') || /14\.?495\.?734/i.test(target)) {
+      return 'AGROVALE - AGRO INDUSTRIAS DO VALE DO SAO FRANCISCO S.A.'
+    }
+    if (target.includes('SANTA FE') || target.includes('SANTA FÉ') || /44\.?218\.?935/i.test(target)) {
+      return 'USINA SANTA FE S/A'
+    }
+    if (target.includes('SANTA TEREZINHA') || target.includes('USACUCAR') || /75\.?767\.?475/i.test(target)) {
+      return 'USINA SANTA TEREZINHA LTDA'
+    }
+    if (target.includes('CAETE') || target.includes('CAETÉ') || /12\.?200\.?749/i.test(target)) {
+      return 'USINA CAETE S/A'
+    }
+    return null
+  }
 
-  // 2. Normalização corporativa de grandes clientes do setor agro / trading / usinas
-  if (combined.includes('BTG PACTUAL') || combined.includes('SERTRADING') || /04\.?626\.?426/i.test(combined)) {
-    return 'BTG PACTUAL COMMODITIES SERTRADING S.A.'
-  }
-  if (combined.includes('TIETE') || combined.includes('TIETÊ') || /51\.?843\.?514/i.test(combined)) {
-    return 'TIETE AGROINDUSTRIAL S.A.'
-  }
-  if (combined.includes('ALCOESTE') || /43\.?545\.?284/i.test(combined)) {
-    return 'ALCOESTE BIOENERGIA FERNANDOPOLIS S/A'
-  }
-  if (combined.includes('CARGILL') || /02\.?387\.?241/i.test(combined)) {
-    return 'CARGILL AGRICOLA SA'
-  }
-  if (combined.includes('CORURIPE') || /12\.?229\.?415/i.test(combined)) {
-    return 'S/A USINA CORURIPE ACUCAR E ALCOOL'
-  }
-  if (combined.includes('COPERSUCAR') || /60\.?643\.?236/i.test(combined)) {
-    return 'COPERSUCAR S.A.'
-  }
-  if (combined.includes('RAIZEN') || combined.includes('RAÍZEN') || /08\.?070\.?508/i.test(combined)) {
-    return 'RAIZEN ENERGIA S.A.'
-  }
-  if (combined.includes('SAO MARTINHO') || combined.includes('SÃO MARTINHO') || /51\.?466\.?860/i.test(combined)) {
-    return 'USINA SAO MARTINHO S/A'
-  }
-  if (combined.includes('ADECOAGRO') || /05\.?950\.?358/i.test(combined)) {
-    return 'ADECOAGRO VALE DO IVINHEMA S.A.'
-  }
-  if (combined.includes('ALTA MOGIANA') || /44\.?248\.?957/i.test(combined)) {
-    return 'USINA ALTA MOGIANA S/A - ACUCAR E ALCOOL'
-  }
-  if (combined.includes('BATATAIS') || /44\.?952\.?665/i.test(combined)) {
-    return 'USINA BATATAIS S/A ACUCAR E ALCOOL'
-  }
-  if (combined.includes('TEREOS') || combined.includes('GUARANI') || /47\.?080\.?619/i.test(combined)) {
-    return 'TEREOS ACUCAR E ENERGIA BRASIL S.A.'
-  }
-  if (combined.includes('BP BUNGE') || combined.includes('BIOENERGIA') || /10\.?779\.?985/i.test(combined)) {
-    return 'BP BUNGE BIOENERGIA S.A.'
-  }
-  if (combined.includes('BOM FUTURO') || /01\.?249\.?863/i.test(combined)) {
-    return 'BOM FUTURO AGRICOLA LTDA'
-  }
-  if (combined.includes('ADM DO BRASIL') || combined.includes('ADM ') || /02\.?012\.?862/i.test(combined)) {
-    return 'ADM DO BRASIL LTDA'
-  }
-  if (combined.includes('LOUIS DREYFUS') || combined.includes('LDC') || /47\.?067\.?525/i.test(combined)) {
-    return 'LOUIS DREYFUS COMPANY BRASIL S.A.'
-  }
-  if (combined.includes('BUNGE') || /84\.?046\.?101/i.test(combined)) {
-    return 'BUNGE ALIMENTOS S.A.'
-  }
-  if (combined.includes('AMAGGI') || /00\.?299\.?056/i.test(combined)) {
-    return 'AMAGGI EXPORTACAO E IMPORTACAO LTDA'
-  }
-  if (combined.includes('COAMO') || /75\.?904\.?383/i.test(combined)) {
-    return 'COAMO AGROINDUSTRIAL COOPERATIVA'
-  }
-  if (combined.includes('C.VALE') || combined.includes('C VALE') || /77\.?858\.?645/i.test(combined)) {
-    return 'C.VALE COOPERATIVA AGROINDUSTRIAL'
-  }
-  if (combined.includes('VITERRA') || combined.includes('GLENCORE') || /02\.?638\.?994/i.test(combined)) {
-    return 'VITERRA BRASIL S.A.'
-  }
-  if (combined.includes('COFCO') || /06\.?315\.?338/i.test(combined)) {
-    return 'COFCO INTERNATIONAL BRASIL S.A.'
-  }
-  if (combined.includes('JALLES MACHADO') || /02\.?638\.?994/i.test(combined)) {
-    return 'JALLES MACHADO S.A.'
-  }
-  if (combined.includes('AGROVALE') || /14\.?495\.?734/i.test(combined)) {
-    return 'AGROVALE - AGRO INDUSTRIAS DO VALE DO SAO FRANCISCO S.A.'
-  }
-  if (combined.includes('SANTA FE') || combined.includes('SANTA FÉ') || /44\.?218\.?935/i.test(combined)) {
-    return 'USINA SANTA FE S/A'
-  }
-  if (combined.includes('SANTA TEREZINHA') || combined.includes('USACUCAR') || /75\.?767\.?475/i.test(combined)) {
-    return 'USINA SANTA TEREZINHA LTDA'
-  }
-  if (combined.includes('CAETE') || combined.includes('CAETÉ') || /12\.?200\.?749/i.test(combined)) {
-    return 'USINA CAETE S/A'
+  // 2. Prioridade 1: Identificar a partir do nome ou CNPJ direto do destinatário
+  const directTarget = `${nome} ${rawCnpj || ''}`.toUpperCase().trim()
+  const directMatch = matchCompany(directTarget)
+  if (directMatch) {
+    return directMatch
   }
 
-  // 3. Validações finais
-  if (!nome || nome.length < 3 || /^(?:DESTINAT[AÁ]RIO|CLIENTE|EMPRESA|NAO INFORMADO|NÃO INFORMADO)$/i.test(nome)) {
+  // Se o nome capturado já é legítimo (não é boilerplate) e possui tamanho suficiente, manter o nome
+  const isGenericOrBoilerplate =
+    !nome ||
+    nome.length < 3 ||
+    /^(?:DESTINAT[AÁ]RIO(?:\s*[\/\-]?\s*REMETENTE)?|CLIENTE|EMPRESA|NAO INFORMADO|NÃO INFORMADO|DESTINAT[AÁ]RIO N[ÃA]O IDENTIFICADO|N[ÃA]O IDENTIFICADO|NAO IDENTIFICADO|SEM DESTINAT[AÁ]RIO)$/i.test(
+      nome
+    )
+
+  // 3. Prioridade 2: Se o nome estiver vazio/boilerplate, ou se houver cliente explícito nos dados adicionais
+  // Verificar se há indicação explícita de cliente em dados adicionais (ex: "ALOCAR NO ESPAÇO DO CLIENTE ...")
+  if (fullText) {
+    const clienteEspacoMatch = fullText.match(/(?:ALOCAR\s+NO\s+ESPA[ÇC]O\s+DO\s+CLIENTE|ESPA[ÇC]O\s+DO\s+CLIENTE|CLIENTE\s*[:=-])\s*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80})/i)
+    if (clienteEspacoMatch) {
+      const clienteEspaco = clienteEspacoMatch[1].toUpperCase()
+      const clienteEspacoCompany = matchCompany(clienteEspaco)
+      if (clienteEspacoCompany) {
+        // Se o destinatário era genérico ou a própria usina emitente, o cliente comercial pode ser aproveitado
+        if (isGenericOrBoilerplate) {
+          return clienteEspacoCompany
+        }
+      }
+    }
+
+    if (isGenericOrBoilerplate) {
+      // Buscar nos dados completos sem deixar CNPJ de transportador interferir
+      const textUpper = (fullText || '').toUpperCase()
+      const fullMatch = matchCompany(textUpper)
+      if (fullMatch) {
+        return fullMatch
+      }
+    }
+  }
+
+  // 4. Validações finais
+  if (isGenericOrBoilerplate) {
     if (rawCnpj) {
       return `DESTINATÁRIO (${formatCNPJ(rawCnpj)})`
     }

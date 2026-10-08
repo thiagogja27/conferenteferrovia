@@ -39,6 +39,8 @@ import {
 } from 'lucide-react'
 import {
   auditarDivergenciasComIA,
+  conferirQuantidadesNotasPdfComIA,
+  obterQuantidadeConferidaIA,
   type WeightAuditItemInput,
   type WeightAuditItemResult,
   type WeightAuditResponse,
@@ -51,6 +53,8 @@ interface ProcessedFile {
   xmlContent: string
   nfeData: NFEData | null
   error: string | null
+  fileType?: 'pdf' | 'xml'
+  isPdf?: boolean
   parsedData?: any
   rawSnippet?: string
 }
@@ -339,12 +343,16 @@ interface ExcelReconciliationTabProps {
   files: ProcessedFile[]
   speakText?: (text: string) => void
   onSelectFile?: (index: number) => void
+  externalAuditMap?: Record<string, WeightAuditItemResult>
+  onUpdateAuditMap?: (map: Record<string, WeightAuditItemResult>) => void
 }
 
 export function ExcelReconciliationTab({
   files,
   speakText,
   onSelectFile,
+  externalAuditMap,
+  onUpdateAuditMap,
 }: ExcelReconciliationTabProps) {
   const [excelData, setExcelData] = useState<ExcelData | null>(null)
   const [rawWorkbook, setRawWorkbook] = useState<XLSX.WorkBook | null>(null)
@@ -426,11 +434,18 @@ export function ExcelReconciliationTab({
   }
 
   // Estados para Auditoria de IA
-  const [auditResultsMap, setAuditResultsMap] = useState<Record<string, WeightAuditItemResult>>({})
+  const [auditResultsMap, setAuditResultsMap] = useState<Record<string, WeightAuditItemResult>>(externalAuditMap || {})
   const [overrideWeightsMap, setOverrideWeightsMap] = useState<Record<string, number>>({})
   const [auditSummary, setAuditSummary] = useState<WeightAuditResponse | null>(null)
   const [isAuditingAllWeights, setIsAuditingAllWeights] = useState<boolean>(false)
+  const [isExportingExcelWithAI, setIsExportingExcelWithAI] = useState<boolean>(false)
   const [auditingKey, setAuditingKey] = useState<string | null>(null)
+
+  React.useEffect(() => {
+    if (externalAuditMap && Object.keys(externalAuditMap).length > 0) {
+      setAuditResultsMap((prev) => ({ ...prev, ...externalAuditMap }))
+    }
+  }, [externalAuditMap])
 
   const excelInputRef = useRef<HTMLInputElement>(null)
 
@@ -1506,37 +1521,78 @@ export function ExcelReconciliationTab({
   }
 
   // Exportar Relatório Consolidado de Conferência em Excel com Múltiplas Abas (Formato Original Idêntico)
-  const handleExportReconciliationReport = () => {
+  const handleExportReconciliationReport = async () => {
     if (!excelData && validFiles.length === 0) {
       alert('Carregue notas e/ou uma planilha Excel para gerar o relatório de conferência.')
       return
     }
 
-    const wb = XLSX.utils.book_new()
+    setIsExportingExcelWithAI(true)
+    let currentAuditMap: Record<string, WeightAuditItemResult> = { ...auditResultsMap }
 
-    // 1. Resumo Geral
-    const totalFilesCount = validFiles.length
-    const matchedCount = matchedResults.length
-    const unmatchedCount = unmatchedResults.length
-    const totalExcelKeys = excelData ? excelData.allKeysList.length : 0
-    const missingFilesCount = excelKeysWithoutFiles.length
-    const matchPercentage = totalFilesCount > 0 ? Math.round((matchedCount / totalFilesCount) * 100) : 0
+    try {
+      // 1. Identificar todas as notas que vieram de PDF
+      const pdfFiles = validFiles.filter(
+        (f) => f.isPdf || f.fileType === 'pdf' || f.fileName.toLowerCase().endsWith('.pdf') || !f.xmlContent?.startsWith('<?xml')
+      )
 
-    const weightDivergentCount = validFiles.filter((f) => {
-      const key = getNormalizedKey(f)
-      const matchInfo = getExcelMatchInfo(key)
-      const qtd = getFileQuantidade(f)
-      const vWeight = confrontWeights(matchInfo, qtd)
-      return vWeight.status === 'DIVERGENTE'
-    }).length
+      // 2. Se houver notas de PDF, garantir a conferência da IA para 100% delas
+      if (pdfFiles.length > 0) {
+        const itemsToAudit = pdfFiles.map((f) => {
+          const key = getNormalizedKey(f)
+          const matchInfo = getExcelMatchInfo(key)
+          const initialQtd = getFileQuantidade(f)
+          const vWeight = confrontWeights(matchInfo, initialQtd)
+          return {
+            id: key || f.fileName,
+            fileName: f.fileName,
+            chave: key,
+            numero: f.nfeData?.numero,
+            serie: f.nfeData?.serie,
+            pesoLido: initialQtd,
+            pesoExcel: vWeight.pesoExcel || undefined,
+            snippet: f.rawSnippet || f.parsedData?.rawSnippet || '',
+            xmlContent: f.xmlContent,
+            isPdf: true,
+          }
+        })
 
-    const weightMatchedCount = validFiles.filter((f) => {
-      const key = getNormalizedKey(f)
-      const matchInfo = getExcelMatchInfo(key)
-      const qtd = getFileQuantidade(f)
-      const vWeight = confrontWeights(matchInfo, qtd)
-      return vWeight.status === 'CONFERE'
-    }).length
+        currentAuditMap = await conferirQuantidadesNotasPdfComIA(itemsToAudit, currentAuditMap)
+        setAuditResultsMap(currentAuditMap)
+        if (onUpdateAuditMap) {
+          onUpdateAuditMap(currentAuditMap)
+        }
+      }
+
+      const wb = XLSX.utils.book_new()
+
+      // 1. Resumo Geral
+      const totalFilesCount = validFiles.length
+      const matchedCount = matchedResults.length
+      const unmatchedCount = unmatchedResults.length
+      const totalExcelKeys = excelData ? excelData.allKeysList.length : 0
+      const missingFilesCount = excelKeysWithoutFiles.length
+      const matchPercentage = totalFilesCount > 0 ? Math.round((matchedCount / totalFilesCount) * 100) : 0
+
+      const weightDivergentCount = validFiles.filter((f) => {
+        const key = getNormalizedKey(f)
+        const matchInfo = getExcelMatchInfo(key)
+        const isPdf = f.isPdf || f.fileType === 'pdf' || f.fileName.toLowerCase().endsWith('.pdf') || !f.xmlContent?.startsWith('<?xml')
+        const confIA = isPdf ? obterQuantidadeConferidaIA(key || f.fileName, getFileQuantidade(f), currentAuditMap, overrideWeightsMap, f.fileName) : null
+        const qtd = (isPdf && confIA) ? confIA.quantidade : getFileQuantidade(f)
+        const vWeight = confrontWeights(matchInfo, qtd)
+        return vWeight.status === 'DIVERGENTE'
+      }).length
+
+      const weightMatchedCount = validFiles.filter((f) => {
+        const key = getNormalizedKey(f)
+        const matchInfo = getExcelMatchInfo(key)
+        const isPdf = f.isPdf || f.fileType === 'pdf' || f.fileName.toLowerCase().endsWith('.pdf') || !f.xmlContent?.startsWith('<?xml')
+        const confIA = isPdf ? obterQuantidadeConferidaIA(key || f.fileName, getFileQuantidade(f), currentAuditMap, overrideWeightsMap, f.fileName) : null
+        const qtd = (isPdf && confIA) ? confIA.quantidade : getFileQuantidade(f)
+        const vWeight = confrontWeights(matchInfo, qtd)
+        return vWeight.status === 'CONFERE'
+      }).length
 
     const summaryRows = [
       { 'Métrica / Indicador': 'Data e Hora da Conferência', 'Valor / Detalhe': new Date().toLocaleString('pt-BR') },
@@ -1630,12 +1686,13 @@ export function ExcelReconciliationTab({
           const destCNPJ = fileMatch.nfeData?.destinatario?.cpfCnpj || ''
           const emitCNPJ = fileMatch.nfeData?.emitente?.cnpj || ''
           const vCNPJ = fileMatch.nfeData?.verificacaoCNPJ || verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
-          const qtdNota = getFileQuantidade(fileMatch)
+          const isPdf = fileMatch.isPdf || fileMatch.fileType === 'pdf' || fileMatch.fileName.toLowerCase().endsWith('.pdf') || !fileMatch.xmlContent?.startsWith('<?xml')
+          const initialQtd = getFileQuantidade(fileMatch)
+          const confIA = isPdf ? obterQuantidadeConferidaIA(key || fileMatch.fileName, initialQtd, currentAuditMap, overrideWeightsMap, fileMatch.fileName) : null
+          const qtdNota = (isPdf && confIA) ? confIA.quantidade : initialQtd
           const vWeight = confrontWeights(matchInfo, qtdNota)
-          const itemAudit = auditResultsMap[key || fileMatch.fileName]
-          const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
-            ? itemAudit.pesoCorrigidoDoc
-            : (overrideWeightsMap[key || fileMatch.fileName] !== undefined ? overrideWeightsMap[key || fileMatch.fileName] : qtdNota)
+          const itemAudit = currentAuditMap[key || fileMatch.fileName]
+          const pesoIaEncontrado = (isPdf && confIA) ? confIA.quantidade : (itemAudit?.pesoCorrigidoDoc ?? qtdNota)
 
           const numNF = extractNumeroNF(fileMatch.nfeData?.numero || fileMatch.parsedData?.nNF, key)
           const dtEmissao = extractDataEmissao(fileMatch.nfeData?.dataEmissao || fileMatch.parsedData?.dhEmi || fileMatch.parsedData?.dataEmissao, key)
@@ -1663,14 +1720,16 @@ export function ExcelReconciliationTab({
             'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
             'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
             'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
-            'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA'
-              ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)'
-              : itemAudit?.status === 'DIVERGENCIA_REAL'
-                ? 'DIVERGÊNCIA REAL DE PESAGEM'
-                : itemAudit?.status === 'CONFERIDO_CORRETO'
-                  ? 'PESO CONFERIDO CORRETO'
-                  : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'PESO CORRETO / CONFERIDO'),
-            'Explicação IA': itemAudit?.explicacao || '',
+            'Auditoria IA (Status / Causa)': isPdf
+              ? confIA?.status
+              : (itemAudit?.status === 'ERRO_LEITURA_SISTEMA'
+                ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)'
+                : itemAudit?.status === 'DIVERGENCIA_REAL'
+                  ? 'DIVERGÊNCIA REAL DE PESAGEM'
+                  : itemAudit?.status === 'CONFERIDO_CORRETO'
+                    ? 'PESO CONFERIDO CORRETO'
+                    : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'PESO CORRETO / CONFERIDO')),
+            'Explicação IA': isPdf ? confIA?.explicacao : (itemAudit?.explicacao || ''),
             'Valor Total (R$)': fileMatch.nfeData?.impostos?.valorTotal || 0,
             'Emitente': fileMatch.nfeData?.emitente?.nome || '',
             'CNPJ Emitente': emitCNPJ,
@@ -2128,15 +2187,21 @@ export function ExcelReconciliationTab({
 
     XLSX.writeFile(wb, `relatorio_conferencia_chaves_${new Date().toISOString().slice(0, 10)}.xlsx`)
 
-    logRealtimeActivity(
-      'reconcile_mdf',
-      'Conferência de Chaves Exportada',
-      `Relatório de conferência fiscal exportado com ${validFiles.length} nota(s) verificada(s) e ${divergentWeightRows.length} divergência(s) de peso.`,
-      {
-        filesCount: validFiles.length,
-        divergentCount: divergentWeightRows.length,
-      }
-    )
+      logRealtimeActivity(
+        'reconcile_mdf',
+        'Conferência de Chaves Exportada',
+        `Relatório de conferência fiscal exportado com ${validFiles.length} nota(s) verificada(s) e ${divergentWeightRows.length} divergência(s) de peso.`,
+        {
+          filesCount: validFiles.length,
+          divergentCount: divergentWeightRows.length,
+        }
+      )
+    } catch (error) {
+      console.error('Erro ao exportar relatório com IA:', error)
+      alert('Ocorreu um erro durante a conferência e exportação do relatório. Verifique os dados e tente novamente.')
+    } finally {
+      setIsExportingExcelWithAI(false)
+    }
   }
 
   // Executar auditoria de divergências de peso com IA em lote

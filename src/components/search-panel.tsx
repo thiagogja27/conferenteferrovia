@@ -262,7 +262,7 @@ export function SearchPanel({ files, onSelectFile }: SearchPanelProps) {
                   value={terminal}
                   onChange={(e) => setTerminal(e.target.value)}
                   className="col-span-3"
-                  placeholder="Ex: TEG, TEAG"
+                  placeholder="Ex: TES, TEG, TEAG"
                 />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">

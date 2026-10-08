@@ -152,8 +152,29 @@ export function getNoteDetails(
   let transbordo = nfe?.transbordo || parsed?.transbordo || "Não Informado"
   let retirada = parsed?.retirada || ""
 
+  // Se o terminal foi indevidamente extraído como UBERABA / TIUB, corrigir para transbordo
+  if (/UBERABA|TIUB/i.test(terminal)) {
+    if (transbordo === "Não Informado" || !transbordo) {
+      transbordo = "UBERABA"
+    }
+    terminal = "Não Informado"
+  } else if (/ATT\s*ARMAZENAGEM|FERNAND[OÓ]POLIS/i.test(terminal)) {
+    if (transbordo === "Não Informado" || !transbordo) {
+      transbordo = "FERNANDOPOLIS"
+    }
+    terminal = "Não Informado"
+  }
+
+  // Se o terminal foi rotulado como TEG mas a nota é de açúcar, corrigir para TEAG
+  if (terminal.includes('TEG') && !terminal.includes('TEAG')) {
+    if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(infCpl)) {
+      terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
+    }
+  }
+
   if (transbordo === "Não Informado" || !transbordo) {
-    if (/ITURAMA/i.test(infCpl)) transbordo = "ITURAMA"
+    if (/FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(infCpl)) transbordo = "FERNANDOPOLIS"
+    else if (/ITURAMA/i.test(infCpl)) transbordo = "ITURAMA"
     else if (/PRADOPOLIS|PRADÓPOLIS/i.test(infCpl)) transbordo = "PRADOPOLIS"
     else if (/ALTO\s*TAQUARI/i.test(infCpl)) transbordo = "ALTO TAQUARI"
     else if (/RONDONOPOLIS|RONDONÓPOLIS/i.test(infCpl)) transbordo = "RONDONOPOLIS"
@@ -170,8 +191,13 @@ export function getNoteDetails(
   }
 
   if (terminal === "Não Informado" || !terminal) {
-    if (/TEAG|TERM.*EXPORTACAO.*ACUCAR.*GUARU/i.test(infCpl)) {
+    if (
+      /TEAG|TERM.*EXPORTACAO.*ACUCAR|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO/i.test(infCpl) ||
+      ((/GUARUJA|GUARUJÁ/i.test(infCpl)) && (/ACUCAR|AÇÚCAR/i.test(infCpl)))
+    ) {
       terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
+    } else if (/TES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(infCpl)) {
+      terminal = "TES - TERMINAL EXPORTADOR DE SANTOS"
     } else if (/TEG\b|TERMINAL.*EXPORTADORES.*GRANDE/i.test(infCpl)) {
       terminal = "TEG - TERMINAL DE EXPORTAÇÃO DO GUARUJÁ"
     } else if (/CLI|TERMARES/i.test(infCpl)) {

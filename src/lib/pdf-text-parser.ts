@@ -210,13 +210,32 @@ export function parseMultiDanfePdf(
       const isContinuationPage = /Folha\s*[2-9]\b/i.test(pText) || /Folha\s*[2-9]\s*[\/\-de]/i.test(pText) || /CONTINUA[ÇC][ÃA]O/i.test(pText);
       const hasDanfeHeader = /[01]\s*-\s*(?:ENTRADA|SA[ÍI]DA)/i.test(pText) || /IDENTIFICA[ÇC][ÃA]O\s+DO\s+EMITENTE/i.test(pText);
 
-      if (isDanfe) {
+      const isContinuationOfDanfe = Boolean(
+        currentGroup && (
+          /INFORMA[ÇC][ÕO]ES\s+COMPLEMENTARES|DADOS\s+ADICIONAIS|Inf\.?\s*Contribuinte/i.test(pText) ||
+          /CONTINUA[ÇC][ÃA]O/i.test(pText) ||
+          /O\s+EMBARQUE\s+SERA\s+POSTERIORMENTE/i.test(pText)
+        ) && !/DOCUMENTO DE CARGA E LOTA[ÇC][ÃA]O|\bDCL\b|ROMANEIO|NOTAS FISCAIS CARREGADAS/i.test(pText)
+      );
+
+      if (isDanfe || isContinuationOfDanfe) {
+        // Determina se esta página é continuação da nota atual (mesma chave, mesmo número de NF ou verso complementar)
+        const isSameInvoice = Boolean(
+          currentGroup && (
+            isContinuationOfDanfe ||
+            (mainKey && currentGroup.key && mainKey === currentGroup.key) ||
+            (pageNFNum && currentGroup.nfNum && pageNFNum === currentGroup.nfNum)
+          )
+        );
+
         // Determina se esta página inicia um novo DANFE ou se é continuação da nota atual
         const isStartOfNewDanfe = !currentGroup
-          || (mainKey && currentGroup.key && mainKey !== currentGroup.key)
-          || (pageNFNum && currentGroup.nfNum && pageNFNum !== currentGroup.nfNum)
-          || (isFolha1 && !isContinuationPage)
-          || (hasDanfeHeader && !isContinuationPage && currentGroup.pagesText.length > 0 && pageNFNum !== currentGroup.nfNum);
+          || (!isSameInvoice && (
+            (mainKey && currentGroup.key && mainKey !== currentGroup.key)
+            || (pageNFNum && currentGroup.nfNum && pageNFNum !== currentGroup.nfNum)
+            || (isFolha1 && !isContinuationPage)
+            || (hasDanfeHeader && !isContinuationPage && currentGroup.pagesText.length > 0)
+          ));
 
         if (isStartOfNewDanfe) {
           currentGroup = { key: mainKey, nfNum: pageNFNum, pagesText: [pText] };
@@ -556,6 +575,17 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
         // Garantir que não é a Inscrição Estadual
         if (candidate !== destIE && candidate !== emitIE && candidate.length !== 12) {
           destCNPJ = candidate;
+        }
+      }
+
+      if (!destCNPJ) {
+        // Tentar capturar sequência de 14 dígitos no bloco de destinatário (excluindo IEs e chave de 44 dígitos)
+        const digits14 = mainDestBlock.match(/\b\d{14}\b/g) || destBlock.match(/\b\d{14}\b/g);
+        if (digits14) {
+          const candidate = digits14.find(c => c !== destIE && c !== emitIE && c.length === 14);
+          if (candidate) {
+            destCNPJ = candidate;
+          }
         }
       }
     }
@@ -1238,9 +1268,82 @@ function extractTerminalEntrega(text: string): string {
   const uppercase = text.toUpperCase();
 
   // 1. Verificação por códigos/locais conhecidos em notas de exportação/agronegócio
-  if (/\bTEAG\b/i.test(text) || uppercase.includes('TERMINAL DE ACUCAR DO GUARUJA') || uppercase.includes('TERMINAL EXPORTACAO DE ACUCAR') || uppercase.includes('TEAG')) {
+  // TEAG - TERMINAL DE ACUCAR DO GUARUJA (Prioridade Máxima)
+  if (
+    /\bTEAG\b/i.test(text) ||
+    uppercase.includes('04.721.589/0001-78') ||
+    text.includes('04721589000178') ||
+    text.includes('335127598119') ||
+    text.includes('335.127.598.119') ||
+    /TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(text) ||
+    /TERMINAL.*A[CÇ][UÚ]CAR.*GUARUJ[AÁ]/i.test(text) ||
+    /TER.*EXP.*ACU[CÇ].*GUARUJ[AÁ]/i.test(text) ||
+    /EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR.*GUARUJ[AÁ]/i.test(text) ||
+    /BENTO\s*PEDRO\s*DA\s*COSTA/i.test(text) ||
+    /BENTOPEDRO\s*DA\s*COSTA/i.test(text) ||
+    ((uppercase.includes('GUARUJA') || uppercase.includes('GUARUJÁ')) && (uppercase.includes('ACUCAR') || uppercase.includes('AÇÚCAR')))
+  ) {
     return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA';
   }
+
+  // TES - TERMINAL EXPORTADOR DE SANTOS
+  if (
+    /\bTES\b/i.test(text) ||
+    uppercase.includes('TERMINAL EXPORTADOR DE SANTOS') ||
+    uppercase.includes('TES TERMINAL') ||
+    uppercase.includes('18.845.076/0001-83') ||
+    text.includes('18845076000183')
+  ) {
+    return 'TES - TERMINAL EXPORTADOR DE SANTOS';
+  }
+
+  // Extração direta do bloco "INFORMAÇÕES DO LOCAL DE ENTREGA" da DANFE ou tag <entrega>
+  const entregaSectionMatch = text.match(/(?:INFORMA[ÇC][ÕO]ES\s+DO\s+LOCAL\s+DE\s+ENTREGA|LOCAL\s+DE\s+ENTREGA|<entrega>)([\s\S]{1,600}?)(?:C[ÁA]LCULO\s+DO\s+IMPOSTO|DADOS\s+DOS\s+PRODUTOS|TRANSPORTADOR|<\/entrega>|$)/i);
+  if (entregaSectionMatch && entregaSectionMatch[1]) {
+    const sec = entregaSectionMatch[1];
+    const secUpper = sec.toUpperCase();
+    if (
+      /\bTEAG\b/i.test(sec) ||
+      secUpper.includes('04.721.589/0001-78') ||
+      sec.includes('04721589000178') ||
+      sec.includes('335127598119') ||
+      sec.includes('335.127.598.119') ||
+      /TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(sec) ||
+      /TERMINAL.*A[CÇ][UÚ]CAR/i.test(sec) ||
+      /ACUCAR.*GUARUJ/i.test(sec) ||
+      /BENTO\s*PEDRO/i.test(sec) ||
+      ((secUpper.includes('GUARUJA') || secUpper.includes('GUARUJÁ')) && (secUpper.includes('ACUCAR') || secUpper.includes('AÇÚCAR')))
+    ) {
+      return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA';
+    }
+    if (/\bTES\b/i.test(sec) || secUpper.includes('TERMINAL EXPORTADOR DE SANTOS') || secUpper.includes('TES TERMINAL') || sec.includes('18.845.076/0001-83') || sec.includes('18845076000183')) {
+      return 'TES - TERMINAL EXPORTADOR DE SANTOS';
+    }
+    if (/\bTEG\b/i.test(sec) || secUpper.includes('TERMINAL EXPORTADOR DO GUARUJA') || secUpper.includes('TEG')) {
+      return 'TEG - TERMINAL EXPORTADOR DO GUARUJA';
+    }
+    if (/\bTGG\b/i.test(sec) || secUpper.includes('TERMINAL DE GRA') || secUpper.includes('TGG')) {
+      return 'TGG - TERMINAL DE GRAIS DO GUARUJA';
+    }
+    if (/\bCLI\b/i.test(sec) || secUpper.includes('CORREDOR LOGISTICO')) {
+      return 'CLI - CORREDOR LOGISTICO INTEGRADO';
+    }
+  }
+
+  // Extração explícita de "ENTREGA: ..." das Informações Complementares
+  const entregaInfCplMatches = text.match(/(?:LOCAL\s+DE\s+ENTREGA|ENTREGA)\s*[:=-]\s*([^\n\r,;]{3,120})/gi);
+  if (entregaInfCplMatches) {
+    for (const matchStr of entregaInfCplMatches) {
+      const rawEntrega = matchStr.toUpperCase();
+      if (/\bTEAG\b|TERMINAL.*A[CÇ][UÚ]CAR|ACUCAR.*GUARUJ|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO/i.test(rawEntrega)) {
+        return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA';
+      }
+      if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS/i.test(rawEntrega)) {
+        return 'TES - TERMINAL EXPORTADOR DE SANTOS';
+      }
+    }
+  }
+
   if (/\bTEG\b/i.test(text) || uppercase.includes('TERMINAL EXPORTADOR DO GUARUJA') || uppercase.includes('TERM EXP GUARUJA') || uppercase.includes('GUARUJA LTDA GUARUJA')) {
     return 'TEG - TERMINAL EXPORTADOR DO GUARUJA';
   }
@@ -1262,8 +1365,8 @@ function extractTerminalEntrega(text: string): string {
   if (uppercase.includes('BTP') || uppercase.includes('BRASIL TERMINAL PORTUARIO')) return 'BTP - BRASIL TERMINAL PORTUARIO';
   if (uppercase.includes('TIPLAM')) return 'TIPLAM - TERMINAL INTEGRADO';
 
-  // 2. Trazer até 15 primeiras palavras depois de ALFANDEGADO, ALFADEGADO, RECINTO ou ENTREGA
-  const regex = /(?:RECINTO\s+ALFANDEGADO|RECINTO\s+ALFADEGADO|ALFANDEGADO|ALFADEGADO|TERMINAL\s+DE\s+ENTREGA|TERMINAL\s+ENTREGA|LOCAL\s+DE\s+ENTREGA|LOCAL\s+DE\s+DESCARGA|DESCARGA\s+NO\s+RECINTO|TERMINAL\s+EXPORTADOR|ENTREGA\s+EM|TERMINAL|ENTREGA)\s*[:=-]?\s*([\s\S]{1,500})/i;
+  // 2. Trazer até 15 primeiras palavras depois de ALFANDEGADO, ALFADEGADO, RECINTO ou ENTREGA (não usar "TERMINAL" isolado para evitar transbordos)
+  const regex = /(?:RECINTO\s+ALFANDEGADO|RECINTO\s+ALFADEGADO|ALFANDEGADO|ALFADEGADO|TERMINAL\s+DE\s+ENTREGA|TERMINAL\s+ENTREGA|LOCAL\s+DE\s+ENTREGA|LOCAL\s+DE\s+DESCARGA|DESCARGA\s+NO\s+RECINTO|TERMINAL\s+EXPORTADOR|ENTREGA\s+EM|ENTREGA)\s*[:=-]?\s*([\s\S]{1,500})/i;
   const match = text.match(regex);
   if (match && match[1]) {
     let chunk = match[1].trim();
@@ -1281,12 +1384,28 @@ function extractTerminalEntrega(text: string): string {
     }
     const words = chunk.split(/\s+/).filter(Boolean).slice(0, 15);
     let val = words.join(' ').replace(/[:=\-.,;]+$/, '').trim();
-    if (val.length > 2 && !/^\d+$/.test(val)) {
+    // Limpar prefixo de nome de campo residual
+    val = val.replace(/^(?:NOME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|ME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|RAZ[ÃA]O\s*SOCIAL|NOME)\s*[:=-]?\s*/i, '').trim();
+
+    // Se tiver relação com TEAG ou açúcar no Guarujá
+    if (/TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|ACUCAR.*GUARUJ|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO/i.test(val)) {
+      return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA';
+    }
+
+    // Se o valor capturado for um transbordo conhecido (ex: UBERABA, TIUB, FERNANDOPOLIS, ATT ARMAZENAGEM), NÃO é o terminal de entrega!
+    const valUpper = val.toUpperCase();
+    const isTransbordoHub = /UBERABA|TIUB|FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|RONDONOPOLIS|RIO VERDE|ARAGUARI|ITURAMA|PRADOPOLIS|PEDERNEIRAS|SAO SIMAO|UBERLANDIA|INOCENCIA/i.test(valUpper);
+    if (!isTransbordoHub && val.length > 2 && !/^\d+$/.test(val)) {
       return val;
     }
   }
 
-  if (uppercase.includes('GUARUJA') || uppercase.includes('GUARUJÁ')) return 'TEG - TERMINAL EXPORTADOR DO GUARUJA';
+  if (uppercase.includes('GUARUJA') || uppercase.includes('GUARUJÁ')) {
+    if (uppercase.includes('ACUCAR') || uppercase.includes('AÇÚCAR')) {
+      return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA';
+    }
+    return 'TEG - TERMINAL EXPORTADOR DO GUARUJA';
+  }
   if (uppercase.includes('SANTOS')) return 'TERMINAL SANTOS';
 
   return '';
@@ -1296,6 +1415,16 @@ function getKnownTransbordo(str: string): string | null {
   if (!str) return null;
   const upper = str.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
+  if (
+    upper.includes('FERNANDOPOLIS') ||
+    upper.includes('FERNANDOPOLIS-SP') ||
+    upper.includes('FERNANDOPOLIS - SP') ||
+    upper.includes('ATT ARMAZENAGEM') ||
+    upper.includes('72.451.917/0016-08') ||
+    upper.includes('72451917001608')
+  ) {
+    return 'FERNANDOPOLIS';
+  }
   if (upper.includes('NOVA AGRI') || upper.includes('NOVAAGRI') || upper.includes('NOVA-AGRI')) {
     if (upper.includes('ALTO TAQUARI')) return 'NOVA AGRI - ALTO TAQUARI';
     return 'NOVA AGRI';
@@ -1335,8 +1464,8 @@ function extractTransbordo(text: string): string {
     infCpl = infMatch[1];
   }
 
-  // 2. Procurar por trechos específicos perto das palavras-chave indicadas (CIDADE:, ALFANDEGADO, ALFADEGADO, LOCAL DE TRANSBORDO, TRANSBORDO, LOCAL DE ENTREGA, ENTREGA)
-  const transbordoKeywordsRegex = /(?:TRANSBORDO|ALFANDEGADO|ALFADEGADO|CIDADE DE TRANSBORDO|LOCAL DE TRANSBORDO|LOCAL DE ENTREGA|TERMINAL DE ENTREGA|RECINTO ALFANDEGADO|RECINTO ALFADEGADO|ENTREGA EM|CIDADE\s*:)\s*[:=-]?\s*([\s\S]{1,300})/gi;
+  // 2. Procurar por trechos específicos perto das palavras-chave indicadas de transbordo (não incluir LOCAL DE ENTREGA)
+  const transbordoKeywordsRegex = /(?:CIDADE DE TRANSBORDO|LOCAL DE TRANSBORDO|SOFRERA\s+TRANSBORDO|TRANSBORDO|RECINTO ALFANDEGADO|RECINTO ALFADEGADO|ALFANDEGADO|ALFADEGADO|CIDADE\s*:)\s*[:=-]?\s*([\s\S]{1,300})/gi;
 
   let match: RegExpExecArray | null;
   // Procurar primeiro nas informações complementares
@@ -1359,7 +1488,7 @@ function extractTransbordo(text: string): string {
   }
 
   // 5. Se houver menção explícita após palavas-chave sem local pré-mapeado, extrair texto limpo
-  const explicitMatch = infCpl.match(/(?:SOFRERA\s+TRANSBORDO|MERCADORIA\s+SOFRERA\s+TRANSBORDO|LOCAL\s+DE\s+TRANSBORDO|LOCAL\s+TRANSBORDO|TRANSBORDO\s+NA|TRANSBORDO\s+EM|TRANSBORDO\s+DE|TRANSBORDO\s+NO|TRANSBORDO|RECINTO\s+ALFANDEGADO|RECINTO\s+ALFADEGADO|ALFANDEGADO|ALFADEGADO|LOCAL\s+DE\s+ENTREGA)\s*[:=-]?\s*([\s\S]{1,300})/i);
+  const explicitMatch = infCpl.match(/(?:SOFRERA\s+TRANSBORDO|MERCADORIA\s+SOFRERA\s+TRANSBORDO|LOCAL\s+DE\s+TRANSBORDO|LOCAL\s+TRANSBORDO|TRANSBORDO\s+NA|TRANSBORDO\s+EM|TRANSBORDO\s+DE|TRANSBORDO\s+NO|TRANSBORDO)\s*[:=-]?\s*([\s\S]{1,300})/i);
 
   if (explicitMatch && explicitMatch[1]) {
     let chunk = explicitMatch[1].trim();
@@ -1379,7 +1508,9 @@ function extractTransbordo(text: string): string {
 
     const words = chunk.split(/\s+/).filter(Boolean).slice(0, 10);
     let val = words.join(' ').replace(/[:=\-.,;]+$/, '').trim();
-    if (val.length > 2 && !/^\d+$/.test(val) && !['NÃO', 'NAO', 'DE', 'EM', 'SP', 'MT', 'MS', 'GO', 'MG', 'PR'].includes(val.toUpperCase())) {
+    const valUpper = val.toUpperCase();
+    const isPortTerminal = /^TEAG\b|^TEG\b|^TES\b|^TGG\b|^CLI\b|^SANTOS\b|^GUARUJ[AÁ]\b|^TIPLAM\b/i.test(valUpper);
+    if (!isPortTerminal && val.length > 2 && !/^\d+$/.test(val) && !['NÃO', 'NAO', 'DE', 'EM', 'SP', 'MT', 'MS', 'GO', 'MG', 'PR'].includes(valUpper)) {
       if (uppercase.includes('RUMO') || uppercase.includes('MALHA NORTE')) {
         return val.toUpperCase().includes('RUMO') ? val : `${val} (RUMO)`;
       }

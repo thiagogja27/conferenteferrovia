@@ -58,6 +58,7 @@ import {
   VolumeX,
   Volume1,
   BookOpen,
+  Bot,
   Filter,
   Layers,
   TrainTrack,
@@ -75,13 +76,22 @@ import JSZip from 'jszip'
 import * as XLSX from 'xlsx'
 import { SuggestionsPanel } from '@/components/suggestions-panel'
 import { subscribeToSuggestions, type SuggestionMessage } from '@/lib/suggestions-service'
+import {
+  conferirQuantidadesNotasPdfComIA,
+  obterQuantidadeConferidaIA,
+  type WeightAuditItemResult,
+} from '@/lib/weight-ai-auditor'
 
-interface ProcessedFile {
+export interface ProcessedFile {
   fileName: string
   originalPath: string
   xmlContent: string
   nfeData: NFEData | null
   error: string | null
+  fileType?: 'pdf' | 'xml'
+  isPdf?: boolean
+  parsedData?: any
+  rawSnippet?: string
 }
 
 async function getAllFilesFromDataTransfer(
@@ -216,6 +226,8 @@ export function XMLConverter() {
   const [copiedXml, setCopiedXml] = useState(false)
   const [isSuggestionsModalOpen, setIsSuggestionsModalOpen] = useState(false)
   const [suggestionsList, setSuggestionsList] = useState<SuggestionMessage[]>([])
+  const [aiAuditMap, setAiAuditMap] = useState<Record<string, WeightAuditItemResult>>({})
+  const [isExportingExcelWithAI, setIsExportingExcelWithAI] = useState(false)
 
   useEffect(() => {
     const unsub = subscribeToSuggestions((list) => {
@@ -374,10 +386,26 @@ export function XMLConverter() {
   ): Promise<ProcessedFile> => {
     try {
       const data = parseNFE(content)
-      return { fileName, originalPath, xmlContent: content, nfeData: data, error: null }
+      return {
+        fileName,
+        originalPath,
+        xmlContent: content,
+        nfeData: data,
+        error: null,
+        fileType: 'xml',
+        isPdf: false,
+      }
     } catch (err) {
       console.error(`Erro ao processar ${fileName}:`, err)
-      return { fileName, originalPath, xmlContent: content, nfeData: null, error: 'Erro ao processar arquivo XML' }
+      return {
+        fileName,
+        originalPath,
+        xmlContent: content,
+        nfeData: null,
+        error: 'Erro ao processar arquivo XML',
+        fileType: 'xml',
+        isPdf: false,
+      }
     }
   }
 
@@ -443,6 +471,10 @@ export function XMLConverter() {
             xmlContent: it.xml,
             nfeData,
             error: nfeData ? null : 'Não foi possível interpretar os dados do PDF.',
+            fileType: 'pdf' as const,
+            isPdf: true,
+            parsedData: it.parsedData || data.parsedData,
+            rawSnippet: it.parsedData?.rawSnippet || data.parsedData?.rawSnippet || '',
           }
         })
       }
@@ -455,6 +487,10 @@ export function XMLConverter() {
           xmlContent: data.xml,
           nfeData,
           error: nfeData ? null : 'Não foi possível interpretar os dados do PDF.',
+          fileType: 'pdf' as const,
+          isPdf: true,
+          parsedData: data.parsedData,
+          rawSnippet: data.parsedData?.rawSnippet || '',
         }]
       }
     }
@@ -471,6 +507,10 @@ export function XMLConverter() {
           xmlContent: it.xml,
           nfeData: it.nfeData || (it.xml ? parseNFE(it.xml) : null),
           error: it.xml ? null : 'Não foi possível interpretar os dados do PDF.',
+          fileType: 'pdf' as const,
+          isPdf: true,
+          parsedData: it.parsedData,
+          rawSnippet: it.parsedData?.rawSnippet || '',
         }))
       }
 
@@ -480,6 +520,10 @@ export function XMLConverter() {
         xmlContent: clientResult.xml || '',
         nfeData: clientResult.nfeData || (clientResult.xml ? parseNFE(clientResult.xml) : null),
         error: clientResult.xml ? null : 'Não foi possível interpretar os dados do PDF.',
+        fileType: 'pdf' as const,
+        isPdf: true,
+        parsedData: clientResult.parsedData,
+        rawSnippet: clientResult.parsedData?.rawSnippet || '',
       }]
     } catch (clientErr: any) {
       return [{
@@ -488,6 +532,8 @@ export function XMLConverter() {
         xmlContent: '',
         nfeData: null,
         error: clientErr.message || 'Erro ao processar PDF.',
+        fileType: 'pdf' as const,
+        isPdf: true,
       }]
     }
   }
@@ -503,17 +549,16 @@ export function XMLConverter() {
     checkAndSpeakDivergencesXML([result])
 
     if (result.nfeData) {
-      const hasTeg = result.nfeData.terminalEntrega?.toUpperCase()?.includes('TEG')
-      const hasTeag = result.nfeData.terminalEntrega?.toUpperCase()?.includes('TEAG')
-
-      if (hasTeg && hasTeag) {
-        alert('Foram encontradas notas com os terminais TEG e TEAG.')
-      } else if (hasTeg) {
-        alert('Foram encontradas notas com o terminal TEG.')
-      } else if (hasTeag) {
-        alert('Foram encontradas notas com o terminal TEAG.')
-      } else {
-        alert('Nenhuma nota com terminal de entrega TEG ou TEAG foi encontrada.')
+      const termUpper = result.nfeData.terminalEntrega?.toUpperCase() || ''
+      const hasTes = termUpper.includes('TES')
+      const hasTeg = termUpper.includes('TEG')
+      const hasTeag = termUpper.includes('TEAG')
+      const identifiedTerms = []
+      if (hasTes) identifiedTerms.push('TES')
+      if (hasTeag) identifiedTerms.push('TEAG')
+      else if (hasTeg) identifiedTerms.push('TEG')
+      if (identifiedTerms.length > 0) {
+        console.log(`[Terminal Identificado]: ${identifiedTerms.join(', ')}`)
       }
     }
   }
@@ -746,17 +791,15 @@ export function XMLConverter() {
     checkAndSpeakDivergencesXML(results)
 
     if (results.some(r => r.nfeData)) {
+      const hasTes = results.some(r => r.nfeData?.terminalEntrega?.toUpperCase().includes('TES'))
       const hasTeg = results.some(r => r.nfeData?.terminalEntrega?.toUpperCase().includes('TEG'))
       const hasTeag = results.some(r => r.nfeData?.terminalEntrega?.toUpperCase().includes('TEAG'))
-
-      if (hasTeg && hasTeag) {
-        alert('Foram encontradas notas com os terminais TEG e TEAG.')
-      } else if (hasTeg) {
-        alert('Foram encontradas notas com o terminal TEG.')
-      } else if (hasTeag) {
-        alert('Foram encontradas notas com o terminal TEAG.')
-      } else {
-        alert('Nenhuma nota com terminal de entrega TEG ou TEAG foi encontrada.')
+      const identifiedTerms = []
+      if (hasTes) identifiedTerms.push('TES')
+      if (hasTeag) identifiedTerms.push('TEAG')
+      else if (hasTeg) identifiedTerms.push('TEG')
+      if (identifiedTerms.length > 0) {
+        console.log(`[Terminais Identificados no Lote]: ${identifiedTerms.join(', ')}`)
       }
     }
 
@@ -934,180 +977,298 @@ export function XMLConverter() {
     }
   };
 
-  const handleDownloadExcel = () => {
+  const handleDownloadExcel = async () => {
     const successfulFiles = files.filter((f) => f.nfeData !== null);
     if (successfulFiles.length === 0) return;
 
-    const dataToExport = [];
-    const divergentDataToExport: any[][] = [];
+    setIsExportingExcelWithAI(true);
+    let currentAuditMap: Record<string, WeightAuditItemResult> = { ...aiAuditMap };
 
-    const headers = [
-      "Arquivo",
-      "Chave de Acesso",
-      "CNPJ na Chave",
-      "Destinatário CNPJ",
-      "Destinatário Razão Social",
-      "Validação CNPJ (Chave x Destinatário)",
-      "Confronto Chave vs Destinatário",
-      "Comprovação da Divergência / Detalhes",
-      "Emitente CNPJ",
-      "Emitente Razão Social",
-      "Numero NFe",
-      "Série",
-      "Data Emissão",
-      "Quantidade",
-      "Valor Total (R$)",
-      "Terminal de Entrega",
-      "Transbordo",
-      "Retirada",
-      "Tipo Produto"
-    ];
+    try {
+      // 1. Identificar todas as notas que foram processadas a partir de PDF
+      const pdfFiles = successfulFiles.filter(
+        (f) => f.isPdf || f.fileType === 'pdf' || f.fileName.toLowerCase().endsWith('.pdf') || !f.xmlContent?.startsWith('<?xml')
+      );
 
-    const divergentHeaders = [
-      "Arquivo",
-      "Chave de Acesso",
-      "CNPJ na Chave",
-      "Destinatário CNPJ",
-      "Destinatário Razão Social",
-      "Validação CNPJ (Chave x Destinatário)",
-      "Confronto Chave vs Destinatário",
-      "Comprovação da Divergência / Detalhes",
-      "Emitente CNPJ",
-      "Emitente Razão Social",
-      "Numero NFe",
-      "Série",
-      "Data Emissão",
-      "Quantidade",
-      "Valor Total (R$)",
-      "Terminal de Entrega",
-      "Transbordo"
-    ];
+      // 2. Se houver notas de PDF, garantir a conferência da IA para 100% delas
+      if (pdfFiles.length > 0) {
+        const itemsToAudit = pdfFiles.map((f) => {
+          const pesoLiquido = f.nfeData?.transportador?.pesoLiquido ? Number(f.nfeData.transportador.pesoLiquido) : 0;
+          const sumItensQtd = f.nfeData?.itens?.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0);
+          const initialQtd = (pesoLiquido && pesoLiquido > 0)
+            ? pesoLiquido
+            : (sumItensQtd && sumItensQtd > 0 ? sumItensQtd : (Number(f.nfeData?.transportador?.quantidade) || 0));
 
-    for (const file of successfulFiles) {
-        if (file.nfeData) {
-            const vCNPJ = file.nfeData.verificacaoCNPJ || verifyChaveCNPJ(
-              file.nfeData.chaveAcesso,
-              file.nfeData.emitente.cnpj,
-              file.nfeData.destinatario.cpfCnpj
-            )
-            const pesoLiquido = file.nfeData.transportador?.pesoLiquido ? Number(file.nfeData.transportador.pesoLiquido) : 0
-
-            const sumItensQtd = file.nfeData.itens?.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0)
-            const quantidadeVal = (pesoLiquido && pesoLiquido > 0)
-              ? pesoLiquido
-              : (sumItensQtd && sumItensQtd > 0 ? sumItensQtd : (file.nfeData.transportador?.quantidade || 0))
-
-            const emitCNPJ = file.nfeData.emitente?.cnpj || vCNPJ.emitenteCnpjRaw || "N/I"
-            const emitNome = file.nfeData.emitente?.nome || "N/I"
-            const destCNPJ = file.nfeData.destinatario?.cpfCnpj || vCNPJ.destinatarioCnpjRaw || "NÃO INFORMADO"
-            const destNome = file.nfeData.destinatario?.nome || "NÃO INFORMADO"
-
-            const rowData = [
-                file.fileName,
-                file.nfeData.chaveAcesso,
-                vCNPJ.chaveCnpj || "N/I",
-                destCNPJ,
-                destNome,
-                vCNPJ.statusLabel,
-                vCNPJ.confrontoChaveXDest,
-                vCNPJ.details,
-                emitCNPJ,
-                emitNome,
-                file.nfeData.numero,
-                file.nfeData.serie || "",
-                file.nfeData.dataEmissao,
-                quantidadeVal,
-                file.nfeData.impostos.valorTotal,
-                file.nfeData.terminalEntrega,
-                file.nfeData.transbordo,
-                file.nfeData.retirada,
-                file.nfeData.tipoProduto
-            ];
-
-            dataToExport.push(rowData);
-
-            if (vCNPJ.confrontoChaveXDest === 'DIVERGENTES' || !vCNPJ.isValid) {
-              divergentDataToExport.push([
-                file.fileName,
-                file.nfeData.chaveAcesso,
-                vCNPJ.chaveCnpj || "N/I",
-                destCNPJ,
-                destNome,
-                vCNPJ.statusLabel,
-                vCNPJ.confrontoChaveXDest,
-                vCNPJ.details,
-                emitCNPJ,
-                emitNome,
-                file.nfeData.numero,
-                file.nfeData.serie || "",
-                file.nfeData.dataEmissao,
-                quantidadeVal,
-                file.nfeData.impostos.valorTotal,
-                file.nfeData.terminalEntrega,
-                file.nfeData.transbordo
-              ]);
-            }
-        }
-    }
-
-    const autoFitCols = (rows: any[][]) => {
-      const maxLen = rows.reduce((w: number[], r: any[]) => {
-        r.forEach((val: any, idx: number) => {
-          const valStr = String(val ?? '');
-          w[idx] = Math.max(w[idx] || 0, valStr.length);
+          return {
+            id: f.nfeData?.chaveAcesso || f.fileName,
+            fileName: f.fileName,
+            chave: f.nfeData?.chaveAcesso,
+            numero: f.nfeData?.numero,
+            serie: f.nfeData?.serie,
+            pesoLido: initialQtd,
+            snippet: f.rawSnippet || f.parsedData?.rawSnippet || '',
+            xmlContent: f.xmlContent,
+            isPdf: true,
+          };
         });
-        return w;
-      }, []);
-      return maxLen.map((len: number) => ({ wch: Math.min(Math.max(len + 3, 12), 70) }));
-    };
 
-    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...dataToExport]);
-    worksheet['!cols'] = autoFitCols([headers, ...dataToExport]);
+        currentAuditMap = await conferirQuantidadesNotasPdfComIA(itemsToAudit, currentAuditMap);
+        setAiAuditMap(currentAuditMap);
+      }
 
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Notas Fiscais");
+      // 3. Montar dados para exportação com Quantidade sempre conferida pela IA para notas em PDF
+      const dataToExport = [];
+      const divergentDataToExport: any[][] = [];
+      const aiAuditReportRows: any[][] = [];
 
-    if (divergentDataToExport.length > 0) {
+      const headers = [
+        "Arquivo",
+        "Tipo Arquivo",
+        "Chave de Acesso",
+        "CNPJ na Chave",
+        "Destinatário CNPJ",
+        "Destinatário Razão Social",
+        "Validação CNPJ (Chave x Destinatário)",
+        "Confronto Chave vs Destinatário",
+        "Comprovação da Divergência / Detalhes",
+        "Emitente CNPJ",
+        "Emitente Razão Social",
+        "Numero NFe",
+        "Série",
+        "Data Emissão",
+        "Quantidade",
+        "Quantidade (Conferida por IA)",
+        "Status Conferência IA",
+        "Origem / Detalhes IA",
+        "Quantidade Original (Sistema)",
+        "Valor Total (R$)",
+        "Terminal de Entrega",
+        "Transbordo",
+        "Retirada",
+        "Tipo Produto"
+      ];
+
+      const divergentHeaders = [
+        "Arquivo",
+        "Tipo Arquivo",
+        "Chave de Acesso",
+        "CNPJ na Chave",
+        "Destinatário CNPJ",
+        "Destinatário Razão Social",
+        "Validação CNPJ (Chave x Destinatário)",
+        "Confronto Chave vs Destinatário",
+        "Comprovação da Divergência / Detalhes",
+        "Emitente CNPJ",
+        "Emitente Razão Social",
+        "Numero NFe",
+        "Série",
+        "Data Emissão",
+        "Quantidade (Conferida)",
+        "Status Conferência IA",
+        "Valor Total (R$)",
+        "Terminal de Entrega",
+        "Transbordo"
+      ];
+
+      const aiReportHeaders = [
+        "Arquivo",
+        "Número NF",
+        "Chave de Acesso",
+        "Quantidade Inicial (Sistema)",
+        "Quantidade Real (Conferida pela IA)",
+        "Status da Auditoria IA",
+        "Veredito da IA",
+        "Explicação / Origem do Valor",
+        "Confiança",
+        "Modo Utilizado"
+      ];
+
+      for (const file of successfulFiles) {
+        if (file.nfeData) {
+          const isPdf = file.isPdf || file.fileType === 'pdf' || file.fileName.toLowerCase().endsWith('.pdf') || !file.xmlContent?.startsWith('<?xml');
+          const key = file.nfeData.chaveAcesso;
+          const mainId = key || file.fileName;
+
+          const vCNPJ = file.nfeData.verificacaoCNPJ || verifyChaveCNPJ(
+            key,
+            file.nfeData.emitente.cnpj,
+            file.nfeData.destinatario.cpfCnpj
+          );
+
+          const pesoLiquido = file.nfeData.transportador?.pesoLiquido ? Number(file.nfeData.transportador.pesoLiquido) : 0;
+          const sumItensQtd = file.nfeData.itens?.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0);
+          const initialQtd = (pesoLiquido && pesoLiquido > 0)
+            ? pesoLiquido
+            : (sumItensQtd && sumItensQtd > 0 ? sumItensQtd : (Number(file.nfeData.transportador?.quantidade) || 0));
+
+          let quantidadeFinal = initialQtd;
+          let quantidadeIaExport: any = 'N/A (XML Original)';
+          let statusIaExport = 'XML Original';
+          let detalhesIaExport = '';
+
+          if (isPdf) {
+            const conf = obterQuantidadeConferidaIA(mainId, initialQtd, currentAuditMap, undefined, file.fileName);
+            quantidadeFinal = conf.quantidade;
+            quantidadeIaExport = conf.quantidade;
+            statusIaExport = conf.status;
+            detalhesIaExport = conf.explicacao;
+
+            const itemAudit = currentAuditMap[mainId] || currentAuditMap[file.fileName];
+            aiAuditReportRows.push([
+              file.fileName,
+              file.nfeData.numero,
+              key,
+              initialQtd,
+              conf.quantidade,
+              conf.status,
+              itemAudit?.veredito || 'Quantidade conferida pela IA',
+              conf.explicacao,
+              itemAudit?.confianca || 'ALTA',
+              itemAudit?.modoUtilizado || 'GEMINI_IA'
+            ]);
+          }
+
+          const emitCNPJ = file.nfeData.emitente?.cnpj || vCNPJ.emitenteCnpjRaw || "N/I";
+          const emitNome = file.nfeData.emitente?.nome || "N/I";
+          const destCNPJ = file.nfeData.destinatario?.cpfCnpj || vCNPJ.destinatarioCnpjRaw || "NÃO INFORMADO";
+          const destNome = file.nfeData.destinatario?.nome || "NÃO INFORMADO";
+
+          const rowData = [
+            file.fileName,
+            isPdf ? 'PDF' : 'XML',
+            key,
+            vCNPJ.chaveCnpj || "N/I",
+            destCNPJ,
+            destNome,
+            vCNPJ.statusLabel,
+            vCNPJ.confrontoChaveXDest,
+            vCNPJ.details,
+            emitCNPJ,
+            emitNome,
+            file.nfeData.numero,
+            file.nfeData.serie || "",
+            file.nfeData.dataEmissao,
+            quantidadeFinal, // Quantidade sempre exportada via conferência da IA para PDFs!
+            quantidadeIaExport,
+            statusIaExport,
+            detalhesIaExport,
+            isPdf ? initialQtd : quantidadeFinal,
+            file.nfeData.impostos.valorTotal,
+            file.nfeData.terminalEntrega,
+            file.nfeData.transbordo,
+            file.nfeData.retirada,
+            file.nfeData.tipoProduto
+          ];
+
+          dataToExport.push(rowData);
+
+          if (vCNPJ.confrontoChaveXDest === 'DIVERGENTES' || !vCNPJ.isValid) {
+            divergentDataToExport.push([
+              file.fileName,
+              isPdf ? 'PDF' : 'XML',
+              key,
+              vCNPJ.chaveCnpj || "N/I",
+              destCNPJ,
+              destNome,
+              vCNPJ.statusLabel,
+              vCNPJ.confrontoChaveXDest,
+              vCNPJ.details,
+              emitCNPJ,
+              emitNome,
+              file.nfeData.numero,
+              file.nfeData.serie || "",
+              file.nfeData.dataEmissao,
+              quantidadeFinal,
+              statusIaExport,
+              file.nfeData.impostos.valorTotal,
+              file.nfeData.terminalEntrega,
+              file.nfeData.transbordo
+            ]);
+          }
+        }
+      }
+
+      const autoFitCols = (rows: any[][]) => {
+        const maxLen = rows.reduce((w: number[], r: any[]) => {
+          r.forEach((val: any, idx: number) => {
+            const valStr = String(val ?? '');
+            w[idx] = Math.max(w[idx] || 0, valStr.length);
+          });
+          return w;
+        }, []);
+        return maxLen.map((len: number) => ({ wch: Math.min(Math.max(len + 3, 12), 70) }));
+      };
+
+      const worksheet = XLSX.utils.aoa_to_sheet([headers, ...dataToExport]);
+      worksheet['!cols'] = autoFitCols([headers, ...dataToExport]);
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Notas Fiscais");
+
+      if (divergentDataToExport.length > 0) {
         const divergentWorksheet = XLSX.utils.aoa_to_sheet([divergentHeaders, ...divergentDataToExport]);
         divergentWorksheet['!cols'] = autoFitCols([divergentHeaders, ...divergentDataToExport]);
         XLSX.utils.book_append_sheet(workbook, divergentWorksheet, "Divergências de CNPJ");
-    }
+      }
 
-    const itemsDataToExport: any[][] = [];
-    const itemHeaders = ["Chave de Acesso", "Numero NFe", "Código Produto", "Descrição", "NCM", "CFOP", "Quantidade", "Unidade", "Valor Unitário", "Valor Total"];
+      // Aba detalhada da auditoria da IA quando houver notas de PDF
+      if (aiAuditReportRows.length > 0) {
+        const aiWorksheet = XLSX.utils.aoa_to_sheet([aiReportHeaders, ...aiAuditReportRows]);
+        aiWorksheet['!cols'] = autoFitCols([aiReportHeaders, ...aiAuditReportRows]);
+        XLSX.utils.book_append_sheet(workbook, aiWorksheet, "Conferência IA (PDFs)");
+      }
 
-    for (const file of successfulFiles) {
+      const itemsDataToExport: any[][] = [];
+      const itemHeaders = ["Chave de Acesso", "Numero NFe", "Código Produto", "Descrição", "NCM", "CFOP", "Quantidade", "Unidade", "Valor Unitário", "Valor Total", "Origem Quantidade"];
+
+      for (const file of successfulFiles) {
         if (file.nfeData && file.nfeData.itens) {
-            file.nfeData.itens.forEach(item => {
-                itemsDataToExport.push([
-                    file.nfeData!.chaveAcesso,
-                    file.nfeData!.numero,
-                    item.codigo,
-                    item.descricao,
-                    item.ncm,
-                    item.cfop,
-                    item.quantidade,
-                    item.unidade,
-                    item.valorUnitario,
-                    item.valorTotal
-                ]);
-            });
-        }
-    }
+          const isPdf = file.isPdf || file.fileType === 'pdf' || file.fileName.toLowerCase().endsWith('.pdf') || !file.xmlContent?.startsWith('<?xml');
+          const key = file.nfeData.chaveAcesso;
+          const mainId = key || file.fileName;
+          const conf = isPdf ? obterQuantidadeConferidaIA(mainId, 0, currentAuditMap, undefined, file.fileName) : null;
 
-    if(itemsDataToExport.length > 0) {
+          file.nfeData.itens.forEach((item) => {
+            const itemQtd = (isPdf && conf && conf.quantidade > 0 && (file.nfeData!.itens.length === 1 || Number(item.quantidade) === 0))
+              ? conf.quantidade
+              : item.quantidade;
+
+            itemsDataToExport.push([
+              file.nfeData!.chaveAcesso,
+              file.nfeData!.numero,
+              item.codigo,
+              item.descricao,
+              item.ncm,
+              item.cfop,
+              itemQtd,
+              item.unidade,
+              item.valorUnitario,
+              item.valorTotal,
+              isPdf ? 'Conferido por IA' : 'Original XML'
+            ]);
+          });
+        }
+      }
+
+      if (itemsDataToExport.length > 0) {
         const itemsWorksheet = XLSX.utils.aoa_to_sheet([itemHeaders, ...itemsDataToExport]);
         itemsWorksheet['!cols'] = autoFitCols([itemHeaders, ...itemsDataToExport]);
         XLSX.utils.book_append_sheet(workbook, itemsWorksheet, "Itens das Notas");
-    }
+      }
 
-    XLSX.writeFile(workbook, `relatorio_nfe_${Date.now()}.xlsx`);
-    logRealtimeActivity(
-      'export_excel',
-      'Exportação de Relatório em Excel',
-      `Exportou relatório analítico contendo ${successfulFiles.length} notas fiscais em planilha Excel (.xlsx).`,
-      { filesCount: successfulFiles.length }
-    );
+      XLSX.writeFile(workbook, `relatorio_nfe_${Date.now()}.xlsx`);
+      logRealtimeActivity(
+        'export_excel',
+        'Exportação de Relatório em Excel com IA',
+        `Exportou relatório analítico contendo ${successfulFiles.length} notas (${pdfFiles.length} conferidas pela IA) em planilha Excel (.xlsx).`,
+        { filesCount: successfulFiles.length, pdfCount: pdfFiles.length }
+      );
+    } catch (err: any) {
+      console.error('Erro na exportação para Excel com IA:', err);
+      alert('Ocorreu um erro ao exportar para Excel: ' + (err.message || 'Falha ao processar'));
+    } finally {
+      setIsExportingExcelWithAI(false);
+    }
   };
 
   const handleClear = () => {
@@ -1615,9 +1776,24 @@ export function XMLConverter() {
                   )}
                   {successCount > 0 && !isProcessing && (
                     <>
-                      <Button onClick={handleDownloadExcel} size='sm' className='gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer'>
-                        <FileSpreadsheet className='h-4 w-4' />
-                        Exportar Excel (.xlsx)
+                      <Button
+                        onClick={handleDownloadExcel}
+                        size='sm'
+                        disabled={isExportingExcelWithAI}
+                        className='gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer shadow-xs'
+                        title="Exporta planilha Excel consolidada. Para notas em PDF, a quantidade é sempre validada e corrigida pela conferência da IA."
+                      >
+                        {isExportingExcelWithAI ? (
+                          <>
+                            <Loader2 className='h-4 w-4 animate-spin text-white' />
+                            <span>Conferindo IA e Gerando Excel...</span>
+                          </>
+                        ) : (
+                          <>
+                            <FileSpreadsheet className='h-4 w-4' />
+                            <span>Exportar Excel (.xlsx)</span>
+                          </>
+                        )}
                       </Button>
                       <Button onClick={handleDownloadAllPDFs} size='sm' variant="outline" className='gap-1.5 cursor-pointer' disabled={isDownloading}>
                         {isDownloading ? (
@@ -1959,11 +2135,33 @@ export function XMLConverter() {
                             {processedFile.error}
                           </CardDescription>
                         ) : processedFile.nfeData ? (
-                          <CardDescription>
-                            {processedFile.nfeData.tipo === 'NFe' ? 'NF-e' : 'Nota Fiscal'}{" "}
-                            - Numero: {processedFile.nfeData.numero || 'N/A'} -{" "}
-                            {formatCurrency(processedFile.nfeData.impostos.valorTotal)}
-                          </CardDescription>
+                          <div className='flex items-center gap-2 flex-wrap text-xs text-muted-foreground mt-0.5'>
+                            <span>
+                              {processedFile.nfeData.tipo === 'NFe' ? 'NF-e' : 'Nota Fiscal'}{" "}
+                              - Número: {processedFile.nfeData.numero || 'N/A'} -{" "}
+                              {formatCurrency(processedFile.nfeData.impostos.valorTotal)}
+                            </span>
+                            {(processedFile.isPdf || processedFile.fileType === 'pdf' || processedFile.fileName.toLowerCase().endsWith('.pdf')) && (
+                              (() => {
+                                const key = processedFile.nfeData.chaveAcesso
+                                const audit = aiAuditMap[key || processedFile.fileName]
+                                if (audit && audit.pesoCorrigidoDoc !== undefined && audit.pesoCorrigidoDoc !== null) {
+                                  return (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-800 dark:bg-teal-950/80 dark:text-teal-200 border border-teal-200 dark:border-teal-800">
+                                      <Sparkles className="h-3 w-3 text-teal-600 dark:text-teal-400" />
+                                      IA: {audit.pesoCorrigidoDoc} t ({audit.status === 'ERRO_LEITURA_SISTEMA' ? 'Corrigido' : 'Conferido'})
+                                    </span>
+                                  )
+                                }
+                                return (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60" title="A quantidade desta nota em PDF será conferida pela IA automaticamente ao exportar para o Excel">
+                                    <Bot className="h-3 w-3 text-indigo-500" />
+                                    PDF (Qtd conferida por IA no Excel)
+                                  </span>
+                                )
+                              })()
+                            )}
+                          </div>
                         ) : null}
                       </div>
                     </div>
@@ -2378,6 +2576,8 @@ export function XMLConverter() {
               <ExcelReconciliationTab
                 files={files}
                 speakText={speakText}
+                externalAuditMap={aiAuditMap}
+                onUpdateAuditMap={setAiAuditMap}
                 onSelectFile={(index) => {
                   setActiveTab('list')
                   setExpandedIndex(index)

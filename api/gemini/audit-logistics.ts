@@ -359,7 +359,7 @@ export default async function handler(req: any, res: any) {
 
       try {
         const response = await ai.models.generateContent({
-          model: "gemini-3.7-flash",
+          model: "gemini-3.8-flash",
           contents: `Você é um Auditor Sênior Especialista em Logística Portuária, Ferroviária e Fiscal de DANFE/NF-e (Exportação de Açúcar, Grãos, Soja, Milho, Farelo e Cargas Industriais).
 Sua missão fundamental é analisar as notas fiscais onde TERMINAL DE ENTREGA, TRANSBORDO ou DESTINATÁRIO estão "Não Informado" e ENCONTRAR OS VALORES REAIS declarados no texto da DANFE/Informações Complementares para ajustar o Dashboard.
 

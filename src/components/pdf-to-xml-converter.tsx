@@ -40,6 +40,10 @@ import {
 } from 'lucide-react'
 import {
   auditarDivergenciasComIA,
+  conferirQuantidadesNotasPdfComIA,
+  obterQuantidadeConferidaIA,
+  normalizarQuantidadeKg,
+  type ItemParaConferenciaIA,
   type WeightAuditItemInput,
   type WeightAuditItemResult,
   type WeightAuditResponse,
@@ -150,6 +154,8 @@ interface PDFConversionResult {
   filePath?: string
   originalPath?: string
   fileType?: 'pdf' | 'xml'
+  isPdf?: boolean
+  rawSnippet?: string
   xmlContent: string | null
   error: string | null
   isProcessing: boolean
@@ -322,6 +328,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
   const [auditingKey, setAuditingKey] = useState<string | null>(null)
   const [auditSummary, setAuditSummary] = useState<WeightAuditResponse | null>(null)
   const [overrideWeightsMap, setOverrideWeightsMap] = useState<Record<string, number>>({})
+  const [isExportingExcelWithAI, setIsExportingExcelWithAI] = useState<boolean>(false)
 
   // Estados e funções para Alerta de Voz (Web Speech API)
   const [voiceAlertEnabled, setVoiceAlertEnabled] = useState<boolean>(() => {
@@ -1133,67 +1140,152 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     return 0
   }
 
-  const handleDownloadAllExcel = () => {
-    const activeResults = results.filter(r => r.parsedData)
+  // Helper para criar e formatar largura das colunas das abas do Excel
+  const createFormattedWorksheet = (rows: any[]) => {
+    const ws = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ 'Mensagem': 'Nenhum registro encontrado nesta categoria' }])
+    if (rows.length > 0) {
+      const maxLenMap: number[] = []
+      rows.forEach((row) => {
+        Object.keys(row).forEach((colKey, colIdx) => {
+          const valStr = String(row[colKey] ?? '')
+          maxLenMap[colIdx] = Math.max(maxLenMap[colIdx] || 0, valStr.length, colKey.length)
+        })
+      })
+      ws['!cols'] = maxLenMap.map((len) => ({ wch: Math.min(Math.max(len + 3, 12), 65) }))
+    }
+    return ws
+  }
+
+  const handleDownloadAllExcel = async () => {
+    const activeResults = results.filter(r => r.parsedData || r.nfeData)
     if (activeResults.length === 0) {
       alert('Nenhuma nota processada com sucesso para exportar para o Excel.')
       return
     }
 
-    const dataRows = activeResults.map((res) => {
-      const d = res.parsedData
-      const key = d?.chave || getNormalizedKey(res) || ''
-      const emitCNPJ = d?.emitCNPJ || res.nfeData?.emitente?.cnpj || ''
-      const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
-      const vCNPJ = verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
+    setIsExportingExcelWithAI(true)
+    let currentAuditMap: Record<string, WeightAuditItemResult> = { ...auditResultsMap }
 
-      return {
-        'Nome do Arquivo': res.fileName,
-        'Tipo Arquivo': res.fileType === 'pdf' ? 'PDF' : 'XML',
-        'Nº Nota (nNF)': d?.nNF || '',
-        'Série': d?.serie || '',
-        'Chave de Acesso': key,
-        'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
-        'Destinatário CNPJ': destCNPJ,
-        'Destinatário': d?.destNome || res.nfeData?.destinatario?.nome || '',
-        'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
-        'Status Validação CNPJ': vCNPJ.statusLabel,
-        'Comprovação da Divergência / Detalhes': vCNPJ.details,
-        'Emitente': d?.emitNome || res.nfeData?.emitente?.nome || '',
-        'CNPJ Emitente': emitCNPJ,
-        'Quantidade': getResultQuantidade(res),
-        'Valor Total Nota (R$)': d?.vNF || '',
-      }
-    })
+    try {
+      // 1. Identificar todas as notas que foram processadas a partir de PDF
+      const pdfResults = activeResults.filter(
+        (r) => r.fileType === 'pdf' || r.fileName.toLowerCase().endsWith('.pdf') || !r.xmlContent?.startsWith('<?xml')
+      )
 
-    const worksheet = XLSX.utils.json_to_sheet(dataRows)
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Notas Processadas')
+      // 2. Se houver notas de PDF, garantir a conferência da IA para 100% delas antes da exportação
+      if (pdfResults.length > 0) {
+        const itemsToAudit: ItemParaConferenciaIA[] = pdfResults.map((res) => {
+          const d = res.parsedData
+          const key = d?.chave || getNormalizedKey(res) || ''
+          const initialQtd = getResultQuantidade(res)
+          const matchInfo = getExcelMatchInfo(key)
+          const vWeight = confrontWeights(matchInfo, initialQtd)
 
-    const divergentRows = dataRows.filter((r) => r['Confronto (Chave vs Destinatário)'] === 'DIVERGENTES' || String(r['Status Validação CNPJ']).includes('DIVERGENTE'))
-    if (divergentRows.length > 0) {
-      const wsDiv = XLSX.utils.json_to_sheet(divergentRows)
-      const maxLenDiv = divergentRows.reduce((w: any, r: any) => {
-        Object.keys(r).forEach((k, idx) => {
-          const val = String(r[k] ?? '')
-          w[idx] = Math.max(w[idx] || 0, val.length, k.length)
+          return {
+            id: key || res.fileName,
+            fileName: res.fileName,
+            chave: key,
+            numero: d?.nNF || res.nfeData?.numero,
+            serie: d?.serie || res.nfeData?.serie,
+            pesoLido: initialQtd,
+            pesoExcel: vWeight.pesoExcel || undefined,
+            snippet: res.rawSnippet || d?.rawSnippet || d?.infCpl || '',
+            xmlContent: res.xmlContent,
+            isPdf: true,
+          }
         })
-        return w
-      }, [])
-      wsDiv['!cols'] = maxLenDiv.map((len: number) => ({ wch: Math.min(Math.max(len + 3, 12), 70) }))
-      XLSX.utils.book_append_sheet(workbook, wsDiv, 'Divergências de CNPJ')
+
+        currentAuditMap = await conferirQuantidadesNotasPdfComIA(itemsToAudit, currentAuditMap)
+        setAuditResultsMap(currentAuditMap)
+      }
+
+      const aiAuditReportRows: any[] = []
+
+      // 3. Montar dados para exportação com Quantidade sempre conferida pela IA para notas em PDF
+      const dataRows = activeResults.map((res) => {
+        const d = res.parsedData
+        const isPdf = res.fileType === 'pdf' || res.fileName.toLowerCase().endsWith('.pdf') || !res.xmlContent?.startsWith('<?xml')
+        const key = d?.chave || getNormalizedKey(res) || ''
+        const emitCNPJ = d?.emitCNPJ || res.nfeData?.emitente?.cnpj || ''
+        const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
+        const vCNPJ = verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
+        const initialQtd = getResultQuantidade(res)
+
+        let quantidadeFinal = normalizarQuantidadeKg(initialQtd)
+        let quantidadeIaExport: any = 'N/A (XML Original)'
+        let statusIaExport = 'XML Original'
+        let detalhesIaExport = ''
+
+        if (isPdf) {
+          const conf = obterQuantidadeConferidaIA(key || res.fileName, initialQtd, currentAuditMap, overrideWeightsMap, res.fileName)
+          quantidadeFinal = normalizarQuantidadeKg(conf.quantidade)
+          quantidadeIaExport = normalizarQuantidadeKg(conf.quantidade)
+          statusIaExport = conf.status
+          detalhesIaExport = conf.explicacao
+
+          const itemAudit = currentAuditMap[key || res.fileName] || currentAuditMap[res.fileName]
+          aiAuditReportRows.push({
+            'Nome do Arquivo': res.fileName,
+            'Número NF': d?.nNF || res.nfeData?.numero || '',
+            'Série': d?.serie || res.nfeData?.serie || '',
+            'Chave de Acesso': key,
+            'Quantidade Extraída pelo Sistema': normalizarQuantidadeKg(initialQtd),
+            'Quantidade Real (Conferida pela IA)': normalizarQuantidadeKg(conf.quantidade),
+            'Status da Auditoria IA': conf.status,
+            'Veredito da IA': itemAudit?.veredito || 'Quantidade conferida pela IA com sucesso',
+            'Explicação / Origem do Valor': conf.explicacao,
+            'Confiança': itemAudit?.confianca || 'ALTA',
+            'Modo Utilizado': itemAudit?.modoUtilizado || 'GEMINI_IA',
+          })
+        }
+
+        return {
+          'Nome do Arquivo': res.fileName,
+          'Tipo Arquivo': isPdf ? 'PDF' : 'XML',
+          'Nº Nota (nNF)': d?.nNF || res.nfeData?.numero || '',
+          'Série': d?.serie || res.nfeData?.serie || '',
+          'Chave de Acesso': key,
+          'CNPJ na Chave': vCNPJ.chaveCnpj || 'N/I',
+          'Destinatário CNPJ': destCNPJ,
+          'Destinatário': d?.destNome || res.nfeData?.destinatario?.nome || '',
+          'Confronto (Chave vs Destinatário)': vCNPJ.confrontoChaveXDest,
+          'Status Validação CNPJ': vCNPJ.statusLabel,
+          'Comprovação da Divergência / Detalhes': vCNPJ.details,
+          'Emitente': d?.emitNome || res.nfeData?.emitente?.nome || '',
+          'CNPJ Emitente': emitCNPJ,
+          'Quantidade': quantidadeFinal, // SEMPRE MULTIPLICADO POR 1000 QUANDO EM TONELADAS (ex: 49,34 -> 49340)
+          'Quantidade (Conferida por IA)': quantidadeIaExport,
+          'Status Conferência IA': statusIaExport,
+          'Origem / Detalhes IA': detalhesIaExport,
+          'Quantidade Original (Sistema)': normalizarQuantidadeKg(initialQtd),
+          'Valor Total Nota (R$)': d?.vNF || res.nfeData?.impostos?.valorTotal || '',
+        }
+      })
+
+      const worksheet = createFormattedWorksheet(dataRows)
+      const workbook = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Notas Processadas')
+
+      // Aba de Auditoria de IA para PDFs se houver notas em PDF
+      if (aiAuditReportRows.length > 0) {
+        const wsAiAudit = createFormattedWorksheet(aiAuditReportRows)
+        XLSX.utils.book_append_sheet(workbook, wsAiAudit, 'Auditoria IA (PDFs)')
+      }
+
+      // Aba de Divergências de CNPJ
+      const divergentRows = dataRows.filter((r) => r['Confronto (Chave vs Destinatário)'] === 'DIVERGENTES' || String(r['Status Validação CNPJ']).includes('DIVERGENTE'))
+      if (divergentRows.length > 0) {
+        const wsDiv = createFormattedWorksheet(divergentRows)
+        XLSX.utils.book_append_sheet(workbook, wsDiv, 'Divergências de CNPJ')
+      }
+
+      XLSX.writeFile(workbook, `consolidado_notas_${subMode}_${Date.now()}.xlsx`)
+    } catch (error) {
+      console.error('Erro ao exportar Excel com IA:', error)
+      alert('Ocorreu um erro ao conferir as quantidades com a IA para o Excel. Tente novamente.')
+    } finally {
+      setIsExportingExcelWithAI(false)
     }
-
-    const max_len = dataRows.reduce((w: any, r: any) => {
-      Object.keys(r).forEach((key, idx) => {
-        const val = String(r[key]);
-        w[idx] = Math.max(w[idx] || 0, val.length, key.length);
-      });
-      return w;
-    }, []);
-    worksheet['!cols'] = max_len.map((len: number) => ({ wch: Math.min(Math.max(len + 3, 12), 70) }));
-
-    XLSX.writeFile(workbook, `consolidado_notas_${subMode}_${Date.now()}.xlsx`)
   }
 
   const handleClear = () => {
@@ -1975,21 +2067,6 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     setOverrideWeightsMap(nextOverrides)
   }
 
-  // Helper para criar e formatar largura das colunas das abas do Excel
-  const createFormattedWorksheet = (rows: any[]) => {
-    const ws = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ 'Mensagem': 'Nenhum registro encontrado nesta categoria' }])
-    if (rows.length > 0) {
-      const maxLenMap: number[] = []
-      rows.forEach((row) => {
-        Object.keys(row).forEach((colKey, colIdx) => {
-          const valStr = String(row[colKey] ?? '')
-          maxLenMap[colIdx] = Math.max(maxLenMap[colIdx] || 0, valStr.length, colKey.length)
-        })
-      })
-      ws['!cols'] = maxLenMap.map((len) => ({ wch: Math.min(Math.max(len + 3, 12), 65) }))
-    }
-    return ws
-  }
 
   // Helper para converter/normalizar valores de peso para KG (multiplica por 1000 se o valor estiver em Toneladas, ex: < 1000)
   const normalizeWeightKg = (rawVal: any): number | string => {
@@ -2335,37 +2412,77 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
   }
 
   // Exportar Relatório Consolidado de Conferência em Excel com Múltiplas Abas
-  const handleExportReconciliationReport = () => {
+  const handleExportReconciliationReport = async () => {
     if (!excelData && validConvertedResults.length === 0) {
       alert('Carregue notas e/ou uma planilha Excel para gerar o relatório de conferência.')
       return
     }
 
-    const wb = XLSX.utils.book_new()
+    setIsExportingExcelWithAI(true)
+    let currentAuditMap: Record<string, WeightAuditItemResult> = { ...auditResultsMap }
 
-    // 1. ABA RESUMO GERAL / DASHBOARD
-    const totalFilesCount = validConvertedResults.length
-    const matchedCount = matchedResults.length
-    const unmatchedCount = unmatchedResults.length
-    const totalExcelKeys = excelData ? excelData.allKeysList.length : 0
-    const missingFilesCount = excelKeysWithoutFiles.length
-    const matchPercentage = totalFilesCount > 0 ? Math.round((matchedCount / totalFilesCount) * 100) : 0
+    try {
+      // 1. Identificar todas as notas que foram processadas a partir de PDF
+      const pdfResults = validConvertedResults.filter(
+        (r) => r.fileType === 'pdf' || r.fileName.toLowerCase().endsWith('.pdf') || !r.xmlContent?.startsWith('<?xml')
+      )
 
-    const weightDivergentCount = validConvertedResults.filter((res) => {
-      const key = getNormalizedKey(res) || res.parsedData?.chave || ''
-      const matchInfo = getExcelMatchInfo(key)
-      const qtd = getResultQuantidade(res)
-      const vWeight = confrontWeights(matchInfo, qtd)
-      return vWeight.status === 'DIVERGENTE'
-    }).length
+      // 2. Se houver notas de PDF, garantir a conferência da IA para 100% delas antes de gerar o relatório
+      if (pdfResults.length > 0) {
+        const itemsToAudit: ItemParaConferenciaIA[] = pdfResults.map((res) => {
+          const d = res.parsedData
+          const key = d?.chave || getNormalizedKey(res) || ''
+          const matchInfo = getExcelMatchInfo(key)
+          const initialQtd = getResultQuantidade(res)
+          const vWeight = confrontWeights(matchInfo, initialQtd)
 
-    const weightMatchedCount = validConvertedResults.filter((res) => {
-      const key = getNormalizedKey(res) || res.parsedData?.chave || ''
-      const matchInfo = getExcelMatchInfo(key)
-      const qtd = getResultQuantidade(res)
-      const vWeight = confrontWeights(matchInfo, qtd)
-      return vWeight.status === 'CONFERE'
-    }).length
+          return {
+            id: key || res.fileName,
+            fileName: res.fileName,
+            chave: key,
+            numero: d?.nNF || res.nfeData?.numero,
+            serie: d?.serie || res.nfeData?.serie,
+            pesoLido: initialQtd,
+            pesoExcel: vWeight.pesoExcel || undefined,
+            snippet: res.rawSnippet || d?.rawSnippet || d?.infCpl || '',
+            xmlContent: res.xmlContent,
+            isPdf: true,
+          }
+        })
+
+        currentAuditMap = await conferirQuantidadesNotasPdfComIA(itemsToAudit, currentAuditMap)
+        setAuditResultsMap(currentAuditMap)
+      }
+
+      const wb = XLSX.utils.book_new()
+
+      // 1. ABA RESUMO GERAL / DASHBOARD
+      const totalFilesCount = validConvertedResults.length
+      const matchedCount = matchedResults.length
+      const unmatchedCount = unmatchedResults.length
+      const totalExcelKeys = excelData ? excelData.allKeysList.length : 0
+      const missingFilesCount = excelKeysWithoutFiles.length
+      const matchPercentage = totalFilesCount > 0 ? Math.round((matchedCount / totalFilesCount) * 100) : 0
+
+      const weightDivergentCount = validConvertedResults.filter((res) => {
+        const key = getNormalizedKey(res) || res.parsedData?.chave || ''
+        const matchInfo = getExcelMatchInfo(key)
+        const isPdf = res.fileType === 'pdf' || res.fileName.toLowerCase().endsWith('.pdf') || !res.xmlContent?.startsWith('<?xml')
+        const confIA = isPdf ? obterQuantidadeConferidaIA(key || res.fileName, getResultQuantidade(res), currentAuditMap, overrideWeightsMap, res.fileName) : null
+        const qtd = (isPdf && confIA) ? confIA.quantidade : getResultQuantidade(res)
+        const vWeight = confrontWeights(matchInfo, qtd)
+        return vWeight.status === 'DIVERGENTE'
+      }).length
+
+      const weightMatchedCount = validConvertedResults.filter((res) => {
+        const key = getNormalizedKey(res) || res.parsedData?.chave || ''
+        const matchInfo = getExcelMatchInfo(key)
+        const isPdf = res.fileType === 'pdf' || res.fileName.toLowerCase().endsWith('.pdf') || !res.xmlContent?.startsWith('<?xml')
+        const confIA = isPdf ? obterQuantidadeConferidaIA(key || res.fileName, getResultQuantidade(res), currentAuditMap, overrideWeightsMap, res.fileName) : null
+        const qtd = (isPdf && confIA) ? confIA.quantidade : getResultQuantidade(res)
+        const vWeight = confrontWeights(matchInfo, qtd)
+        return vWeight.status === 'CONFERE'
+      }).length
 
     const summaryRows = [
       { 'Métrica / Indicador': 'Data e Hora da Conferência', 'Valor / Detalhe': new Date().toLocaleString('pt-BR') },
@@ -2459,12 +2576,15 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
           const destCNPJ = d?.destCNPJ || resMatch.nfeData?.destinatario?.cpfCnpj || ''
           const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || resMatch.nfeData?.emitente?.cnpj || '', destCNPJ)
-          const qtdNota = getResultQuantidade(resMatch)
+          const isPdf = resMatch.fileType === 'pdf' || resMatch.fileName.toLowerCase().endsWith('.pdf') || !resMatch.xmlContent?.startsWith('<?xml')
+          const initialQtd = getResultQuantidade(resMatch)
+          const confIA = isPdf ? obterQuantidadeConferidaIA(key || resMatch.fileName, initialQtd, currentAuditMap, overrideWeightsMap, resMatch.fileName) : null
+          const qtdNota = normalizarQuantidadeKg((isPdf && confIA) ? confIA.quantidade : initialQtd)
           const vWeight = confrontWeights(matchInfo, qtdNota)
-          const itemAudit = auditResultsMap[key || resMatch.fileName]
-          const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
+          const itemAudit = currentAuditMap[key || resMatch.fileName]
+          const pesoIaEncontrado = normalizarQuantidadeKg((isPdf && confIA) ? confIA.quantidade : (itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
             ? itemAudit.pesoCorrigidoDoc
-            : (overrideWeightsMap[key || resMatch.fileName] !== undefined ? overrideWeightsMap[key || resMatch.fileName] : qtdNota)
+            : (overrideWeightsMap[key || resMatch.fileName] !== undefined ? overrideWeightsMap[key || resMatch.fileName] : qtdNota)))
 
           const numNF = extractNumeroNF(d?.nNF || resMatch.nfeData?.numero, key || d?.chave)
           const dtEmissao = extractDataEmissao(d?.dhEmi || d?.dataEmissao || resMatch.nfeData?.dataEmissao, key || d?.chave)
@@ -2492,14 +2612,16 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
             'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
             'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
-            'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA' 
-              ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)' 
-              : itemAudit?.status === 'DIVERGENCIA_REAL' 
-                ? 'DIVERGÊNCIA REAL DE PESAGEM' 
-                : itemAudit?.status === 'CONFERIDO_CORRETO' 
-                  ? 'PESO CONFERIDO CORRETO' 
-                  : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'PESO CORRETO / CONFERIDO'),
-            'Explicação IA': itemAudit?.explicacao || '',
+            'Auditoria IA (Status / Causa)': isPdf
+              ? confIA?.status
+              : (itemAudit?.status === 'ERRO_LEITURA_SISTEMA' 
+                ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)' 
+                : itemAudit?.status === 'DIVERGENCIA_REAL' 
+                  ? 'DIVERGÊNCIA REAL DE PESAGEM' 
+                  : itemAudit?.status === 'CONFERIDO_CORRETO' 
+                    ? 'PESO CONFERIDO CORRETO' 
+                    : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'PESO CORRETO / CONFERIDO')),
+            'Explicação IA': isPdf ? confIA?.explicacao : (itemAudit?.explicacao || ''),
             'Valor Total (R$)': d?.vNF || 0,
             'Emitente': d?.emitNome || '',
             'CNPJ Emitente': d?.emitCNPJ || '',
@@ -2606,7 +2728,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         const key = getNormalizedKey(res)
         const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
         const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
-        const qtdNota = getResultQuantidade(res)
+        const isPdf = res.fileType === 'pdf' || res.fileName.toLowerCase().endsWith('.pdf') || !res.xmlContent?.startsWith('<?xml')
+        const initialQtd = getResultQuantidade(res)
+        const confIA = isPdf ? obterQuantidadeConferidaIA(key || res.fileName, initialQtd, currentAuditMap, overrideWeightsMap, res.fileName) : null
+        const qtdNota = normalizarQuantidadeKg((isPdf && confIA) ? confIA.quantidade : initialQtd)
         const numNF = extractNumeroNF(d?.nNF || res.nfeData?.numero, key || d?.chave)
         const dtEmissao = extractDataEmissao(d?.dhEmi || d?.dataEmissao || res.nfeData?.dataEmissao, key || d?.chave)
 
@@ -2660,12 +2785,15 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       const matchInfo = getExcelMatchInfo(key)
       const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
       const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
-      const qtdNota = getResultQuantidade(res)
+      const isPdf = res.fileType === 'pdf' || res.fileName.toLowerCase().endsWith('.pdf') || !res.xmlContent?.startsWith('<?xml')
+      const initialQtd = getResultQuantidade(res)
+      const confIA = isPdf ? obterQuantidadeConferidaIA(key || res.fileName, initialQtd, currentAuditMap, overrideWeightsMap, res.fileName) : null
+      const qtdNota = normalizarQuantidadeKg((isPdf && confIA) ? confIA.quantidade : initialQtd)
       const vWeight = confrontWeights(matchInfo, qtdNota)
-      const itemAudit = auditResultsMap[key || res.fileName]
-      const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
+      const itemAudit = currentAuditMap[key || res.fileName]
+      const pesoIaEncontrado = normalizarQuantidadeKg((isPdf && confIA) ? confIA.quantidade : (itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
         ? itemAudit.pesoCorrigidoDoc
-        : (overrideWeightsMap[key || res.fileName] !== undefined ? overrideWeightsMap[key || res.fileName] : qtdNota)
+        : (overrideWeightsMap[key || res.fileName] !== undefined ? overrideWeightsMap[key || res.fileName] : qtdNota)))
       const numNF = extractNumeroNF(d?.nNF || res.nfeData?.numero, key || d?.chave)
       const dtEmissao = extractDataEmissao(d?.dhEmi || d?.dataEmissao || res.nfeData?.dataEmissao, key || d?.chave)
 
@@ -2691,14 +2819,16 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         'Confronto Peso (Excel vs Nota)': vWeight.statusLabel,
         'Diferença de Peso (Excel - Nota)': vWeight.pesoExcel !== null ? vWeight.diferenca : 'N/A',
         'Quantidade Encontrada pela IA (Valor Real)': pesoIaEncontrado,
-        'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA' 
-          ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)' 
-          : itemAudit?.status === 'DIVERGENCIA_REAL' 
-            ? 'DIVERGÊNCIA REAL DE PESAGEM' 
-            : itemAudit?.status === 'CONFERIDO_CORRETO' 
-              ? 'PESO CONFERIDO CORRETO' 
-              : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'PESO CORRETO / CONFERIDO'),
-        'Explicação IA': itemAudit?.explicacao || '',
+        'Auditoria IA (Status / Causa)': isPdf
+          ? confIA?.status
+          : (itemAudit?.status === 'ERRO_LEITURA_SISTEMA' 
+            ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)' 
+            : itemAudit?.status === 'DIVERGENCIA_REAL' 
+              ? 'DIVERGÊNCIA REAL DE PESAGEM' 
+              : itemAudit?.status === 'CONFERIDO_CORRETO' 
+                ? 'PESO CONFERIDO CORRETO' 
+                : (vWeight.status === 'DIVERGENTE' ? 'Divergência não auditada pela IA' : 'PESO CORRETO / CONFERIDO')),
+        'Explicação IA': isPdf ? confIA?.explicacao : (itemAudit?.explicacao || ''),
         'Valor Total (R$)': d?.vNF || 0,
         'Emitente': d?.emitNome || '',
         'CNPJ Emitente': d?.emitCNPJ || '',
@@ -2717,7 +2847,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           const key = getNormalizedKey(res)
           const destCNPJ = d?.destCNPJ || res.nfeData?.destinatario?.cpfCnpj || ''
           const vCNPJ = verifyChaveCNPJ(key || d?.chave || '', d?.emitCNPJ || res.nfeData?.emitente?.cnpj || '', destCNPJ)
-          const qtdNota = getResultQuantidade(res)
+          const isPdf = res.fileType === 'pdf' || res.fileName.toLowerCase().endsWith('.pdf') || !res.xmlContent?.startsWith('<?xml')
+          const initialQtd = getResultQuantidade(res)
+          const confIA = isPdf ? obterQuantidadeConferidaIA(key || res.fileName, initialQtd, currentAuditMap, overrideWeightsMap, res.fileName) : null
+          const qtdNota = normalizarQuantidadeKg((isPdf && confIA) ? confIA.quantidade : initialQtd)
           const numNF = extractNumeroNF(d?.nNF || res.nfeData?.numero, key || d?.chave)
           const dtEmissao = extractDataEmissao(d?.dhEmi || d?.dataEmissao || res.nfeData?.dataEmissao, key || d?.chave)
 
@@ -2891,7 +3024,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
       const rawDate = res.nfeData?.dataEmissao || res.parsedData?.dhEmi || res.parsedData?.dataEmissao
       const dtEmissao = extractDataEmissao(rawDate, cleanKey) || 'N/A'
-      const qtdNota = getResultQuantidade(res)
+      const isPdf = res.fileType === 'pdf' || res.fileName.toLowerCase().endsWith('.pdf') || !res.xmlContent?.startsWith('<?xml')
+      const initialQtd = getResultQuantidade(res)
+      const confIA = isPdf ? obterQuantidadeConferidaIA(cleanKey || res.fileName, initialQtd, currentAuditMap, overrideWeightsMap, res.fileName) : null
+      const qtdNota = (isPdf && confIA) ? confIA.quantidade : initialQtd
       const cliente =
         res.nfeData?.destinatario?.nome ||
         res.parsedData?.destNome ||
@@ -2925,8 +3061,40 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     )
     XLSX.utils.book_append_sheet(wb, wsUnique, 'CCT')
 
+    // 7. ABA AUDITORIA IA (SE HOUVER NOTAS EM PDF)
+    if (pdfResults.length > 0) {
+      const aiAuditReportRows = pdfResults.map((res) => {
+        const d = res.parsedData
+        const key = d?.chave || getNormalizedKey(res) || ''
+        const initialQtd = getResultQuantidade(res)
+        const conf = obterQuantidadeConferidaIA(key || res.fileName, initialQtd, currentAuditMap, overrideWeightsMap, res.fileName)
+        const itemAudit = currentAuditMap[key || res.fileName] || currentAuditMap[res.fileName]
+        return {
+          'Nome do Arquivo': res.fileName,
+          'Número NF': d?.nNF || res.nfeData?.numero || '',
+          'Série': d?.serie || res.nfeData?.serie || '',
+          'Chave de Acesso': key,
+          'Quantidade Extraída pelo Sistema': initialQtd,
+          'Quantidade Real (Conferida pela IA)': conf.quantidade,
+          'Status da Auditoria IA': conf.status,
+          'Veredito da IA': itemAudit?.veredito || 'Quantidade conferida pela IA com sucesso',
+          'Explicação / Origem do Valor': conf.explicacao,
+          'Confiança': itemAudit?.confianca || 'ALTA',
+          'Modo Utilizado': itemAudit?.modoUtilizado || 'GEMINI_IA',
+        }
+      })
+      const wsAiAudit = createFormattedWorksheet(aiAuditReportRows)
+      XLSX.utils.book_append_sheet(wb, wsAiAudit, 'Auditoria IA (PDFs)')
+    }
+
     XLSX.writeFile(wb, `relatorio_conferencia_chaves_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  } catch (error) {
+    console.error('Erro ao exportar relatório consolidado com IA:', error)
+    alert('Ocorreu um erro ao exportar o relatório com a conferência da IA. Tente novamente.')
+  } finally {
+    setIsExportingExcelWithAI(false)
   }
+}
 
   const successCount = results.filter(r => r.parsedData || r.xmlContent).length
   const processingCount = results.filter(r => r.isProcessing).length
@@ -3180,9 +3348,25 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
                   {successCount > 0 && (
                     <>
-                      <Button onClick={handleDownloadAllExcel} size="sm" variant="outline" className="gap-2 border-green-200 dark:border-green-900/40 text-green-600 hover:bg-green-50/55 dark:hover:bg-green-950/20 font-medium cursor-pointer">
-                        <FileSpreadsheet className="h-4 w-4 text-green-500" />
-                        Baixar Excel (.xlsx)
+                      <Button
+                        onClick={handleDownloadAllExcel}
+                        size="sm"
+                        disabled={isExportingExcelWithAI}
+                        variant="outline"
+                        className="gap-2 border-green-200 dark:border-green-900/40 text-green-600 hover:bg-green-50/55 dark:hover:bg-green-950/20 font-medium cursor-pointer"
+                        title="Exportar planilha Excel. Para notas em PDF, a quantidade é sempre conferida e validada pela IA."
+                      >
+                        {isExportingExcelWithAI ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-green-600" />
+                            <span>Conferindo IA e Exportando...</span>
+                          </>
+                        ) : (
+                          <>
+                            <FileSpreadsheet className="h-4 w-4 text-green-500" />
+                            <span>Baixar Excel (.xlsx)</span>
+                          </>
+                        )}
                       </Button>
 
                       {subMode === 'pdf-to-xml' ? (
@@ -3252,11 +3436,22 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
                 <Button
                   onClick={handleExportReconciliationReport}
                   size="sm"
+                  disabled={isExportingExcelWithAI}
                   variant="outline"
                   className="gap-2 border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/50 dark:hover:bg-emerald-950/40 text-xs font-semibold cursor-pointer"
+                  title="Exportar relatório consolidado. Para notas em PDF, a quantidade é sempre conferida e validada pela IA."
                 >
-                  <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
-                  Baixar Relatório de Conferência (.xlsx)
+                  {isExportingExcelWithAI ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                      <span>Conferindo com IA e Gerando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+                      <span>Baixar Relatório de Conferência (.xlsx)</span>
+                    </>
+                  )}
                 </Button>
                 <Button
                   onClick={handleRemoveExcel}
