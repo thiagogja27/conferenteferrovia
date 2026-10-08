@@ -165,6 +165,19 @@ export function getNoteDetails(
     terminal = "Não Informado"
   }
 
+  // Transbordo NUNCA pode ser terminal portuário (TEAG, TEG, TES, CLI, Santos, Guarujá)
+  const isPortTerminalName = (val: string): boolean => {
+    const u = (val || "").toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    return /\bTEAG\b|\bTEG\b|\bTES\b|\bTGG\b|\bCLI\b|\bTIPLAM\b|\bDP WORLD\b|\bECOPORTO\b|\bBTP\b|\bTERMINAL 124\b|\bT-124\b|\bT124\b|TERMINAL.*EXPORTA[CÇ]|GUARUJ[AÁ]|SANTOS/i.test(u)
+  }
+
+  if (isPortTerminalName(transbordo)) {
+    if (terminal === "Não Informado" || !terminal) {
+      terminal = transbordo
+    }
+    transbordo = "Não Informado"
+  }
+
   // Se o terminal foi rotulado como TEG mas a nota é de açúcar, corrigir para TEAG
   if (terminal.includes('TEG') && !terminal.includes('TEAG')) {
     if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(infCpl)) {
@@ -172,22 +185,27 @@ export function getNoteDetails(
     }
   }
 
-  if (transbordo === "Não Informado" || !transbordo) {
-    if (/FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(infCpl)) transbordo = "FERNANDOPOLIS"
-    else if (/ITURAMA/i.test(infCpl)) transbordo = "ITURAMA"
-    else if (/PRADOPOLIS|PRADÓPOLIS/i.test(infCpl)) transbordo = "PRADOPOLIS"
-    else if (/ALTO\s*TAQUARI/i.test(infCpl)) transbordo = "ALTO TAQUARI"
-    else if (/RONDONOPOLIS|RONDONÓPOLIS/i.test(infCpl)) transbordo = "RONDONOPOLIS"
-    else if (/RIO\s*VERDE/i.test(infCpl)) transbordo = "RIO VERDE"
-    else if (/ARAGUARI/i.test(infCpl)) transbordo = "ARAGUARI"
-    else if (/UBERABA/i.test(infCpl)) transbordo = "UBERABA"
-    else if (/PEDERNEIRAS/i.test(infCpl)) transbordo = "PEDERNEIRAS"
-    else if (/GUARA|GUARÁ/i.test(infCpl)) transbordo = "GUARA"
-    else if (/UBERLANDIA|UBERLÂNDIA/i.test(infCpl)) transbordo = "UBERLANDIA"
-    else if (/SAO\s*SIMAO|SÃO\s*SIMÃO/i.test(infCpl)) transbordo = "SAO SIMAO"
-    else if (/CHAPADAO\s*DO\s*SUL|CHAPADÃO\s*DO\s*SUL/i.test(infCpl)) transbordo = "CHAPADAO DO SUL"
-    else if (/INOCENCIA|INOCÊNCIA/i.test(infCpl)) transbordo = "INOCENCIA"
-    else if (/ITIQUIRA/i.test(infCpl)) transbordo = "ITIQUIRA"
+  if (transbordo === "Não Informado" || !transbordo || isPortTerminalName(transbordo)) {
+    const fullContext = `${infCpl} ${rawXml} ${f.rawSnippet || ""} ${nfe?.emitente?.endereco?.municipio || ""} ${nfe?.emitente?.nome || ""} ${parsed?.emitNome || ""}`.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    if (/PRADOPOLIS|PRADÓPOLIS|SAO MARTINHO|SÃO MARTINHO/i.test(fullContext)) transbordo = "PRADOPOLIS"
+    else if (/PEDERNEIRAS/i.test(fullContext)) transbordo = "PEDERNEIRAS (RUMO)"
+    else if (/FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(fullContext)) transbordo = "FERNANDOPOLIS"
+    else if (/ITURAMA/i.test(fullContext)) transbordo = "ITURAMA"
+    else if (/ALTO\s*TAQUARI|NOVA\s*AGRI/i.test(fullContext)) transbordo = "ALTO TAQUARI"
+    else if (/RONDONOPOLIS|RONDONÓPOLIS/i.test(fullContext)) transbordo = "RONDONOPOLIS (RUMO)"
+    else if (/RIO\s*VERDE/i.test(fullContext)) transbordo = "RIO VERDE"
+    else if (/ARAGUARI/i.test(fullContext)) transbordo = "ARAGUARI (VLI)"
+    else if (/UBERABA|TIUB/i.test(fullContext)) transbordo = "UBERABA"
+    else if (/GUARA|GUARÁ/i.test(fullContext)) transbordo = "GUARA"
+    else if (/UBERLANDIA|UBERLÂNDIA/i.test(fullContext)) transbordo = "UBERLANDIA"
+    else if (/SAO\s*SIMAO|SÃO\s*SIMÃO/i.test(fullContext)) transbordo = "SAO SIMAO"
+    else if (/CHAPADAO\s*DO\s*SUL|CHAPADÃO\s*DO\s*SUL/i.test(fullContext)) transbordo = "CHAPADAO DO SUL"
+    else if (/INOCENCIA|INOCÊNCIA/i.test(fullContext)) transbordo = "INOCENCIA"
+    else if (/ITIQUIRA/i.test(fullContext)) transbordo = "ITIQUIRA"
+    else if (/ALTO\s*ARAGUAIA/i.test(fullContext)) transbordo = "ALTO ARAGUAIA"
+    else if (/DOM\s*AQUINO/i.test(fullContext)) transbordo = "DOM AQUINO"
+    else if (/RIO\s*PRETO/i.test(fullContext)) transbordo = "RIO PRETO"
+    else if (/COMPANHIA\s*AUXILIAR|CIA\s*AUXILIAR/i.test(fullContext)) transbordo = "COMPANHIA AUXILIAR DE ARMAZENS GERAIS"
   }
 
   if (terminal === "Não Informado" || !terminal) {

@@ -106,6 +106,15 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
     terminalCorrigido = 'Não Informado'
   }
 
+  // Se o transbordo foi indevidamente rotulado como terminal portuário (ex: TEAG, TEG, TES, CLI, TGG, SANTOS, GUARUJÁ):
+  if (/^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|SANTOS|GUARUJ[AÁ]/i.test(item.transbordo || '')) {
+    if (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal)) {
+      terminalCorrigido = item.transbordo
+      camposAjustados.push('terminal')
+    }
+    transbordoCorrigido = undefined
+  }
+
   // Se o terminal foi rotulado como TEG mas a nota é de açúcar ou possui dados do TEAG, corrigir para TEAG
   if (item.terminal && item.terminal.includes('TEG') && !item.terminal.includes('TEAG')) {
     if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(fullText)) {
@@ -168,16 +177,27 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
     }
   }
 
-  // 2. Auditoria e Identificação de Transbordo
-  if (isNaoInformado(item.transbordo)) {
-    if (/FERNAND[OÓ]POLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(fullText)) {
+  // 2. Auditoria e Identificação de Transbordo (Validação prioritária de Pradópolis, Pederneiras e outros cadastrados)
+  const isTransbordoInvalidoOuVazio =
+    isNaoInformado(transbordoCorrigido) ||
+    isNaoInformado(item.transbordo) ||
+    /^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|SANTOS|GUARUJ[AÁ]/i.test(transbordoCorrigido || item.transbordo || '')
+
+  if (isTransbordoInvalidoOuVazio) {
+    if (/PRAD[OÓ]POLIS|SAO\s*MARTINHO|SÃO\s*MARTINHO/i.test(fullText)) {
+      transbordoCorrigido = 'PRADOPOLIS'
+      camposAjustados.push('transbordo')
+    } else if (/PEDERNEIRAS/i.test(fullText)) {
+      transbordoCorrigido = 'PEDERNEIRAS (RUMO)'
+      camposAjustados.push('transbordo')
+    } else if (/FERNAND[OÓ]POLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(fullText)) {
       transbordoCorrigido = 'FERNANDOPOLIS'
       camposAjustados.push('transbordo')
     } else if (/ITURAMA/i.test(fullText)) {
       transbordoCorrigido = 'ITURAMA'
       camposAjustados.push('transbordo')
-    } else if (/PRAD[OÓ]POLIS/i.test(fullText)) {
-      transbordoCorrigido = 'PRADOPOLIS'
+    } else if (/UBERABA|TIUB/i.test(fullText)) {
+      transbordoCorrigido = 'UBERABA'
       camposAjustados.push('transbordo')
     } else if (/NOVA\s*AGRI|NOVAAGRI/i.test(fullText)) {
       transbordoCorrigido = 'NOVA AGRI - ALTO TAQUARI'

@@ -1429,7 +1429,7 @@ function getKnownTransbordo(str: string): string | null {
     if (upper.includes('ALTO TAQUARI')) return 'NOVA AGRI - ALTO TAQUARI';
     return 'NOVA AGRI';
   }
-  if (upper.includes('PRADOPOLIS') || upper.includes('PRADOPOLIS-SP') || upper.includes('PRADOPOLIS - SP')) return 'PRADOPOLIS';
+  if (upper.includes('PRADOPOLIS') || upper.includes('PRADOPOLIS-SP') || upper.includes('PRADOPOLIS - SP') || upper.includes('SAO MARTINHO') || upper.includes('SÃO MARTINHO')) return 'PRADOPOLIS';
   if (upper.includes('ALTO TAQUARI')) return 'ALTO TAQUARI';
   if (upper.includes('ALTO ARAGUAIA') || (upper.includes('ARAGUAIA') && !upper.includes('ARAGUARI'))) return 'ALTO ARAGUAIA';
   if (upper.includes('RONDONOPOLIS')) {

@@ -311,7 +311,7 @@ const dhEmi = getTextContent(doc, "dhEmi", ide) || getTextContent(doc, "dEmi", i
   folha: "1/1",
   // Campos extraídos das informações complementares
   terminalEntrega: extractTerminalEntrega(informacoesComplementares),
-  transbordo: extractTransbordo(informacoesComplementares),
+  transbordo: extractTransbordo(informacoesComplementares, `${getTextContent(doc, "xMun", enderEmit)} ${getTextContent(doc, "xNome", emit)} ${getTextContent(doc, "xMun", enderDest)}`),
   retirada: extractRetirada(informacoesComplementares),
   tipoProduto: detectTipoProduto(descricaoProdutos, informacoesComplementares),
   emitente: {

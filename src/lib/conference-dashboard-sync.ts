@@ -279,6 +279,15 @@ export function buildConferenceDashboardSnapshot(
       terminal = 'Não Informado'
     }
 
+    // CRÍTICO: Não existe transbordo TEG ou TEAG! TEAG, TEG, TES, CLI, TGG são terminais portuários.
+    // Se o transbordo foi indevidamente gravado como terminal portuário, mover para terminal e resetar transbordo!
+    if (/^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|SANTOS|GUARUJ[AÁ]/i.test(transbordo)) {
+      if (terminal === 'Não Informado' || !terminal) {
+        terminal = transbordo
+      }
+      transbordo = 'Não Informado'
+    }
+
     // Se o terminal foi rotulado como TEG mas a nota é de açúcar, corrigir para TEAG
     if (terminal.includes('TEG') && !terminal.includes('TEAG')) {
       if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(`${infCpl} ${rawXml}`)) {
@@ -296,9 +305,26 @@ export function buildConferenceDashboardSnapshot(
       terminal = 'TES - TERMINAL EXPORTADOR DE SANTOS'
     }
 
-    // Detecção de Fernandópolis
-    if ((transbordo === 'Não Informado' || !transbordo) && /FERNAND[OÓ]POLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(`${infCpl} ${rawXml}`)) {
-      transbordo = 'FERNANDOPOLIS'
+    // Validação prioritária de transbordos cadastrados (Pradópolis, Pederneiras, Fernandópolis, etc.)
+    const combinedTransbordoSync = `${infCpl} ${rawXml} ${f.rawSnippet || ""} ${nfe?.emitente?.nome || ""} ${nfe?.emitente?.cidade || ""} ${destNome || ""}`.toUpperCase()
+    if (transbordo === 'Não Informado' || !transbordo || /^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|SANTOS|GUARUJ[AÁ]/i.test(transbordo)) {
+      if (/PRADOPOLIS|PRADÓPOLIS|SAO MARTINHO|SÃO MARTINHO/i.test(combinedTransbordoSync)) transbordo = 'PRADOPOLIS'
+      else if (/PEDERNEIRAS/i.test(combinedTransbordoSync)) transbordo = 'PEDERNEIRAS'
+      else if (/FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(combinedTransbordoSync)) transbordo = 'FERNANDOPOLIS'
+      else if (/ITURAMA/i.test(combinedTransbordoSync)) transbordo = 'ITURAMA'
+      else if (/UBERABA|TIUB/i.test(combinedTransbordoSync)) transbordo = 'UBERABA'
+      else if (/GUARA|GUARÁ/i.test(combinedTransbordoSync)) transbordo = 'GUARA'
+      else if (/ALTO\s*TAQUARI/i.test(combinedTransbordoSync)) transbordo = 'ALTO TAQUARI'
+      else if (/RONDONOPOLIS|RONDONÓPOLIS/i.test(combinedTransbordoSync)) transbordo = 'RONDONOPOLIS'
+      else if (/RIO\s*VERDE/i.test(combinedTransbordoSync)) transbordo = 'RIO VERDE'
+      else if (/ARAGUARI/i.test(combinedTransbordoSync)) transbordo = 'ARAGUARI'
+      else if (/UBERLANDIA|UBERLÂNDIA/i.test(combinedTransbordoSync)) transbordo = 'UBERLANDIA'
+      else if (/SAO\s*SIMAO|SÃO\s*SIMÃO/i.test(combinedTransbordoSync)) transbordo = 'SAO SIMAO'
+      else if (/CHAPADAO\s*DO\s*SUL|CHAPADÃO\s*DO\s*SUL/i.test(combinedTransbordoSync)) transbordo = 'CHAPADAO DO SUL'
+      else if (/INOCENCIA|INOCÊNCIA/i.test(combinedTransbordoSync)) transbordo = 'INOCENCIA'
+      else if (/ITIQUIRA/i.test(combinedTransbordoSync)) transbordo = 'ITIQUIRA'
+      else if (/ALTO\s*ARAGUAIA|ARAGUAIA/i.test(combinedTransbordoSync)) transbordo = 'ALTO ARAGUAIA'
+      else if (/SANTA\s*ADELIA|SANTA\s*ADÉLIA/i.test(combinedTransbordoSync)) transbordo = 'SANTA ADELIA'
     }
 
     if (logisticsOverridesInput && chave && logisticsOverridesInput[chave]) {
