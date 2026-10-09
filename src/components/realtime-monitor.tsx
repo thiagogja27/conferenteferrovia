@@ -50,6 +50,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  HardDrive,
   MessageSquareText,
 } from 'lucide-react'
 import {
@@ -62,6 +63,8 @@ import {
 import { ConferenceMirrorDashboard } from '@/components/conference-mirror-dashboard'
 import { WhatsAppNotificationSettings } from '@/components/whatsapp-notification-settings'
 import { SuggestionsMonitorAdmin } from '@/components/suggestions-monitor-admin'
+import { CadastrosLogisticosManager } from '@/components/cadastros-logisticos-manager'
+import { DatabaseStorageManager } from '@/components/database-storage-manager'
 import { subscribeToSuggestions, type SuggestionMessage } from '@/lib/suggestions-service'
 import {
   ResponsiveContainer,
@@ -110,7 +113,7 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
 
   // Abas de Navegação do Monitor
   const [activeTab, setActiveTab] = useState<
-    'mirror' | 'dashboard' | 'files' | 'timeline' | 'operators' | 'whatsapp' | 'suggestions'
+    'mirror' | 'dashboard' | 'files' | 'timeline' | 'operators' | 'whatsapp' | 'suggestions' | 'cadastros' | 'database'
   >('mirror')
 
   // Contador de sugestões pendentes de resposta da supervisão
@@ -688,6 +691,36 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
           )}
         </button>
 
+        {/* 8. Cadastros Logísticos (Destinatários e Transbordos) */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('cadastros')}
+          className={`relative p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+            activeTab === 'cadastros'
+              ? 'bg-blue-600 text-white shadow-md'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+          title="Cadastros Logísticos (Destinatários & Transbordos)"
+          aria-label="Cadastros Logísticos"
+        >
+          <Database className={`h-5 w-5 ${activeTab === 'cadastros' ? 'text-white' : 'text-blue-500'}`} />
+        </button>
+
+        {/* 9. Gestão de Consumo & Otimização do Banco de Dados */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('database')}
+          className={`relative p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
+            activeTab === 'database'
+              ? 'bg-emerald-600 text-white shadow-md'
+              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          }`}
+          title="Consumo & Otimização do Banco de Dados"
+          aria-label="Consumo e Otimização do Banco de Dados"
+        >
+          <HardDrive className={`h-5 w-5 ${activeTab === 'database' ? 'text-white' : 'text-emerald-500'}`} />
+        </button>
+
         {/* Divisor Separador */}
         <div className="w-8 h-px bg-zinc-200 dark:bg-zinc-800 my-1 hidden md:block" />
 
@@ -964,6 +997,18 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
               <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-bold">
                 <Lightbulb className="h-3.5 w-3.5 text-amber-500" />
                 Caixa de Sugestões & Respostas da Supervisão ({pendingSuggestionsCount} pendente{pendingSuggestionsCount === 1 ? '' : 's'})
+              </span>
+            )}
+            {activeTab === 'cadastros' && (
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-xs font-bold">
+                <Database className="h-3.5 w-3.5 text-blue-500" />
+                Cadastros Logísticos (Destinatários & Transbordos)
+              </span>
+            )}
+            {activeTab === 'database' && (
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
+                <HardDrive className="h-3.5 w-3.5 text-emerald-500" />
+                Consumo & Otimização do Banco de Dados
               </span>
             )}
           </div>
@@ -1873,6 +1918,28 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
       {activeTab === 'suggestions' && (
         <SuggestionsMonitorAdmin
           currentSupervisor={currentOperator}
+          onNotify={(msg, type) => {
+            if (onNotify) {
+              onNotify(msg, type === 'info' ? 'success' : type)
+            }
+          }}
+        />
+      )}
+
+      {/* ABA 7: CADASTROS LOGÍSTICOS (DESTINATÁRIOS & TRANSBORDOS) */}
+      {activeTab === 'cadastros' && (
+        <CadastrosLogisticosManager
+          onNotify={(msg, type) => {
+            if (onNotify) {
+              onNotify(msg, type === 'info' ? 'success' : type)
+            }
+          }}
+        />
+      )}
+
+      {/* ABA 8: GESTÃO DE CONSUMO & OTIMIZAÇÃO DO BANCO DE DADOS */}
+      {activeTab === 'database' && (
+        <DatabaseStorageManager
           onNotify={(msg, type) => {
             if (onNotify) {
               onNotify(msg, type === 'info' ? 'success' : type)

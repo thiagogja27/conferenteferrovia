@@ -1,6 +1,7 @@
 /**
  * Utilitários para higienização, normalização e agrupamento de Destinatários de Notas Fiscais (NF-e / DANFE).
  */
+import { matchDestinatarioFromTextOrCnpj } from '@/lib/cadastros-logisticos-service'
 
 export function formatCNPJ(cnpj: string): string {
   const digits = (cnpj || '').replace(/\D/g, '')
@@ -79,6 +80,12 @@ export function sanitizeDestinatarioNome(
     )
     .replace(/[:=\-.,;/]+$/, '')
     .trim()
+
+  // -1. Consulta o catálogo de Cadastros Logísticos (personalizados pelo usuário e padrão)
+  const catalogMatch = matchDestinatarioFromTextOrCnpj(nome, rawCnpj, fullText)
+  if (catalogMatch) {
+    return catalogMatch
+  }
 
   // Função auxiliar de correspondência corporativa
   const matchCompany = (target: string): string | null => {

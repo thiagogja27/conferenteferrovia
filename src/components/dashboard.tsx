@@ -20,6 +20,10 @@ import {
   extractCNPJFilial,
   isCarrierCnpj,
 } from "@/lib/destinatario-utils"
+import {
+  matchTransbordoFromText,
+  subscribeCadastrosChanges,
+} from "@/lib/cadastros-logisticos-service"
 
 import {
   BarChart,
@@ -223,7 +227,9 @@ export function getNoteDetails(
 
   if (transbordo === "Não Informado" || !transbordo || isPortTerminalName(transbordo)) {
     const fullContext = `${infCpl} ${rawXml} ${f.rawSnippet || ""} ${nfe?.emitente?.cidade || ""} ${nfe?.emitente?.nome || ""} ${parsed?.emitNome || ""}`.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    if (/PRADOPOLIS|PRADÓPOLIS|SAO MARTINHO|SÃO MARTINHO/i.test(fullContext)) transbordo = "PRADOPOLIS"
+    const catalogTransMatch = matchTransbordoFromText(fullContext)
+    if (catalogTransMatch) transbordo = catalogTransMatch
+    else if (/PRADOPOLIS|PRADÓPOLIS|SAO MARTINHO|SÃO MARTINHO/i.test(fullContext)) transbordo = "PRADOPOLIS"
     else if (/PEDERNEIRAS/i.test(fullContext)) transbordo = "PEDERNEIRAS (RUMO)"
     else if (/FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(fullContext)) transbordo = "FERNANDOPOLIS"
     else if (/ITURAMA/i.test(fullContext)) transbordo = "ITURAMA"
@@ -412,6 +418,14 @@ export function Dashboard({ files }: DashboardProps) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [modalSearch, setModalSearch] = useState("")
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
+
+  // Re-avalia as notas quando um novo destinatário ou transbordo for cadastrado no Monitor
+  const [, setCadastrosVersion] = useState(0)
+  useEffect(() => {
+    return subscribeCadastrosChanges(() => {
+      setCadastrosVersion((v) => v + 1)
+    })
+  }, [])
 
   // Estado dos ajustes aplicados pela IA aos dados logísticos
   const [logisticsOverrides, setLogisticsOverrides] = useState<Record<string, NoteLogisticsOverride>>({})

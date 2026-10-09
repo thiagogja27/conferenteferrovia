@@ -1,4 +1,5 @@
 import { sanitizeDestinatarioNome, isCarrierCnpj } from './destinatario-utils';
+import { matchTransbordoFromText } from './cadastros-logisticos-service';
 
 export interface ParsedNFeData {
   chave: string;
@@ -1443,6 +1444,10 @@ function extractTerminalEntrega(text: string): string {
 
 function getKnownTransbordo(str: string): string | null {
   if (!str) return null;
+  // Consulta o catálogo de Cadastros Logísticos (personalizados e padrão)
+  const catalogMatch = matchTransbordoFromText(str);
+  if (catalogMatch) return catalogMatch;
+
   const upper = str.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
   if (

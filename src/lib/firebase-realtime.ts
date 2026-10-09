@@ -127,13 +127,17 @@ export function setOperatorName(name: string): void {
   }
 }
 
+export const DEFAULT_FIREBASE_RTDB_URL = 'https://novoconferente-default-rtdb.firebaseio.com'
+
 // Resgata configurações salvas ou de variáveis de ambiente
-export function getFirebaseConfig(): FirebaseRealtimeConfig | null {
+export function getFirebaseConfig(): FirebaseRealtimeConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CONFIG)
     if (raw) {
       const parsed = JSON.parse(raw)
-      if (parsed?.databaseURL) return parsed
+      if (parsed?.databaseURL && parsed.databaseURL.includes('novoconferente')) {
+        return parsed
+      }
     }
   } catch (e) {
     console.warn('Erro ao ler config do Firebase do localStorage:', e)
@@ -144,8 +148,8 @@ export function getFirebaseConfig(): FirebaseRealtimeConfig | null {
   if (envDbUrl) {
     return {
       databaseURL: envDbUrl,
-      apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyDemoDummyKeyForPublicAccess',
-      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'vlic-telemetry',
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyNovoconferenteDefaultKey',
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'novoconferente-default-rtdb',
       authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || undefined,
     }
   }
@@ -161,7 +165,12 @@ export function getFirebaseConfig(): FirebaseRealtimeConfig | null {
     }
   }
 
-  return null
+  // Padrão definitivo: novoconferente-default-rtdb
+  return {
+    databaseURL: DEFAULT_FIREBASE_RTDB_URL,
+    apiKey: 'AIzaSyNovoconferenteDefaultKey',
+    projectId: 'novoconferente-default-rtdb',
+  }
 }
 
 export function saveFirebaseConfig(config: FirebaseRealtimeConfig): void {
@@ -253,6 +262,10 @@ export function onConnectionStatusChange(callback: (connected: boolean) => void)
   return () => {
     connectionListeners = connectionListeners.filter((cb) => cb !== callback)
   }
+}
+
+export function isRealtimeConnected(): boolean {
+  return isConnectedToRealtime
 }
 
 export function getDatabaseInstance(): Database | null {

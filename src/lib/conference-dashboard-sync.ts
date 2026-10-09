@@ -22,6 +22,7 @@ import {
   formatDateBR,
   formatTimeBR,
 } from '@/lib/firebase-realtime'
+import { matchTransbordoFromText } from '@/lib/cadastros-logisticos-service'
 import { ref, set, push, onValue, off, query, limitToLast, remove, get } from 'firebase/database'
 
 export interface ConferenceNoteSummary {
@@ -308,7 +309,9 @@ export function buildConferenceDashboardSnapshot(
     // Validação prioritária de transbordos cadastrados (Pradópolis, Pederneiras, Fernandópolis, etc.)
     const combinedTransbordoSync = `${infCpl} ${rawXml} ${f.rawSnippet || ""} ${nfe?.emitente?.nome || ""} ${nfe?.emitente?.cidade || ""} ${destNome || ""}`.toUpperCase()
     if (transbordo === 'Não Informado' || !transbordo || /^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|SANTOS|GUARUJ[AÁ]/i.test(transbordo)) {
-      if (/PRADOPOLIS|PRADÓPOLIS|SAO MARTINHO|SÃO MARTINHO/i.test(combinedTransbordoSync)) transbordo = 'PRADOPOLIS'
+      const catalogTransMatch = matchTransbordoFromText(combinedTransbordoSync)
+      if (catalogTransMatch) transbordo = catalogTransMatch
+      else if (/PRADOPOLIS|PRADÓPOLIS|SAO MARTINHO|SÃO MARTINHO/i.test(combinedTransbordoSync)) transbordo = 'PRADOPOLIS'
       else if (/PEDERNEIRAS/i.test(combinedTransbordoSync)) transbordo = 'PEDERNEIRAS'
       else if (/FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|72\.?451\.?917\/?0016-?08/i.test(combinedTransbordoSync)) transbordo = 'FERNANDOPOLIS'
       else if (/ITURAMA/i.test(combinedTransbordoSync)) transbordo = 'ITURAMA'
@@ -1134,6 +1137,11 @@ export async function clearConferenceDashboardHistory(): Promise<void> {
       })
     } catch (e) {}
   }
+
+  try {
+    fetch('https://novoconferente-default-rtdb.firebaseio.com/vlic_telemetry/conference_dashboards.json', { method: 'DELETE' }).catch(() => {})
+    fetch('https://novoconferente-default-rtdb.firebaseio.com/vlic_telemetry/latest_conference_dashboard.json', { method: 'DELETE' }).catch(() => {})
+  } catch (e) {}
 
   const db = getDatabaseInstance()
   if (db) {

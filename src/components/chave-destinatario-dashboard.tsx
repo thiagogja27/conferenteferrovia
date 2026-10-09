@@ -1,9 +1,10 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { subscribeCadastrosChanges } from '@/lib/cadastros-logisticos-service'
 import {
   PieChart,
   Pie,
@@ -99,6 +100,13 @@ export function ChaveDestinatarioDashboard({
   const [copiedListMsg, setCopiedListMsg] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<'numero' | 'valor' | 'status'>('status')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+
+  const [cadastrosVersion, setCadastrosVersion] = useState(0)
+  useEffect(() => {
+    return subscribeCadastrosChanges(() => {
+      setCadastrosVersion((v) => v + 1)
+    })
+  }, [])
 
   // Normalização e extração detalhada de cada nota fiscal
   const items: ChaveDestinatarioItem[] = useMemo(() => {
@@ -224,7 +232,7 @@ export function ChaveDestinatarioDashboard({
         rawFile: f,
       }
     })
-  }, [files])
+  }, [files, cadastrosVersion])
 
   // Métricas agregadas
   const stats = useMemo(() => {
