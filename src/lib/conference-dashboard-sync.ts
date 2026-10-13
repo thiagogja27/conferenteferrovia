@@ -23,7 +23,7 @@ import {
   formatTimeBR,
 } from '@/lib/firebase-realtime'
 import { matchTransbordoFromText } from '@/lib/cadastros-logisticos-service'
-import { ref, set, push, onValue, off, query, limitToLast, remove, get } from 'firebase/database'
+import { ref, push, onValue, off, query, limitToLast, remove, get } from 'firebase/database'
 
 export interface ConferenceNoteSummary {
   fileName: string
@@ -813,18 +813,6 @@ function getStoredHistory(): ConferenceDashboardSnapshot[] {
   return []
 }
 
-function saveLocalSnapshot(snapshot: ConferenceDashboardSnapshot) {
-  if (typeof window === 'undefined') return
-  try {
-    localStorage.setItem(STORAGE_KEY_LATEST, JSON.stringify(snapshot))
-    const currentHistory = getStoredHistory().filter((item) => item.id !== snapshot.id)
-    const updatedHistory = [snapshot, ...currentHistory].slice(0, 100) // Guarda até 100 sessões passadas
-    localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(updatedHistory))
-  } catch (e) {
-    console.warn('Erro ao salvar snapshot localmente:', e)
-  }
-}
-
 // Canal de comunicação cross-tab nativo
 let broadcastChannel: BroadcastChannel | null = null
 if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -842,35 +830,14 @@ let historyListeners: ((history: ConferenceDashboardSnapshot[]) => void)[] = []
  * Publica um novo snapshot gerado no Painel de Conferência para ser espelhado em tempo real
  */
 export async function publishConferenceDashboard(
-  snapshot: ConferenceDashboardSnapshot
+  _snapshot: ConferenceDashboardSnapshot
 ): Promise<void> {
-  // 1. Salva localmente
-  saveLocalSnapshot(snapshot)
-
-  // 2. Notifica ouvintes locais
-  const updatedHistory = getStoredHistory()
-  latestListeners.forEach((cb) => cb(snapshot))
-  historyListeners.forEach((cb) => cb(updatedHistory))
-
-  // 3. Notifica abas via BroadcastChannel
+  latestListeners.forEach((cb) => cb(null))
+  historyListeners.forEach((cb) => cb([]))
   if (broadcastChannel) {
     try {
-      broadcastChannel.postMessage({ type: 'DASHBOARD_UPDATED', snapshot, history: updatedHistory })
+      broadcastChannel.postMessage({ type: 'DASHBOARD_DELETED', clearedAll: true, history: [] })
     } catch (e) {}
-  }
-
-  // 4. Salva no Firebase Realtime Database para sincronização com outros operadores / rede
-  const db = getDatabaseInstance()
-  if (db) {
-    try {
-      const latestRef = ref(db, 'vlic_telemetry/latest_conference_dashboard')
-      await set(latestRef, snapshot)
-
-      const historyItemRef = ref(db, `vlic_telemetry/conference_dashboards/${snapshot.id}`)
-      await set(historyItemRef, snapshot)
-    } catch (err) {
-      console.warn('Falha ao enviar snapshot de dashboard ao Firebase:', err)
-    }
   }
 }
 
@@ -1138,19 +1105,10 @@ export async function clearConferenceDashboardHistory(): Promise<void> {
     } catch (e) {}
   }
 
-  try {
-    fetch('https://novoconferente-default-rtdb.firebaseio.com/vlic_telemetry/conference_dashboards.json', { method: 'DELETE' }).catch(() => {})
-    fetch('https://novoconferente-default-rtdb.firebaseio.com/vlic_telemetry/latest_conference_dashboard.json', { method: 'DELETE' }).catch(() => {})
-  } catch (e) {}
-
   const db = getDatabaseInstance()
-  if (db) {
-    try {
-      await remove(ref(db, 'vlic_telemetry/conference_dashboards'))
-      await remove(ref(db, 'vlic_telemetry/latest_conference_dashboard'))
-    } catch (e) {
-      console.warn('Erro ao limpar histórico no Firebase:', e)
-    }
-  }
+  if (!db) throw new Error('Firebase Realtime Database indisponível para limpar o histórico de conferências.')
+  await Promise.all([
+    remove(ref(db, 'vlic_telemetry/conference_dashboards')),
+    remove(ref(db, 'vlic_telemetry/latest_conference_dashboard')),
+  ])
 }
-

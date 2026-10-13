@@ -5,6 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { parseNFE, verifyChaveCNPJ, type NFEData, extractDataEmissao, extractNumeroNF, formatCNPJ } from '@/lib/nfe-parser'
 import { parsePdfClientSide } from '@/lib/client-pdf-parser'
+import { normalizeNfeRecipient, prioritizeSavedRecipient } from '@/lib/pdf-recipient-resolution'
+import { deduplicateNfesByAccessKey } from '@/lib/nfe-deduplication'
 import { generatePDF } from '@/lib/pdf-generator'
 import { Dashboard } from '@/components/dashboard'
 import {
@@ -472,11 +474,12 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
 
     if (apiSuccess && data) {
       if (data.items && Array.isArray(data.items) && data.items.length > 0) {
-        return data.items.map((it: any) => {
+        return Promise.all(data.items.map(async (it: any) => {
+          const resolved = await prioritizeSavedRecipient({ xml: it.xml, parsedData: it.parsedData })
           let nfeData: any = null
-          if (it.xml) {
+          if (resolved.xml) {
             try {
-              nfeData = parseNFE(it.xml)
+              nfeData = normalizeNfeRecipient(parseNFE(resolved.xml))
             } catch (e) {}
           }
           return {
@@ -484,19 +487,20 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
             filePath: fileOrigPath,
             originalPath: fileOrigPath,
             fileType: 'pdf' as const,
-            xmlContent: it.xml,
+            xmlContent: resolved.xml,
             error: null,
             isProcessing: false,
-            parsedData: it.parsedData,
+            parsedData: resolved.parsedData,
             nfeData,
           }
-        })
+        }))
       }
 
+      const resolved = await prioritizeSavedRecipient({ xml: data.xml, parsedData: data.parsedData })
       let nfeData: any = null
-      if (data.xml) {
+      if (resolved.xml) {
         try {
-          nfeData = parseNFE(data.xml)
+          nfeData = normalizeNfeRecipient(parseNFE(resolved.xml))
         } catch (e) {}
       }
 
@@ -505,10 +509,10 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         filePath: fileOrigPath,
         originalPath: fileOrigPath,
         fileType: 'pdf' as const,
-        xmlContent: data.xml,
+        xmlContent: resolved.xml,
         error: null,
         isProcessing: false,
-        parsedData: data.parsedData,
+        parsedData: resolved.parsedData,
         nfeData,
       }]
     }
@@ -517,29 +521,44 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
     try {
       const clientResult = await parsePdfClientSide(file, file.name)
       if (clientResult.items && clientResult.items.length > 0) {
-        return clientResult.items.map((it: any) => ({
-          fileName: it.fileName || file.name,
-          filePath: fileOrigPath,
-          originalPath: fileOrigPath,
-          fileType: 'pdf' as const,
-          xmlContent: it.xml,
-          error: null,
-          isProcessing: false,
-          parsedData: it.parsedData,
-          nfeData: it.nfeData,
+        return Promise.all(clientResult.items.map(async (it: any) => {
+          const resolved = await prioritizeSavedRecipient({ xml: it.xml, parsedData: it.parsedData })
+          return {
+            fileName: it.fileName || file.name,
+            filePath: fileOrigPath,
+            originalPath: fileOrigPath,
+            fileType: 'pdf' as const,
+            xmlContent: resolved.xml,
+            error: null,
+            isProcessing: false,
+            parsedData: resolved.parsedData,
+            nfeData: resolved.xml
+              ? normalizeNfeRecipient(parseNFE(resolved.xml))
+              : it.nfeData
+                ? normalizeNfeRecipient(it.nfeData)
+                : null,
+          }
         }))
       }
 
+      const resolved = await prioritizeSavedRecipient({
+        xml: clientResult.xml,
+        parsedData: clientResult.parsedData,
+      })
       return [{
         fileName: file.name,
         filePath: fileOrigPath,
         originalPath: fileOrigPath,
         fileType: 'pdf' as const,
-        xmlContent: clientResult.xml,
+        xmlContent: resolved.xml,
         error: null,
         isProcessing: false,
-        parsedData: clientResult.parsedData,
-        nfeData: clientResult.nfeData,
+        parsedData: resolved.parsedData,
+        nfeData: resolved.xml
+          ? normalizeNfeRecipient(parseNFE(resolved.xml))
+          : clientResult.nfeData
+            ? normalizeNfeRecipient(clientResult.nfeData)
+            : null,
       }]
     } catch (clientErr: any) {
       console.error(`Erro ao converter ${file.name} no cliente:`, clientErr)
@@ -688,7 +707,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           }
         }
         if (isAborted()) break
-        setResults([...currentResults])
+        setResults(deduplicateNfesByAccessKey(currentResults))
         setProcessingProgress({ current: completedCount, total: pdfFiles.length })
       }
     }
@@ -704,7 +723,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       }
     }
 
-    setResults(finalResults)
+    setResults(deduplicateNfesByAccessKey(finalResults))
     setIsProcessingAll(false)
     setProcessingProgress(null)
     checkAndSpeakDivergences(finalResults)
@@ -847,7 +866,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
         } else {
           const xmlText = item.contentOrBlob as string
           try {
-            const nfeData = parseNFE(xmlText)
+            const nfeData = normalizeNfeRecipient(parseNFE(xmlText))
             const totalQtd = nfeData.itens && nfeData.itens.length > 0
               ? nfeData.itens.reduce((sum, it) => sum + (Number(it.quantidade) || 0), 0)
               : (nfeData.transportador?.quantidade || 0)
@@ -898,7 +917,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
           }
         }
         if (isAborted()) break
-        setResults([...currentResults])
+        setResults(deduplicateNfesByAccessKey(currentResults))
         setProcessingProgress({ current: completedCount, total: rawItems.length })
       }
     }
@@ -914,7 +933,7 @@ export function PDFToXMLConverter({ onAnalyzeXML, onOpenDocumentation }: PDFToXM
       }
     }
 
-    setResults(finalResults)
+    setResults(deduplicateNfesByAccessKey(finalResults))
     setIsProcessingAll(false)
     setProcessingProgress(null)
     checkAndSpeakDivergences(finalResults)

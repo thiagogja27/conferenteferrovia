@@ -8,9 +8,19 @@ import { XMLConverter } from './components/xml-converter'
 import { LoginScreen } from './components/login-screen'
 import { ErrorBoundary } from './components/error-boundary'
 import { RefreshCw } from 'lucide-react'
+import { useEffect } from 'react'
+import { ensureMinimalNoteStorage } from './lib/database-optimization-service'
 
 function AuthGate() {
   const { user, loading, isAuthenticated } = useAuth()
+
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      ensureMinimalNoteStorage().catch((error) => {
+        console.error('Não foi possível limpar o histórico detalhado de notas:', error)
+      })
+    }
+  }, [isAuthenticated, user])
 
   if (loading) {
     return (

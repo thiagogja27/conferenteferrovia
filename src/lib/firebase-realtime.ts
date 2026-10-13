@@ -3,8 +3,6 @@ import {
   getDatabase,
   ref,
   set,
-  update,
-  push,
   onValue,
   off,
   serverTimestamp,
@@ -235,22 +233,6 @@ let localSubscribersActivities: ((acts: RealtimeActivity[]) => void)[] = []
 let localSubscribersInputFiles: ((files: InputedFileRecord[]) => void)[] = []
 let localSubscribersPresence: ((pres: OperatorPresence[]) => void)[] = []
 
-function persistLocalActivities() {
-  try {
-    localStorage.setItem(STORAGE_KEY_ACTIVITIES, JSON.stringify(localActivities.slice(0, 500)))
-  } catch (e) {
-    console.warn('Erro ao persistir localActivities:', e)
-  }
-}
-
-function persistLocalInputFiles() {
-  try {
-    localStorage.setItem(STORAGE_KEY_INPUT_FILES, JSON.stringify(localInputFiles.slice(0, 500)))
-  } catch (e) {
-    console.warn('Erro ao persistir localInputFiles:', e)
-  }
-}
-
 function notifyConnectionStatus(status: boolean) {
   isConnectedToRealtime = status
   connectionListeners.forEach((cb) => cb(status))
@@ -398,54 +380,20 @@ export async function logRealtimeActivity(
   description: string,
   metadata?: Record<string, any>
 ): Promise<void> {
-  const sessionId = getSessionId()
   const operatorName = getOperatorName()
-  const now = Date.now()
-
-  const activity: RealtimeActivity = {
-    id: 'act_' + now + '_' + Math.random().toString(36).substring(2, 6),
-    sessionId,
-    operatorName,
-    type,
-    title,
-    description,
-    timestamp: now,
-    dateFormatted: formatDateBR(now),
-    timeFormatted: formatTimeBR(now),
-    metadata,
-  }
 
   const db = getDatabaseInstance()
   if (db) {
-    try {
-      const activitiesRef = ref(db, 'vlic_telemetry/activities')
-      const newActRef = push(activitiesRef)
-      await set(newActRef, {
-        ...activity,
-        id: newActRef.key || activity.id,
-        timestamp: serverTimestamp(),
-      })
-
-      // Atualiza contadores globais em vlic_telemetry/metrics
-      if (metadata?.filesCount) {
-        const metricsRef = ref(db, `vlic_telemetry/metrics/totalNotesProcessed`)
-        // Envia incremento assíncrono simples
-        runTransaction(metricsRef, (currentVal) => (currentVal || 0) + (metadata.filesCount || 0)).catch(() => {})
-      }
-      if (type === 'divergence_found') {
+    if (type === 'divergence_found') {
+      try {
         const divRef = ref(db, `vlic_telemetry/metrics/totalDivergencesDetected`)
-        runTransaction(divRef, (currentVal) => (currentVal || 0) + (metadata?.divergentCount || 1)).catch(() => {})
+        await runTransaction(divRef, (currentVal) => (currentVal || 0) + (metadata?.divergentCount || 1))
+      } catch (err) {
+        console.warn('Erro ao atualizar o contador de divergências:', err)
       }
-      // Salva localmente também para visualização offline / rápida
-      pushLocalActivity(activity)
-    } catch (err) {
-      console.warn('Erro ao registrar log no Firebase Realtime:', err)
-      // Grava localmente como contingência
-      pushLocalActivity(activity)
     }
-  } else {
-    pushLocalActivity(activity)
   }
+  localSubscribersActivities.forEach((cb) => cb([]))
 
   // Notificação assíncrona para WhatsApp (CallMeBot / Webhook)
   try {
@@ -476,77 +424,27 @@ export async function logRealtimeActivity(
   }
 }
 
-function pushLocalActivity(activity: RealtimeActivity) {
-  if (!activity.dateFormatted) activity.dateFormatted = formatDateBR(activity.timestamp)
-  if (!activity.timeFormatted) activity.timeFormatted = formatTimeBR(activity.timestamp)
-  localActivities.unshift(activity)
-  if (localActivities.length > 500) localActivities.pop()
-  persistLocalActivities()
-  localSubscribersActivities.forEach((cb) => cb([...localActivities]))
-}
-
 // Registra arquivos inputados no sistema (XMLs, PDFs, Excel, etc.)
 export async function logInputedFiles(
   files: Omit<InputedFileRecord, 'id' | 'timestamp' | 'dateFormatted' | 'timeFormatted' | 'sessionId' | 'operatorName'>[]
 ): Promise<void> {
   if (!files || files.length === 0) return
-  const sessionId = getSessionId()
-  const operatorName = getOperatorName()
-  const now = Date.now()
-  const dateFormatted = formatDateBR(now)
-  const timeFormatted = formatTimeBR(now)
-
-  const records: InputedFileRecord[] = files.map((f, i) => ({
-    ...f,
-    id: 'file_' + (now + i) + '_' + Math.random().toString(36).substring(2, 6),
-    sessionId,
-    operatorName,
-    timestamp: now + i,
-    dateFormatted,
-    timeFormatted,
-  }))
-
-  // Atualiza local primeiro
-  records.forEach((rec) => {
-    localInputFiles.unshift(rec)
-  })
-  if (localInputFiles.length > 2000) {
-    localInputFiles.length = 2000
+  const totalItemsInBatch = files.reduce((total, file) => total + (file.itemsCount || 1), 0)
+  localInputFiles.length = 0
+  try {
+    localStorage.removeItem(STORAGE_KEY_INPUT_FILES)
+  } catch (err) {
+    console.warn('Erro ao limpar o histórico local de arquivos:', err)
   }
-  persistLocalInputFiles()
-  localSubscribersInputFiles.forEach((cb) => cb([...localInputFiles]))
+  localSubscribersInputFiles.forEach((cb) => cb([]))
 
-  // Envia para o Firebase em lote atômico se conectado
   const db = getDatabaseInstance()
   if (db) {
     try {
-      const filesRef = ref(db, 'vlic_telemetry/input_files')
-      const updates: Record<string, any> = {}
-
-      for (const rec of records) {
-        const newRef = push(filesRef)
-        const key = newRef.key || rec.id
-        updates[`vlic_telemetry/input_files/${key}`] = {
-          ...rec,
-          id: key,
-          timestamp: serverTimestamp(),
-        }
-      }
-
-      if (Object.keys(updates).length > 0) {
-        await update(ref(db), updates)
-      }
-
-      // Atualiza contador consolidado de notas em metrics de forma atômica
-      try {
-        const totalItemsInBatch = records.reduce((acc, r) => acc + (r.itemsCount || 1), 0)
-        const metricsRef = ref(db, 'vlic_telemetry/metrics/totalNotesProcessed')
-        runTransaction(metricsRef, (curr) => (curr || 0) + totalItemsInBatch).catch(() => {})
-      } catch (e) {
-        // non-blocking
-      }
+      const metricsRef = ref(db, 'vlic_telemetry/metrics/totalNotesProcessed')
+      await runTransaction(metricsRef, (currentValue) => (currentValue || 0) + totalItemsInBatch)
     } catch (err) {
-      console.warn('Erro ao registrar arquivos inputados no Firebase:', err)
+      console.warn('Erro ao atualizar o contador de notas processadas:', err)
     }
   }
 }

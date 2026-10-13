@@ -6,8 +6,14 @@
  * consultas instantâneas (sem limitações de "Payload is too large" e sem bloqueio de WebSockets).
  */
 
-import { getDatabaseInstance, getFirebaseConfig, DEFAULT_FIREBASE_RTDB_URL } from '@/lib/firebase-realtime'
+import {
+  clearAllTelemetryHistory,
+  getDatabaseInstance,
+  getFirebaseConfig,
+  DEFAULT_FIREBASE_RTDB_URL,
+} from '@/lib/firebase-realtime'
 import { ref, remove } from 'firebase/database'
+import { clearConferenceDashboardHistory } from '@/lib/conference-dashboard-sync'
 
 export interface StorageNodeMetric {
   key: string
@@ -45,6 +51,8 @@ export interface DatabaseStorageStats {
 
 // Cota padrão do plano gratuito Firebase Realtime Database Spark: 1 GB (1.073.741.824 bytes)
 export const FIREBASE_FREE_TIER_QUOTA_BYTES = 1024 * 1024 * 1024
+const MINIMAL_NOTE_STORAGE_KEY = 'note_history_cleanup_v1'
+let minimalStorageCleanup: Promise<void> | null = null
 
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -64,6 +72,37 @@ export function getDatabaseRestUrl(): string {
     url = url.slice(0, -1)
   }
   return url
+}
+
+export function ensureMinimalNoteStorage(): Promise<void> {
+  if (typeof window !== 'undefined' && localStorage.getItem(MINIMAL_NOTE_STORAGE_KEY) === 'done') {
+    return Promise.resolve()
+  }
+  if (minimalStorageCleanup) return minimalStorageCleanup
+
+  const db = getDatabaseInstance()
+  if (!db) {
+    return Promise.reject(new Error('Firebase Realtime Database indisponível para limpar o histórico de notas.'))
+  }
+
+  minimalStorageCleanup = (async () => {
+    await Promise.all([
+      clearConferenceDashboardHistory(),
+      remove(ref(db, 'vlic_telemetry/input_files')),
+      remove(ref(db, 'vlic_telemetry/activities')),
+    ])
+    clearAllTelemetryHistory()
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('vlic_conference_dashboard_history')
+      localStorage.removeItem('vlic_conference_dashboards_history')
+      localStorage.removeItem('vlic_latest_conference_dashboard')
+      localStorage.setItem(MINIMAL_NOTE_STORAGE_KEY, 'done')
+    }
+  })().finally(() => {
+    minimalStorageCleanup = null
+  })
+
+  return minimalStorageCleanup
 }
 
 /**

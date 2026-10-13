@@ -10,7 +10,7 @@
  */
 
 import { getDatabaseInstance, getOperatorName } from '@/lib/firebase-realtime'
-import { ref, onValue, set, get } from 'firebase/database'
+import { ref, onValue, set, get, query, limitToLast } from 'firebase/database'
 
 export interface CadastroDestinatario {
   id: string
@@ -60,12 +60,142 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
     ativo: true,
     criadoEm: 1700000000000,
   },
+
+  {
+    id: 'sys-dest-ALCOOLVALE S/A ALCOOL E ACUCAR',
+    nome: 'ALCOOLVALE S/A ALCOOL E ACUCAR',
+    cnpjPrincipal: '15.444.904/0001-83',
+    cnpjsAdicionais: ['04626426'],
+    aliases: ['ALCOOLVALE S/A ALCOOL E ACUCAR'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
   {
     id: 'sys-dest-tiete',
     nome: 'TIETE AGROINDUSTRIAL S.A.',
     cnpjPrincipal: '51.843.514/0001-86',
     cnpjsAdicionais: ['51843514'],
     aliases: ['TIETE AGROINDUSTRIAL', 'TIETE', 'TIETÊ', 'USINA TIETE'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
+    id: 'sys-dest-cargill-0288',
+    nome: 'CARGILL AGRICOLA SA.',
+    cnpjPrincipal: '60.498.706/0288-33',
+    cnpjsAdicionais: ['60498706028833', '0498706028'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+    {
+    id: 'sys-dest-cargill-0066',
+    nome: 'CARGILL AGRICOLA SA.',
+    cnpjPrincipal: '60.498.706/0066-00',
+    cnpjsAdicionais: ['60498706006600', '4987060066'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+
+   {
+    id: 'sys-dest-cargill-0058',
+    nome: 'CARGILL AGRICOLA SA.',
+    cnpjPrincipal: '60.498.706/0058-92',
+    cnpjsAdicionais: ['60498706005892', '4987060058'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+
+   {
+    id: 'sys-dest-cargill-0075',
+    nome: 'CARGILL AGRICOLA SA.',
+    cnpjPrincipal: '60.498.706/0075-93',
+    cnpjsAdicionais: ['60498706007593', '4987060075'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+
+  {
+    id: 'sys-dest-cargill-0300',
+    nome: 'CARGILL AGRICOLA SA.',
+    cnpjPrincipal: '60.498.706/0300-64',
+    cnpjsAdicionais: ['60498706030064', '4987060300'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+
+   {
+    id: 'sys-dest-cargill-0314',
+    nome: 'CARGILL AGRICOLA SA.',
+    cnpjPrincipal: '60.498.706/0314-60',
+    cnpjsAdicionais: ['4987060314'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+
+  {
+    id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
+    nome: 'LOUIS DREYFUS COMPANY BRASIL S A.',
+    cnpjPrincipal: '47.067.525/0199-84',
+    cnpjsAdicionais: ['0675250199'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+
+  {
+    id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
+    nome: 'LOUIS DREYFUS COMPANY BRASIL S A.',
+    cnpjPrincipal: '47.067.525/0168-88',
+    cnpjsAdicionais: ['0675250168'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+
+  {
+    id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
+    nome: 'LOUIS DREYFUS COMPANY BRASIL S A.',
+    cnpjPrincipal: '47.067.525/0112-23',
+    cnpjsAdicionais: ['0675250112'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+
+   {
+    id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
+    nome: 'LOUIS DREYFUS COMPANY BRASIL S A.',
+    cnpjPrincipal: '47.067.525/0130-05',
+    cnpjsAdicionais: ['0675250130'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+
+  {
+    id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
+    nome: 'LOUIS DREYFUS COMPANY BRASIL S A',
+    cnpjPrincipal: '47.067.525/0107-66',
+    cnpjsAdicionais: ['0675250107'],
+    aliases: ['CARGILL AGRICOLA', 'CARGILL'],
     isSistema: true,
     ativo: true,
     criadoEm: 1700000000000,
@@ -99,6 +229,99 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
     cnpjPrincipal: '12.229.415/0001-98',
     cnpjsAdicionais: ['12229415'],
     aliases: ['CORURIPE', 'USINA CORURIPE', 'USINA CORURIPE ACUCAR E ALCOOL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
+    id: 'sys-dest-coruripe-carneirinho',
+    nome: 'S/A USINA CORURIPE ACUCAR E ALCOOL FILIAL CARNEIRINHO',
+    cnpjPrincipal: '12.229.415/0023-26',
+    cnpjsAdicionais: ['12229415002326'],
+    aliases: [
+      'CORURIPE FILIAL CARNEIRINHO',
+      'USINA CORURIPE CARNEIRINHO',
+      'S/A USINA CORURIPE ACUCAR E ALCOOL CARNEIRINHO',
+      '12229415002326',
+    ],
+    cidade: 'Carneirinho',
+    uf: 'MG',
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
+    id: 'sys-dest-coruripe-0010',
+    nome: 'S/A USINA CORURIPE ACUCAR E ALCOOL',
+    cnpjPrincipal: '12.229.415/0010-01',
+    aliases: [],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
+    id: 'sys-dest-coruripe-0016',
+    nome: 'S/A USINA CORURIPE ACUCAR E ALCOOL',
+    cnpjPrincipal: '12.229.415/0016-05',
+    cnpjsAdicionais: ['12229415001605'],
+    aliases: ['CORURIPE 0016', 'USINA CORURIPE 0016', '12.229.415/0016-05'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
+    id: 'sys-dest-canapolis',
+    nome: 'CANAPOLIS ACUCAR E ETANOL S.A',
+    cnpjPrincipal: '28.144.326/0001-01',
+    cnpjsAdicionais: ['28144326'],
+    aliases: ['CANAPOLIS ACUCAR E ETANOL', 'CANÁPOLIS AÇÚCAR E ETANOL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
+    id: 'sys-dest-bioenergetica-aroeira',
+    nome: 'BIOENERGETICA AROEIRA S.A.',
+    cnpjPrincipal: '08.355.201/0001-13',
+    aliases: ['BIOENERGETICA AROEIRA', 'BIOENERGÉTICA AROEIRA'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
+    id: 'sys-dest-delta-sucroenergia-0003',
+    nome: 'DELTA SUCROENERGIA S.A',
+    cnpjPrincipal: '13.537.735/0003-62',
+    aliases: ['DELTA SUCROENERGIA'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
+    id: 'sys-dest-sjc-bioenergia-0002',
+    nome: 'SJC BIOENERGIA LTDA',
+    cnpjPrincipal: '10.249.419/0002-16',
+    aliases: ['SJC BIOENERGIA'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
+    id: 'sys-dest-santa-vitoria',
+    nome: 'SANTA VITORIA ACUCAR E ALCOOL LTDA',
+    cnpjPrincipal: '07.981.751/0001-85',
+    cnpjsAdicionais: ['07981751'],
+    aliases: ['SANTA VITORIA', 'SANTA VITORIA ACUCAR E ALCOOL'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
+    id: 'sys-dest-vale-do-pontal',
+    nome: 'VALE DO PONTAL ACUCAR E ETANOL S.A.',
+    cnpjPrincipal: '08.057.019/0001-86',
+    cnpjsAdicionais: ['08057019'],
+    aliases: ['VALE DO PONTAL', 'VALE DO PONTAL ACUCAR E ETANOL'],
     isSistema: true,
     ativo: true,
     criadoEm: 1700000000000,
@@ -853,88 +1076,153 @@ export function subscribeCadastrosChanges(callback: () => void): () => void {
 export function matchDestinatarioFromTextOrCnpj(
   rawNome?: string,
   rawCnpj?: string,
-  fullText?: string
+  _fullText?: string
 ): string | null {
   const allDest = getAllDestinatarios().filter((d) => d.ativo !== false)
-
   const cnpjClean = cleanDigits(rawCnpj)
-  const cnpjRoot = cnpjClean.length >= 8 ? cnpjClean.slice(0, 8) : ''
-
   const targetNomeNorm = normalizeSearch(rawNome)
-  const targetFullNorm = normalizeSearch(fullText)
-  const combinedNorm = `${targetNomeNorm} ${targetFullNorm}`
 
-  // 1. Prioridade máxima: CNPJ exato ou raiz de CNPJ
   if (cnpjClean) {
     for (const dest of allDest) {
-      const destCnpjClean = cleanDigits(dest.cnpjPrincipal)
-      if (destCnpjClean && (destCnpjClean === cnpjClean || (cnpjRoot && destCnpjClean.startsWith(cnpjRoot)))) {
-        return dest.nome
-      }
-
-      if (dest.cnpjsAdicionais) {
-        for (const adCnpj of dest.cnpjsAdicionais) {
-          const adClean = cleanDigits(adCnpj)
-          if (adClean && (adClean === cnpjClean || (cnpjRoot && adClean.startsWith(cnpjRoot)))) {
-            return dest.nome
-          }
-        }
-      }
+      const registeredCnpjs = [dest.cnpjPrincipal, ...(dest.cnpjsAdicionais || [])]
+        .map(cleanDigits)
+      if (registeredCnpjs.includes(cnpjClean)) return dest.nome
     }
+    if (cnpjClean.length === 14) return null
   }
 
-  // 2. Prioridade 2: Busca por CNPJ contido no fullText / infCpl
-  if (targetFullNorm) {
+  const nameMatches = allDest.flatMap((dest) => {
+    const candidates = [dest.nome, ...(dest.aliases || [])]
+      .map(normalizeSearch)
+      .filter((candidate) => candidate.length >= 3 && targetNomeNorm.includes(candidate))
+    const longestMatch = candidates.sort((a, b) => b.length - a.length)[0]
+    return longestMatch ? [{ dest, matchLength: longestMatch.length }] : []
+  }).sort((a, b) => b.matchLength - a.matchLength)
+  if (nameMatches.length > 0) return nameMatches[0].dest.nome
+
+  return null
+}
+
+export function resolveDestinatarioCadastro(
+  rawNome?: string,
+  rawCnpj?: string
+): { nome: string; cnpj: string } | null {
+  const allDest = getAllDestinatarios().filter((dest) => dest.ativo !== false)
+  const cnpjClean = cleanDigits(rawCnpj)
+
+  if (cnpjClean) {
     for (const dest of allDest) {
-      const destCnpjClean = cleanDigits(dest.cnpjPrincipal)
-      if (destCnpjClean && destCnpjClean.length === 14) {
-        // Formato com pontuação ou dígitos diretos
-        const cnpjFmt = `${destCnpjClean.slice(0, 2)}.${destCnpjClean.slice(2, 5)}.${destCnpjClean.slice(5, 8)}/${destCnpjClean.slice(8, 12)}-${destCnpjClean.slice(12, 14)}`
-        if (targetFullNorm.includes(destCnpjClean) || targetFullNorm.includes(cnpjFmt)) {
-          return dest.nome
+      const registeredCnpjs = [dest.cnpjPrincipal, ...(dest.cnpjsAdicionais || [])]
+        .map(cleanDigits)
+      const exactMatch = registeredCnpjs.find((cnpj) => cnpj === cnpjClean)
+      if (exactMatch) {
+        return {
+          nome: dest.nome,
+          cnpj: exactMatch.length === 14 ? exactMatch : cleanDigits(dest.cnpjPrincipal),
         }
       }
     }
+    return null
   }
 
-  // 3. Prioridade 3: Nome do cadastro ou Aliases no nome ou no texto
-  // Testar customizados primeiro
-  for (const dest of allDest) {
-    const destNomeNorm = normalizeSearch(dest.nome)
-    if (destNomeNorm && targetNomeNorm.includes(destNomeNorm)) {
-      return dest.nome
-    }
+  const targetName = normalizeSearch(rawNome)
+  if (!targetName) return null
 
-    if (dest.aliases && dest.aliases.length > 0) {
-      for (const alias of dest.aliases) {
-        const aliasNorm = normalizeSearch(alias)
-        if (aliasNorm.length >= 3) {
-          // Busca exata como palavra ou substring
-          if (targetNomeNorm.includes(aliasNorm)) {
-            return dest.nome
-          }
-        }
-      }
-    }
+  const matches = allDest.flatMap((dest) => {
+    const candidates = [dest.nome, ...(dest.aliases || [])]
+      .map(normalizeSearch)
+      .filter((candidate) => candidate.length >= 6 && targetName.includes(candidate))
+    const longestMatch = candidates.sort((a, b) => b.length - a.length)[0]
+    return longestMatch ? [{ dest, matchLength: longestMatch.length }] : []
+  }).sort((a, b) => b.matchLength - a.matchLength)
+
+  const match = matches[0]
+  if (!match) return null
+
+  return {
+    nome: match.dest.nome,
+    cnpj: '',
   }
+}
 
-  // 4. Prioridade 4: Se o nome era genérico / não informado, buscar aliases no infCpl (fullText)
-  if (targetFullNorm) {
-    for (const dest of allDest) {
-      if (dest.aliases && dest.aliases.length > 0) {
-        for (const alias of dest.aliases) {
-          const aliasNorm = normalizeSearch(alias)
-          if (aliasNorm.length >= 4) {
-            // Regex para evitar falsos positivos
-            const escaped = aliasNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-            const regex = new RegExp(`\\b${escaped}\\b`, 'i')
-            if (regex.test(targetFullNorm)) {
-              return dest.nome
-            }
-          }
+export interface SavedNoteRecipient {
+  nome: string
+  cnpj: string
+}
+
+let savedNoteRecipientsCache: SavedNoteRecipient[] = []
+let savedNoteRecipientsCacheAt = 0
+let savedNoteRecipientsRequest: Promise<SavedNoteRecipient[]> | null = null
+
+async function getSavedNoteRecipients(): Promise<SavedNoteRecipient[]> {
+  if (Date.now() - savedNoteRecipientsCacheAt < 60_000) {
+    return savedNoteRecipientsCache
+  }
+  if (savedNoteRecipientsRequest) return savedNoteRecipientsRequest
+
+  const db = getDatabaseInstance()
+  if (!db) return []
+
+  savedNoteRecipientsRequest = (async () => {
+    try {
+      const historyRef = query(ref(db, 'vlic_telemetry/conference_dashboards'), limitToLast(100))
+      const latestRef = ref(db, 'vlic_telemetry/latest_conference_dashboard')
+      const [historySnapshot, latestSnapshot] = await Promise.all([get(historyRef), get(latestRef)])
+      const snapshots: unknown[] = []
+
+      if (historySnapshot.exists()) {
+        const history = historySnapshot.val()
+        if (history && typeof history === 'object') snapshots.push(...Object.values(history))
+      }
+      if (latestSnapshot.exists()) snapshots.push(latestSnapshot.val())
+
+      const unique = new Map<string, SavedNoteRecipient>()
+      for (const value of snapshots) {
+        if (!value || typeof value !== 'object' || !Array.isArray((value as { notes?: unknown }).notes)) continue
+        for (const note of (value as { notes: unknown[] }).notes) {
+          if (!note || typeof note !== 'object') continue
+          const record = note as { destNome?: unknown; destCNPJ?: unknown }
+          const nome = typeof record.destNome === 'string' ? record.destNome.trim() : ''
+          const cnpj = typeof record.destCNPJ === 'string' ? cleanDigits(record.destCNPJ) : ''
+          if (!nome || cnpj.length !== 14) continue
+          unique.set(`${normalizeSearch(nome)}:${cnpj}`, { nome, cnpj })
         }
       }
+
+      savedNoteRecipientsCache = Array.from(unique.values())
+      savedNoteRecipientsCacheAt = Date.now()
+      return savedNoteRecipientsCache
+    } catch (error) {
+      console.warn('Não foi possível consultar destinatários das notas salvas no Firebase:', error)
+      return savedNoteRecipientsCache
+    } finally {
+      savedNoteRecipientsRequest = null
     }
+  })()
+
+  return savedNoteRecipientsRequest
+}
+
+export async function resolveSavedNoteDestinatario(
+  rawNome?: string,
+  rawCnpj?: string,
+  sourceText?: string
+): Promise<{ nome: string; cnpj: string } | null> {
+  const recipients = await getSavedNoteRecipients()
+  return matchSavedNoteDestinatario(recipients, rawNome, rawCnpj, sourceText)
+}
+
+export function matchSavedNoteDestinatario(
+  recipients: SavedNoteRecipient[],
+  _rawNome?: string,
+  rawCnpj?: string,
+  _sourceText?: string
+): SavedNoteRecipient | null {
+  const cnpj = cleanDigits(rawCnpj)
+
+  if (cnpj.length === 14) {
+    const exactCnpjMatch = recipients.find((recipient) => recipient.cnpj === cnpj)
+    if (exactCnpjMatch) return exactCnpjMatch
   }
 
   return null

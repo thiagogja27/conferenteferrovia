@@ -1,4 +1,4 @@
-import { sanitizeDestinatarioNome, isCarrierCnpj } from './destinatario-utils'
+import { sanitizeDestinatarioNome } from './destinatario-utils'
 
 export interface LogisticsAuditInputItem {
   id: string
@@ -247,8 +247,8 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
     if (cleanDest && !isNaoInformado(cleanDest)) {
       destinatarioCorrigido = cleanDest
       camposAjustados.push('destinatario')
-    } else if (item.destCNPJ && !isCarrierCnpj(item.destCNPJ)) {
-      destinatarioCorrigido = `DESTINATÁRIO (${item.destCNPJ})`
+    } else if (!isNaoInformado(item.destNome)) {
+      destinatarioCorrigido = 'Não informado'
       camposAjustados.push('destinatario')
     }
   }
@@ -295,7 +295,7 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
     numero: item.numero,
     terminalCorrigido: isNaoInformado(terminalCorrigido) ? undefined : terminalCorrigido,
     transbordoCorrigido: isNaoInformado(transbordoCorrigido) ? undefined : transbordoCorrigido,
-    destinatarioCorrigido: isNaoInformado(destinatarioCorrigido) ? undefined : destinatarioCorrigido,
+    destinatarioCorrigido,
     retiradaCorrigida: isNaoInformado(retiradaCorrigida) ? undefined : retiradaCorrigida,
     produtoCorrigido: isNaoInformado(produtoCorrigido) ? undefined : produtoCorrigido,
     status,

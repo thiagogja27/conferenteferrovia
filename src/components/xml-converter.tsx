@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/dialog'
 import { parseNFE, verifyChaveCNPJ, type NFEData } from '@/lib/nfe-parser'
 import { parsePdfClientSide } from '@/lib/client-pdf-parser'
+import { normalizeNfeRecipient, prioritizeSavedRecipient } from '@/lib/pdf-recipient-resolution'
+import { deduplicateNfesByAccessKey } from '@/lib/nfe-deduplication'
 import { generatePDF } from '@/lib/pdf-generator'
 import { Dashboard } from '@/components/dashboard'
 import { ChaveDestinatarioDashboard } from '@/components/chave-destinatario-dashboard'
@@ -399,7 +401,7 @@ export function XMLConverter() {
     content: string
   ): Promise<ProcessedFile> => {
     try {
-      const data = parseNFE(content)
+      const data = normalizeNfeRecipient(parseNFE(content))
       return {
         fileName,
         originalPath,
@@ -477,34 +479,39 @@ export function XMLConverter() {
 
     if (apiSuccess && data) {
       if (data.items && Array.isArray(data.items) && data.items.length > 0) {
-        return data.items.map((it: any) => {
-          const nfeData = parseNFE(it.xml)
+        return Promise.all(data.items.map(async (it: any) => {
+          const resolved = await prioritizeSavedRecipient({
+            xml: it.xml,
+            parsedData: it.parsedData || data.parsedData,
+          })
+          const nfeData = resolved.xml ? normalizeNfeRecipient(parseNFE(resolved.xml)) : null
           return {
             fileName: it.fileName || fileName,
             originalPath,
-            xmlContent: it.xml,
+            xmlContent: resolved.xml,
             nfeData,
             error: nfeData ? null : 'Não foi possível interpretar os dados do PDF.',
             fileType: 'pdf' as const,
             isPdf: true,
-            parsedData: it.parsedData || data.parsedData,
-            rawSnippet: it.parsedData?.rawSnippet || data.parsedData?.rawSnippet || '',
+            parsedData: resolved.parsedData,
+            rawSnippet: resolved.parsedData?.rawSnippet || '',
           }
-        })
+        }))
       }
 
       if (data.xml) {
-        const nfeData = parseNFE(data.xml)
+        const resolved = await prioritizeSavedRecipient({ xml: data.xml, parsedData: data.parsedData })
+        const nfeData = resolved.xml ? normalizeNfeRecipient(parseNFE(resolved.xml)) : null
         return [{
           fileName,
           originalPath,
-          xmlContent: data.xml,
+          xmlContent: resolved.xml,
           nfeData,
           error: nfeData ? null : 'Não foi possível interpretar os dados do PDF.',
           fileType: 'pdf' as const,
           isPdf: true,
-          parsedData: data.parsedData,
-          rawSnippet: data.parsedData?.rawSnippet || '',
+          parsedData: resolved.parsedData,
+          rawSnippet: resolved.parsedData?.rawSnippet || '',
         }]
       }
     }
@@ -515,29 +522,44 @@ export function XMLConverter() {
       const clientResult = await parsePdfClientSide(fileToParse, fileName)
 
       if (clientResult.items && clientResult.items.length > 0) {
-        return clientResult.items.map((it: any) => ({
-          fileName: it.fileName || fileName,
-          originalPath,
-          xmlContent: it.xml,
-          nfeData: it.nfeData || (it.xml ? parseNFE(it.xml) : null),
-          error: it.xml ? null : 'Não foi possível interpretar os dados do PDF.',
-          fileType: 'pdf' as const,
-          isPdf: true,
-          parsedData: it.parsedData,
-          rawSnippet: it.parsedData?.rawSnippet || '',
+        return Promise.all(clientResult.items.map(async (it: any) => {
+          const resolved = await prioritizeSavedRecipient({ xml: it.xml, parsedData: it.parsedData })
+          return {
+            fileName: it.fileName || fileName,
+            originalPath,
+            xmlContent: resolved.xml,
+            nfeData: resolved.xml
+              ? normalizeNfeRecipient(parseNFE(resolved.xml))
+              : it.nfeData
+                ? normalizeNfeRecipient(it.nfeData)
+                : null,
+            error: resolved.xml ? null : 'Não foi possível interpretar os dados do PDF.',
+            fileType: 'pdf' as const,
+            isPdf: true,
+            parsedData: resolved.parsedData,
+            rawSnippet: resolved.parsedData?.rawSnippet || '',
+          }
         }))
       }
 
+      const resolved = await prioritizeSavedRecipient({
+        xml: clientResult.xml,
+        parsedData: clientResult.parsedData,
+      })
       return [{
         fileName,
         originalPath,
-        xmlContent: clientResult.xml || '',
-        nfeData: clientResult.nfeData || (clientResult.xml ? parseNFE(clientResult.xml) : null),
-        error: clientResult.xml ? null : 'Não foi possível interpretar os dados do PDF.',
+        xmlContent: resolved.xml || '',
+        nfeData: resolved.xml
+          ? normalizeNfeRecipient(parseNFE(resolved.xml))
+          : clientResult.nfeData
+            ? normalizeNfeRecipient(clientResult.nfeData)
+            : null,
+        error: resolved.xml ? null : 'Não foi possível interpretar os dados do PDF.',
         fileType: 'pdf' as const,
         isPdf: true,
-        parsedData: clientResult.parsedData,
-        rawSnippet: clientResult.parsedData?.rawSnippet || '',
+        parsedData: resolved.parsedData,
+        rawSnippet: resolved.parsedData?.rawSnippet || '',
       }]
     } catch (clientErr: any) {
       return [{
@@ -754,7 +776,7 @@ export function XMLConverter() {
       return
     }
 
-    const results: ProcessedFile[] = [...directResults]
+    let results = deduplicateNfesByAccessKey(directResults)
     const CONCURRENCY_LIMIT = 6
     const pdfQueue = workItems.filter(w => w.type === 'pdf')
 
@@ -764,7 +786,7 @@ export function XMLConverter() {
       if (item.type === 'xml') {
         const res = await processXMLContent(item.fileName, item.filePath, item.contentOrBlob as string)
         if (isAborted()) return
-        results.push(res)
+        results = deduplicateNfesByAccessKey([...results, res])
       } else if (item.type === 'unsupported') {
         results.push({
           fileName: item.fileName,
@@ -791,7 +813,7 @@ export function XMLConverter() {
           if (!item) break
           const pdfResults = await convertPDFToXMLAndParse(item.fileName, item.filePath, item.contentOrBlob as File | Blob)
           if (isAborted()) break
-          results.push(...pdfResults)
+          results = deduplicateNfesByAccessKey([...results, ...pdfResults])
           setFiles([...results])
         }
       }

@@ -512,7 +512,7 @@ ${JSON.stringify(promptPayload, null, 2)}`,
   }
 });
 
-// Endpoint de Auditoria e Preenchimento de Logística (Terminal, Transbordo, Destinatário) com Gemini 3.7 Flash
+// Endpoint de Auditoria e Preenchimento de Logística (Terminal e Transbordo) com Gemini 3.7 Flash
 app.post("/api/gemini/audit-logistics", async (req, res) => {
   try {
     const { items } = req.body;
@@ -548,8 +548,6 @@ app.post("/api/gemini/audit-logistics", async (req, res) => {
         serie: it.serie,
         chave: it.chave,
         emitenteAtual: it.emitNome || 'Não informado',
-        destinatarioAtual: it.destNome || 'Não informado',
-        destinatarioCNPJ: it.destCNPJ || '',
         terminalAtual: it.terminal || 'Não informado',
         transbordoAtual: it.transbordo || 'Não informado',
         produtoAtual: it.produto || 'Não informado',
@@ -562,7 +560,7 @@ app.post("/api/gemini/audit-logistics", async (req, res) => {
         const response = await ai.models.generateContent({
           model: "gemini-3.7-flash",
           contents: `Você é um Auditor Sênior Especialista em Logística Portuária, Ferroviária e Fiscal de DANFE/NF-e (Exportação de Açúcar, Grãos, Soja, Milho, Farelo e Cargas Industriais).
-Sua missão fundamental é analisar as notas fiscais onde TERMINAL DE ENTREGA, TRANSBORDO ou DESTINATÁRIO estão "Não Informado" e ENCONTRAR OS VALORES REAIS declarados no texto da DANFE/Informações Complementares para ajustar o Dashboard.
+Sua missão fundamental é analisar as notas fiscais onde TERMINAL DE ENTREGA ou TRANSBORDO estão "Não Informado" e ENCONTRAR OS VALORES REAIS declarados no texto da DANFE/Informações Complementares para ajustar o Dashboard.
 
 =======================================================
 REGRAS E PADRÕES DE MAPEAMENTO LOGÍSTICO:
@@ -593,15 +591,12 @@ REGRAS E PADRÕES DE MAPEAMENTO LOGÍSTICO:
    - "GUARA" (se mencionar Guará, Guara)
    - "UBERLANDIA", "SAO SIMAO", "CHAPADAO DO SUL", "INOCENCIA", "ITIQUIRA", "RIO PRETO"
 
-3) DESTINATÁRIO (Identificar quando não preenchido ou genérico):
-   - Razões sociais comuns: "S/A USINA CORURIPE ACUCAR E ALCOOL", "CARGILL AGRICOLA SA", "COPERSUCAR S.A.", "RAIZEN ENERGIA S.A.", "USINA SAO MARTINHO S/A", "ADECOAGRO VALE DO IVINHEMA S.A.", "USINA ALTA MOGIANA S/A - ACUCAR E ALCOOL", "USINA SANTA TEREZINHA LTDA", "USINA BATATAIS S/A ACUCAR E ALCOOL", "TEREOS ACUCAR E ENERGIA BRASIL S.A.", "BP BUNGE BIOENERGIA S.A.", "COFCO INTERNATIONAL BRASIL S.A.", "LOUIS DREYFUS COMPANY BRASIL S.A.", "AMAGGI EXPORTACAO E IMPORTACAO LTDA", "ADM DO BRASIL LTDA", etc.
-
 Analise cada nota com atenção aos campos infCpl e trechoDocumentoOriginal. Se encontrar dados novos para preencher ou corrigir, informe os valores.
 
 Dados a auditar:
 ${JSON.stringify(promptPayload, null, 2)}`,
           config: {
-            systemInstruction: "Você é um auditor logístico e fiscal analítico e infalível. Localize terminais, transbordos e destinatários reais a partir do texto do documento. Retorne estritamente um array JSON com todos os itens analisados.",
+            systemInstruction: "Você é um auditor logístico e fiscal analítico. Localize terminais e transbordos declarados no texto do documento. Não sugira destinatários. Retorne estritamente um array JSON com todos os itens analisados.",
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.ARRAY,
@@ -611,7 +606,6 @@ ${JSON.stringify(promptPayload, null, 2)}`,
                   id: { type: Type.STRING },
                   terminalCorrigido: { type: Type.STRING, description: "Nome normalizado do Terminal de Entrega identificado no documento, ou vazio se não houver" },
                   transbordoCorrigido: { type: Type.STRING, description: "Nome do Transbordo/Pátio identificado no documento, ou vazio se não houver" },
-                  destinatarioCorrigido: { type: Type.STRING, description: "Nome/Razão Social real do Destinatário identificado no documento, ou vazio se não houver" },
                   produtoCorrigido: { type: Type.STRING, description: "Nome do Produto identificado no documento, ou vazio se não houver" },
                   retiradaCorrigida: { type: Type.STRING, description: "Local de Retirada identificado no documento, ou vazio se não houver" },
                   status: {
@@ -654,9 +648,6 @@ ${JSON.stringify(promptPayload, null, 2)}`,
         if (aiResult.transbordoCorrigido && (!it.transbordo || /N[AÃ]O\s*INFORMADO/i.test(it.transbordo))) {
           camposAjustados.push('transbordo');
         }
-        if (aiResult.destinatarioCorrigido && (!it.destNome || /N[AÃ]O\s*INFORMADO|N[AÃ]O\s*IDENTIFICADO/i.test(it.destNome))) {
-          camposAjustados.push('destinatario');
-        }
         if (aiResult.produtoCorrigido && (!it.produto || /OUTRO|N[AÃ]O\s*INFORMADO/i.test(it.produto))) {
           camposAjustados.push('produto');
         }
@@ -667,7 +658,7 @@ ${JSON.stringify(promptPayload, null, 2)}`,
           numero: it.numero,
           terminalCorrigido: aiResult.terminalCorrigido || it.terminal,
           transbordoCorrigido: aiResult.transbordoCorrigido || it.transbordo,
-          destinatarioCorrigido: aiResult.destinatarioCorrigido || it.destNome,
+          destinatarioCorrigido: it.destNome,
           retiradaCorrigida: aiResult.retiradaCorrigida || it.retirada,
           produtoCorrigido: aiResult.produtoCorrigido || it.produto,
           status: isAjustado ? (aiResult.status || 'AJUSTADO_IA') : 'NAO_CONSTA_NO_DOC',
