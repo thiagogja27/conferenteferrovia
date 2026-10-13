@@ -3,6 +3,8 @@ import {
   getDatabase,
   ref,
   set,
+  push,
+  remove,
   onValue,
   off,
   serverTimestamp,
@@ -82,6 +84,7 @@ const STORAGE_KEY_OPERATOR = 'vlic_operator_name'
 const STORAGE_KEY_SESSION = 'vlic_session_id'
 const STORAGE_KEY_ACTIVITIES = 'vlic_local_activities_history'
 const STORAGE_KEY_INPUT_FILES = 'vlic_local_input_files_history'
+const MAX_ACTIVITY_HISTORY = 100
 
 export function formatDateBR(ts: number): string {
   const d = new Date(ts)
@@ -195,7 +198,9 @@ function loadSavedLocalActivities(): RealtimeActivity[] {
     if (raw) {
       const parsed: RealtimeActivity[] = JSON.parse(raw)
       // Filtra estritamente quaisquer registros fictícios com prefixo 'demo_'
-      const real = parsed.filter((a) => a && !a.id.startsWith('demo_') && !a.id.includes('sample'))
+      const real = parsed
+        .filter((a) => a && !a.id.startsWith('demo_') && !a.id.includes('sample'))
+        .slice(0, MAX_ACTIVITY_HISTORY)
       if (real.length !== parsed.length) {
         localStorage.setItem(STORAGE_KEY_ACTIVITIES, JSON.stringify(real))
       }
@@ -232,6 +237,36 @@ const localPresences: Record<string, OperatorPresence> = {}
 let localSubscribersActivities: ((acts: RealtimeActivity[]) => void)[] = []
 let localSubscribersInputFiles: ((files: InputedFileRecord[]) => void)[] = []
 let localSubscribersPresence: ((pres: OperatorPresence[]) => void)[] = []
+
+function persistLocalActivities(): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_ACTIVITIES, JSON.stringify(localActivities))
+  } catch (e) {
+    console.warn('Erro ao persistir atividades locais:', e)
+  }
+}
+
+function pushLocalActivity(activity: RealtimeActivity): void {
+  localActivities.unshift(activity)
+  localActivities.length = Math.min(localActivities.length, MAX_ACTIVITY_HISTORY)
+  persistLocalActivities()
+  localSubscribersActivities.forEach((cb) => cb([...localActivities]))
+}
+
+async function trimRemoteActivityHistory(): Promise<void> {
+  try {
+    const databaseUrl = getFirebaseConfig().databaseURL.replace(/\/+$/, '')
+    const response = await fetch(`${databaseUrl}/vlic_telemetry/activities.json?shallow=true`)
+    if (!response.ok) return
+    const keys = Object.keys((await response.json()) || {}).sort()
+    const oldKeys = keys.slice(0, Math.max(0, keys.length - MAX_ACTIVITY_HISTORY))
+    const db = getDatabaseInstance()
+    if (!db) return
+    await Promise.all(oldKeys.map((key) => remove(ref(db, `vlic_telemetry/activities/${key}`))))
+  } catch (e) {
+    console.warn('Erro ao compactar histórico de atividades:', e)
+  }
+}
 
 function notifyConnectionStatus(status: boolean) {
   isConnectedToRealtime = status
@@ -380,7 +415,20 @@ export async function logRealtimeActivity(
   description: string,
   metadata?: Record<string, any>
 ): Promise<void> {
+  const sessionId = getSessionId()
   const operatorName = getOperatorName()
+  const timestamp = Date.now()
+  const activity: RealtimeActivity = {
+    id: `act_${timestamp}_${Math.random().toString(36).slice(2, 6)}`,
+    sessionId,
+    operatorName,
+    type,
+    title: title.slice(0, 100),
+    description: description.slice(0, 240),
+    timestamp,
+    dateFormatted: formatDateBR(timestamp),
+    timeFormatted: formatTimeBR(timestamp),
+  }
 
   const db = getDatabaseInstance()
   if (db) {
@@ -391,9 +439,27 @@ export async function logRealtimeActivity(
       } catch (err) {
         console.warn('Erro ao atualizar o contador de divergências:', err)
       }
+
+      try {
+        const activityRef = push(ref(db, 'vlic_telemetry/activities'))
+        if (!activityRef.key) throw new Error('Não foi possível gerar o identificador da atividade.')
+        activity.id = activityRef.key
+        await set(activityRef, {
+          sessionId,
+          operatorName,
+          type,
+          title: activity.title,
+          description: activity.description,
+          timestamp: serverTimestamp(),
+        })
+        await trimRemoteActivityHistory()
+      } catch (err) {
+        console.warn('Erro ao registrar atividade no Firebase:', err)
+        pushLocalActivity(activity)
+      }
+    } else {
+      pushLocalActivity(activity)
     }
-  }
-  localSubscribersActivities.forEach((cb) => cb([]))
 
   // Notificação assíncrona para WhatsApp (CallMeBot / Webhook)
   try {
@@ -508,7 +574,7 @@ export function subscribeToInputedFiles(
 // Assinatura de lista de atividades em tempo real (por padrão sem limite ou com limite configurável)
 export function subscribeToActivities(
   callback: (activities: RealtimeActivity[]) => void,
-  limitCount: number = 0
+  limitCount: number = MAX_ACTIVITY_HISTORY
 ): () => void {
   const db = getDatabaseInstance()
   if (db) {

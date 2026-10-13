@@ -89,7 +89,7 @@ export function ensureMinimalNoteStorage(): Promise<void> {
     await Promise.all([
       clearConferenceDashboardHistory(),
       remove(ref(db, 'vlic_telemetry/input_files')),
-      remove(ref(db, 'vlic_telemetry/activities')),
+      purgeActivities(100),
     ])
     clearAllTelemetryHistory()
     if (typeof window !== 'undefined') {

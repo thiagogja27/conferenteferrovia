@@ -190,7 +190,7 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
     id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
     nome: 'LOUIS DREYFUS COMPANY BRASIL S A.',
     cnpjPrincipal: '47.067.525/0199-84',
-    cnpjsAdicionais: ['0675250199'],
+    cnpjsAdicionais: ['0675250199','47.067.525/0143-20','47.067.525/0145-91','47.067.525/0151-30'],
     aliases: ['CARGILL AGRICOLA', 'CARGILL'],
     isSistema: true,
     ativo: true,
@@ -218,6 +218,7 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
     ativo: true,
     criadoEm: 1700000000000,
   },
+
 
    {
     id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
