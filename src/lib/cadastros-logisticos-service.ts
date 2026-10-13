@@ -1124,11 +1124,8 @@ export function matchDestinatarioFromTextOrCnpj(
   const targetNomeNorm = normalizeSearch(rawNome)
 
   if (cnpjClean) {
-    for (const dest of allDest) {
-      const registeredCnpjs = [dest.cnpjPrincipal, ...(dest.cnpjsAdicionais || [])]
-        .map(cleanDigits)
-      if (registeredCnpjs.includes(cnpjClean)) return dest.nome
-    }
+    const cnpjMatch = findDestinatarioByCnpj(allDest, cnpjClean)
+    if (cnpjMatch) return cnpjMatch.nome
     if (cnpjClean.length === 14) return null
   }
 
@@ -1152,17 +1149,8 @@ export function resolveDestinatarioCadastro(
   const cnpjClean = cleanDigits(rawCnpj)
 
   if (cnpjClean) {
-    for (const dest of allDest) {
-      const registeredCnpjs = [dest.cnpjPrincipal, ...(dest.cnpjsAdicionais || [])]
-        .map(cleanDigits)
-      const exactMatch = registeredCnpjs.find((cnpj) => cnpj === cnpjClean)
-      if (exactMatch) {
-        return {
-          nome: dest.nome,
-          cnpj: exactMatch.length === 14 ? exactMatch : cleanDigits(dest.cnpjPrincipal),
-        }
-      }
-    }
+    const cnpjMatch = findDestinatarioByCnpj(allDest, cnpjClean)
+    if (cnpjMatch) return { nome: cnpjMatch.nome, cnpj: cnpjClean }
     return null
   }
 
@@ -1184,6 +1172,30 @@ export function resolveDestinatarioCadastro(
     nome: match.dest.nome,
     cnpj: '',
   }
+}
+
+function findDestinatarioByCnpj(
+  destinatarios: CadastroDestinatario[],
+  cnpj: string
+): CadastroDestinatario | null {
+  const registeredCnpjs = (dest: CadastroDestinatario) =>
+    [dest.cnpjPrincipal, ...(dest.cnpjsAdicionais || [])].map(cleanDigits).filter(Boolean)
+
+  const exactMatch = destinatarios.find((dest) => registeredCnpjs(dest).includes(cnpj))
+  if (exactMatch) return exactMatch
+
+  if (cnpj.length === 14) {
+    const root = cnpj.slice(0, 8)
+    return destinatarios.find((dest) => registeredCnpjs(dest).includes(root)) || null
+  }
+
+  if (cnpj.length === 8) {
+    return destinatarios.find((dest) => registeredCnpjs(dest).some(
+      (registeredCnpj) => registeredCnpj.length === 14 && registeredCnpj.startsWith(cnpj)
+    )) || null
+  }
+
+  return null
 }
 
 export interface SavedNoteRecipient {

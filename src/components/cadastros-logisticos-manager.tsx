@@ -825,7 +825,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
               {editingDest ? 'Editar Destinatário' : 'Cadastrar Novo Destinatário'}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Preencha os dados da empresa. O sistema passará a buscá-la tanto pelo CNPJ quanto por seu nome ou termos alternativos em todas as notas.
+              O nome cadastrado será exibido quando o CNPJ principal, uma filial ou a raiz do CNPJ forem encontrados na nota.
             </DialogDescription>
           </DialogHeader>
 
@@ -861,14 +861,17 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
 
             <div>
               <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block mb-1">
-                CNPJs Adicionais / Outras Filiais (opcional)
+                CNPJs Adicionais / Filiais ou Raiz (opcional)
               </label>
               <Input
                 value={destCnpjsAdicionais}
                 onChange={(e) => setDestCnpjsAdicionais(e.target.value)}
-                placeholder="Separados por vírgula: 00.000.000/0002-00, 00.000.000/0003-00"
+                placeholder="Filiais ou raiz com 8 dígitos, separados por vírgula"
                 className="text-xs font-mono"
               />
+              <span className="text-[10px] text-zinc-400">
+                Exemplo: 48.708.267 corresponde a qualquer filial com essa raiz.
+              </span>
             </div>
 
             <div>
