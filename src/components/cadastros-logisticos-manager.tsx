@@ -157,7 +157,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
       .filter(Boolean)
 
     saveCustomDestinatario({
-      id: editingDest?.id,
+      id: editingDest && !editingDest.isSistema ? editingDest.id : undefined,
       nome: destNome.trim().toUpperCase(),
       cnpjPrincipal: formatCNPJ(destCnpj),
       cnpjsAdicionais: adCnpjs,
@@ -170,10 +170,10 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
 
     setIsDestModalOpen(false)
     reloadData()
-    onNotify?.(
-      `Destinatário "${destNome.trim().toUpperCase()}" salvo com sucesso! O sistema passará a buscá-lo automaticamente nas notas.`,
-      'success'
-    )
+    onNotify?.(editingDest?.isSistema
+      ? `Personalização salva. O nome "${destNome.trim().toUpperCase()}" substituirá o padrão nas notas correspondentes.`
+      : `Destinatário "${destNome.trim().toUpperCase()}" salvo com sucesso! O sistema passará a buscá-lo automaticamente nas notas.`,
+    'success')
   }
 
   // Deletar Destinatário
@@ -554,8 +554,8 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                         )}
                       </div>
 
-                      {/* Botões de Ação para Itens Personalizados */}
-                      {isCustom && (
+                      {/* A edição de padrões cria um cadastro personalizado substituto. */}
+                      {(isCustom || dest.isSistema) && (
                         <div className="flex items-center gap-1 shrink-0">
                           <button
                             type="button"
@@ -565,14 +565,16 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                           >
                             <Edit2 className="h-3.5 w-3.5" />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteDestinatario(dest.id, dest.nome)}
-                            className="p-1 rounded text-zinc-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 cursor-pointer"
-                            title="Excluir Destinatário"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {isCustom && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteDestinatario(dest.id, dest.nome)}
+                              className="p-1 rounded text-zinc-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 cursor-pointer"
+                              title="Excluir Destinatário"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -852,10 +854,13 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                 onChange={(e) => setDestCnpj(e.target.value)}
                 placeholder="Ex: 00.000.000/0001-00"
                 required
+                disabled={editingDest?.isSistema}
                 className="text-xs font-mono"
               />
               <span className="text-[10px] text-zinc-400">
-                Pode digitar com ou sem pontos/barras.
+                {editingDest?.isSistema
+                  ? 'O CNPJ padrão fica protegido; a personalização altera o nome exibido.'
+                  : 'Pode digitar com ou sem pontos/barras.'}
               </span>
             </div>
 
@@ -867,6 +872,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                 value={destCnpjsAdicionais}
                 onChange={(e) => setDestCnpjsAdicionais(e.target.value)}
                 placeholder="Filiais ou raiz com 8 dígitos, separados por vírgula"
+                disabled={editingDest?.isSistema}
                 className="text-xs font-mono"
               />
               <span className="text-[10px] text-zinc-400">

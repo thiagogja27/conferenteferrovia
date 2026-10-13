@@ -894,8 +894,27 @@ function notifyCadastrosChanged(): void {
 // -------------------------------------------------------------
 export function getAllDestinatarios(): CadastroDestinatario[] {
   const custom = loadLocalCustomDestinatarios()
-  // Customizados aparecem primeiro para sobrepor ou priorizar
-  return [...custom, ...SISTEMA_DESTINATARIOS_PADRAO]
+  const systemDefaults = SISTEMA_DESTINATARIOS_PADRAO.filter((systemEntry) =>
+    !custom.some((customEntry) => overridesSystemRecipient(customEntry, systemEntry))
+  )
+  return [...custom, ...systemDefaults]
+}
+
+function overridesSystemRecipient(
+  customEntry: CadastroDestinatario,
+  systemEntry: CadastroDestinatario
+): boolean {
+  const customCnpjs = [customEntry.cnpjPrincipal, ...(customEntry.cnpjsAdicionais || [])]
+    .map(cleanDigits)
+    .filter(Boolean)
+  const systemCnpjs = [systemEntry.cnpjPrincipal, ...(systemEntry.cnpjsAdicionais || [])]
+    .map(cleanDigits)
+    .filter(Boolean)
+
+  return systemCnpjs.some((systemCnpj) => customCnpjs.some((customCnpj) =>
+    customCnpj === systemCnpj ||
+    (customCnpj.length === 8 && systemCnpj.length === 14 && systemCnpj.startsWith(customCnpj))
+  ))
 }
 
 export function getCustomDestinatarios(): CadastroDestinatario[] {
