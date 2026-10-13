@@ -439,27 +439,28 @@ export async function logRealtimeActivity(
       } catch (err) {
         console.warn('Erro ao atualizar o contador de divergências:', err)
       }
+    }
 
-      try {
-        const activityRef = push(ref(db, 'vlic_telemetry/activities'))
-        if (!activityRef.key) throw new Error('Não foi possível gerar o identificador da atividade.')
-        activity.id = activityRef.key
-        await set(activityRef, {
-          sessionId,
-          operatorName,
-          type,
-          title: activity.title,
-          description: activity.description,
-          timestamp: serverTimestamp(),
-        })
-        await trimRemoteActivityHistory()
-      } catch (err) {
-        console.warn('Erro ao registrar atividade no Firebase:', err)
-        pushLocalActivity(activity)
-      }
-    } else {
+    try {
+      const activityRef = push(ref(db, 'vlic_telemetry/activities'))
+      if (!activityRef.key) throw new Error('Não foi possível gerar o identificador da atividade.')
+      activity.id = activityRef.key
+      await set(activityRef, {
+        sessionId,
+        operatorName,
+        type,
+        title: activity.title,
+        description: activity.description,
+        timestamp: serverTimestamp(),
+      })
+      await trimRemoteActivityHistory()
+    } catch (err) {
+      console.warn('Erro ao registrar atividade no Firebase:', err)
       pushLocalActivity(activity)
     }
+  } else {
+    pushLocalActivity(activity)
+  }
 
   // Notificação assíncrona para WhatsApp (CallMeBot / Webhook)
   try {
