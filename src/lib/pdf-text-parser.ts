@@ -1,6 +1,7 @@
 // Utilitário de análise de texto de DANFE para conversão em XML (Processamento Local e Sem IA)
 
 import { sanitizeDestinatarioNome } from './destinatario-utils';
+import { getExplicitGuarujaTerminalCode } from './terminal-utils';
 
 const DANFE_HEADER_REGEX = /\bDANFE\b|DOCUMENTO AUXILIAR\s+(?:DA|DE)\s+(?:NOTA(?:\s+FISCAL)?|NF-?E)/i;
 
@@ -1137,6 +1138,9 @@ export function extractDataFromXML(xml: string, fileName: string): ParsedNFeData
 function extractTerminalEntrega(text: string): string {
   if (!text) return '';
   const uppercase = text.toUpperCase();
+  const explicitTerminalCode = getExplicitGuarujaTerminalCode(text)
+  if (explicitTerminalCode === 'TEAG') return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+  if (explicitTerminalCode === 'TEG') return 'TEG - TERMINAL EXPORTADOR DO GUARUJA';
 
   // 1. Verificação por códigos/locais conhecidos em notas de exportação/agronegócio
   if (/\bTEAG\b/i.test(text) || uppercase.includes('TERMINAL DE ACUCAR DO GUARUJA') || uppercase.includes('TERMINAL EXPORTACAO DE ACUCAR') || uppercase.includes('TEAG')) {

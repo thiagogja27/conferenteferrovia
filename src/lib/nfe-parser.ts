@@ -1,4 +1,5 @@
 import { matchTransbordoFromText } from './cadastros-logisticos-service'
+import { getExplicitGuarujaTerminalCode } from './terminal-utils'
 
 export interface CNPJVerificationResult {
   chaveCnpj: string
@@ -761,6 +762,9 @@ function extractTerminalEntrega(infComplementares: string): string {
   if (!infComplementares) return ""
 
   const uppercase = infComplementares.toUpperCase()
+  const explicitTerminalCode = getExplicitGuarujaTerminalCode(infComplementares)
+  if (explicitTerminalCode === 'TEAG') return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+  if (explicitTerminalCode === 'TEG') return 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
 
   // 1. Verificação por códigos/locais conhecidos em notas de exportação/agronegócio
   // TEAG - TERMINAL DE ACUCAR DO GUARUJA (Prioridade Máxima)

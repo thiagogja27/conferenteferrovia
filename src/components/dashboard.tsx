@@ -26,6 +26,7 @@ import {
   matchTransbordoFromText,
   subscribeCadastrosChanges,
 } from "@/lib/cadastros-logisticos-service"
+import { getExplicitGuarujaTerminalCode } from "@/lib/terminal-utils"
 
 import {
   BarChart,
@@ -193,6 +194,12 @@ export function getNoteDetails(
   let terminal = nfe?.terminalEntrega || parsed?.terminalEntrega || "Não Informado"
   let transbordo = nfe?.transbordo || parsed?.transbordo || "Não Informado"
   let retirada = parsed?.retirada || ""
+  const explicitTerminalCode = getExplicitGuarujaTerminalCode(`${infCpl} ${rawXml} ${f.rawSnippet || ""}`)
+  if (explicitTerminalCode === 'TEAG') {
+    terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
+  } else if (explicitTerminalCode === 'TEG') {
+    terminal = "TEG - TERMINAL DE EXPORTAÇÃO DO GUARUJÁ"
+  }
 
   // Se o terminal foi indevidamente extraído como UBERABA / TIUB, corrigir para transbordo
   if (/UBERABA|TIUB/i.test(terminal)) {
@@ -221,7 +228,7 @@ export function getNoteDetails(
   }
 
   // Se o terminal foi rotulado como TEG mas a nota é de açúcar, corrigir para TEAG
-  if (terminal.includes('TEG') && !terminal.includes('TEAG')) {
+  if (!explicitTerminalCode && terminal.includes('TEG') && !terminal.includes('TEAG')) {
     if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(infCpl)) {
       terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
     }

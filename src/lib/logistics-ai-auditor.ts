@@ -1,4 +1,5 @@
 import { sanitizeDestinatarioNome } from './destinatario-utils'
+import { getExplicitGuarujaTerminalCode } from './terminal-utils'
 
 export interface LogisticsAuditInputItem {
   id: string
@@ -90,6 +91,13 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
   let destinatarioCorrigido = item.destNome
   let retiradaCorrigida = item.retirada
   let produtoCorrigido = item.produto
+  const explicitTerminalCode = getExplicitGuarujaTerminalCode(fullText)
+  if (explicitTerminalCode) {
+    terminalCorrigido = explicitTerminalCode === 'TEAG'
+      ? 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+      : 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
+    if (terminalCorrigido !== item.terminal) camposAjustados.push('terminal')
+  }
 
   // Se o terminal foi indevidamente gravado como um transbordo (ex: UBERABA, TIUB, ATT ARMAZENAGEM, FERNANDOPOLIS):
   if (/UBERABA|TIUB/i.test(item.terminal || '')) {
@@ -116,7 +124,7 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
   }
 
   // Se o terminal foi rotulado como TEG mas a nota é de açúcar ou possui dados do TEAG, corrigir para TEAG
-  if (item.terminal && item.terminal.includes('TEG') && !item.terminal.includes('TEAG')) {
+  if (!explicitTerminalCode && item.terminal && item.terminal.includes('TEG') && !item.terminal.includes('TEAG')) {
     if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(fullText)) {
       terminalCorrigido = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
       camposAjustados.push('terminal')
@@ -124,7 +132,7 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
   }
 
   // 1. Auditoria e Identificação de Terminal de Entrega
-  if (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal)) {
+  if (!explicitTerminalCode && (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal))) {
     if (
       /\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|ACUCAR.*GUARUJ[AÁ]|TEAG|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO\s*DA\s*COSTA/i.test(fullText) ||
       ((/GUARUJ[AÁ]/i.test(fullText)) && (/ACUCAR|AÇÚCAR/i.test(fullText)))

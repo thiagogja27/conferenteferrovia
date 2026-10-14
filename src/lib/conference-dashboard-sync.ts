@@ -23,6 +23,7 @@ import {
   formatTimeBR,
 } from '@/lib/firebase-realtime'
 import { matchTransbordoFromText } from '@/lib/cadastros-logisticos-service'
+import { getExplicitGuarujaTerminalCode } from '@/lib/terminal-utils'
 import { ref, push, onValue, off, query, limitToLast, remove, get } from 'firebase/database'
 
 export interface ConferenceNoteSummary {
@@ -266,6 +267,12 @@ export function buildConferenceDashboardSnapshot(
     let terminal = nfe?.terminalEntrega || parsed?.terminalEntrega || 'Não Informado'
     let transbordo = nfe?.transbordo || parsed?.transbordo || 'Não Informado'
     const retirada = parsed?.retirada || ''
+    const explicitTerminalCode = getExplicitGuarujaTerminalCode(`${infCpl} ${rawXml} ${f.rawSnippet || ''}`)
+    if (explicitTerminalCode === 'TEAG') {
+      terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+    } else if (explicitTerminalCode === 'TEG') {
+      terminal = 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
+    }
 
     // Se o terminal capturado foi UBERABA / TIUB, corrigir para transbordo
     if (/UBERABA|TIUB/i.test(terminal)) {
@@ -290,17 +297,17 @@ export function buildConferenceDashboardSnapshot(
     }
 
     // Se o terminal foi rotulado como TEG mas a nota é de açúcar, corrigir para TEAG
-    if (terminal.includes('TEG') && !terminal.includes('TEAG')) {
+    if (!explicitTerminalCode && terminal.includes('TEG') && !terminal.includes('TEAG')) {
       if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(`${infCpl} ${rawXml}`)) {
         terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
       }
     }
 
     // Detecção prioritária de TEAG
-    if (
+    if (!explicitTerminalCode && (
       /\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|ACUCAR.*GUARUJ[AÁ]|TEAG|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO/i.test(`${infCpl} ${rawXml}`) ||
       ((/GUARUJ[AÁ]/i.test(`${infCpl} ${rawXml}`)) && (/ACUCAR|AÇÚCAR/i.test(`${infCpl} ${rawXml}`)))
-    ) {
+    )) {
       terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
     } else if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(`${infCpl} ${rawXml}`)) {
       terminal = 'TES - TERMINAL EXPORTADOR DE SANTOS'
