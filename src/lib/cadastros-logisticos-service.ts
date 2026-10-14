@@ -15,7 +15,9 @@ import { ref, onValue, set, get, query, limitToLast } from 'firebase/database'
 export interface CadastroDestinatario {
   id: string
   nome: string
+  nomenclatura?: string
   cnpjPrincipal: string
+  contrato?: ContratoDestinatario
   cnpjsAdicionais?: string[]
   aliases: string[]
   cidade?: string
@@ -26,6 +28,19 @@ export interface CadastroDestinatario {
   criadoEm: number
   criadoPor?: string
 }
+
+export const CONTRATOS_DESTINATARIO = [
+  'CGL-T',
+  'SUISSE',
+  'LDC',
+  'LDC-T',
+  'CGL',
+  'RAIZEN',
+  'RAIZEN-T',
+  'SUISSE-T',
+] as const
+
+export type ContratoDestinatario = (typeof CONTRATOS_DESTINATARIO)[number]
 
 export interface CadastroTransbordo {
   id: string
@@ -44,6 +59,7 @@ export interface CadastroTransbordo {
 
 const STORAGE_KEY_CUSTOM_DEST = 'vlic_custom_destinatarios_catalog_v2'
 const STORAGE_KEY_CUSTOM_TRANS = 'vlic_custom_transbordos_catalog_v2'
+const STORAGE_KEY_DEST_CONTRACTS = 'vlic_destinatario_contratos_v1'
 const EVENT_CADASTROS_UPDATED = 'cadastros_logisticos_changed'
 
 // -------------------------------------------------------------
@@ -187,7 +203,7 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
   },
 
   {
-    id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
+    id: 'sys-dest-ldc-0199-84',
     nome: 'LOUIS DREYFUS COMPANY BRASIL S A.',
     cnpjPrincipal: '47.067.525/0199-84',
     cnpjsAdicionais: ['0675250199','47.067.525/0143-20','47.067.525/0145-91','47.067.525/0151-30'],
@@ -198,7 +214,7 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
   },
 
   {
-    id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
+    id: 'sys-dest-ldc-0168-88',
     nome: 'LOUIS DREYFUS COMPANY BRASIL S A.',
     cnpjPrincipal: '47.067.525/0168-88',
     cnpjsAdicionais: ['0675250168'],
@@ -209,7 +225,7 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
   },
 
   {
-    id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
+    id: 'sys-dest-ldc-0112-23',
     nome: 'LOUIS DREYFUS COMPANY BRASIL S A.',
     cnpjPrincipal: '47.067.525/0112-23',
     cnpjsAdicionais: ['0675250112'],
@@ -221,7 +237,7 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
 
 
    {
-    id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
+    id: 'sys-dest-ldc-0130-05',
     nome: 'LOUIS DREYFUS COMPANY BRASIL S A.',
     cnpjPrincipal: '47.067.525/0130-05',
     cnpjsAdicionais: ['0675250130'],
@@ -232,7 +248,7 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
   },
 
   {
-    id: 'sys-dest-LOUIS DREYFUS COMPANY BRASIL S A',
+    id: 'sys-dest-ldc-0107-66',
     nome: 'LOUIS DREYFUS COMPANY BRASIL S A',
     cnpjPrincipal: '47.067.525/0107-66',
     cnpjsAdicionais: ['0675250107'],
@@ -857,6 +873,7 @@ function saveLocalCustomDestinatarios(list: CadastroDestinatario[]): void {
     notifyCadastrosChanged()
   } catch (err) {
     console.error('Erro ao salvar custom_destinatarios no localStorage:', err)
+    throw err
   }
 }
 
@@ -883,6 +900,35 @@ function saveLocalCustomTransbordos(list: CadastroTransbordo[]): void {
   }
 }
 
+function loadLocalDestinatarioContracts(): Record<string, ContratoDestinatario> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DEST_CONTRACTS)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, ContratoDestinatario] =>
+        CONTRATOS_DESTINATARIO.includes(entry[1] as ContratoDestinatario)
+      )
+    )
+  } catch (err) {
+    console.error('Erro ao ler contratos dos destinatários do localStorage:', err)
+    return {}
+  }
+}
+
+function saveLocalDestinatarioContracts(contracts: Record<string, ContratoDestinatario>): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(STORAGE_KEY_DEST_CONTRACTS, JSON.stringify(contracts))
+    notifyCadastrosChanged()
+  } catch (err) {
+    console.error('Erro ao salvar contratos dos destinatários no localStorage:', err)
+    throw err
+  }
+}
+
 function notifyCadastrosChanged(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(EVENT_CADASTROS_UPDATED))
@@ -894,10 +940,80 @@ function notifyCadastrosChanged(): void {
 // -------------------------------------------------------------
 export function getAllDestinatarios(): CadastroDestinatario[] {
   const custom = loadLocalCustomDestinatarios()
+  const contracts = loadLocalDestinatarioContracts()
   const systemDefaults = SISTEMA_DESTINATARIOS_PADRAO.filter((systemEntry) =>
     !custom.some((customEntry) => overridesSystemRecipient(customEntry, systemEntry))
   )
-  return [...custom, ...systemDefaults]
+  return [...custom, ...systemDefaults].map((destinatario) => ({
+    ...destinatario,
+    contrato: contracts[cleanDigits(destinatario.cnpjPrincipal)] || destinatario.contrato,
+  }))
+}
+
+export function getDestinatarioContractByCnpj(cnpj?: string): ContratoDestinatario | undefined {
+  const cleanCnpj = cleanDigits(cnpj)
+  if (!cleanCnpj) return undefined
+
+  const recipients = getAllDestinatarios()
+  const matchingRecipient =
+    recipients.find((destinatario) =>
+      [destinatario.cnpjPrincipal, ...(destinatario.cnpjsAdicionais || [])]
+        .map(cleanDigits)
+        .includes(cleanCnpj)
+    ) ||
+    recipients.find((destinatario) =>
+      [destinatario.cnpjPrincipal, ...(destinatario.cnpjsAdicionais || [])]
+        .map(cleanDigits)
+        .some((recipientCnpj) => recipientCnpj.length === 8 && cleanCnpj.startsWith(recipientCnpj))
+    )
+
+  return matchingRecipient?.contrato
+}
+
+export function getDestinatarioNomenclatureByCnpj(cnpj?: string): string | undefined {
+  const cleanCnpj = cleanDigits(cnpj)
+  if (!cleanCnpj) return undefined
+
+  const recipients = getAllDestinatarios()
+  const matchingRecipient =
+    recipients.find((destinatario) =>
+      [destinatario.cnpjPrincipal, ...(destinatario.cnpjsAdicionais || [])]
+        .map(cleanDigits)
+        .includes(cleanCnpj)
+    ) ||
+    recipients.find((destinatario) =>
+      [destinatario.cnpjPrincipal, ...(destinatario.cnpjsAdicionais || [])]
+        .map(cleanDigits)
+        .some((recipientCnpj) => recipientCnpj.length === 8 && cleanCnpj.startsWith(recipientCnpj))
+    )
+
+  return matchingRecipient?.nomenclatura
+}
+
+export async function saveDestinatarioContract(
+  cnpj: string,
+  contract: ContratoDestinatario | ''
+): Promise<void> {
+  const cleanCnpj = cleanDigits(cnpj)
+  if (!cleanCnpj) throw new Error('CNPJ do destinatário inválido para salvar o contrato.')
+  if (contract && !CONTRATOS_DESTINATARIO.includes(contract)) {
+    throw new Error('Contrato selecionado inválido.')
+  }
+
+  const contracts = loadLocalDestinatarioContracts()
+  if (contract) contracts[cleanCnpj] = contract
+  else delete contracts[cleanCnpj]
+  saveLocalDestinatarioContracts(contracts)
+
+  const db = getDatabaseInstance()
+  if (!db) throw new Error('Firebase Realtime Database não está disponível.')
+
+  try {
+    await set(ref(db, `cadastros_logisticos/contratos_destinatarios/${cleanCnpj}`), contract || null)
+  } catch (err) {
+    console.error('Não foi possível sincronizar o contrato do destinatário com Firebase:', err)
+    throw err
+  }
 }
 
 function overridesSystemRecipient(
@@ -921,9 +1037,9 @@ export function getCustomDestinatarios(): CadastroDestinatario[] {
   return loadLocalCustomDestinatarios()
 }
 
-export function saveCustomDestinatario(
+export async function saveCustomDestinatario(
   item: Omit<CadastroDestinatario, 'id' | 'isSistema' | 'criadoEm'> & { id?: string }
-): CadastroDestinatario {
+): Promise<CadastroDestinatario> {
   const current = loadLocalCustomDestinatarios()
   const now = Date.now()
   const operator = getOperatorName()
@@ -955,8 +1071,7 @@ export function saveCustomDestinatario(
 
   saveLocalCustomDestinatarios(updatedList)
 
-  // Sincroniza em segundo plano com Firebase Realtime Database se conectado
-  pushToFirebase('destinatarios', newEntry)
+  await syncToFirebase('destinatarios', newEntry)
 
   return newEntry
 }
@@ -1042,11 +1157,23 @@ function pushToFirebase(type: 'destinatarios' | 'transbordos', entry: any): void
     const db = getDatabaseInstance()
     if (!db) return
     const entryRef = ref(db, `cadastros_logisticos/${type}/${entry.id}`)
-    set(entryRef, entry).catch((e) => {
-      console.warn(`[Cadastros] Não foi possível sincronizar ${type} com Firebase:`, e.message)
+    set(entryRef, entry).catch((err) => {
+      console.warn(`[Cadastros] Não foi possível sincronizar ${type} com Firebase:`, err)
     })
   } catch (err) {
-    // silencioso para não interromper modo offline/local
+    console.warn(`[Cadastros] Não foi possível iniciar a sincronização de ${type} com Firebase:`, err)
+  }
+}
+
+async function syncToFirebase(type: 'destinatarios' | 'transbordos', entry: any): Promise<void> {
+  try {
+    const db = getDatabaseInstance()
+    if (!db) throw new Error('Firebase Realtime Database não está disponível.')
+    const entryRef = ref(db, `cadastros_logisticos/${type}/${entry.id}`)
+    await set(entryRef, entry)
+  } catch (err) {
+    console.error(`[Cadastros] Não foi possível sincronizar ${type} com Firebase:`, err)
+    throw err
   }
 }
 
@@ -1066,6 +1193,7 @@ export function subscribeToRemoteCadastros(): () => void {
 
     const destRef = ref(db, 'cadastros_logisticos/destinatarios')
     const transRef = ref(db, 'cadastros_logisticos/transbordos')
+    const contractsRef = ref(db, 'cadastros_logisticos/contratos_destinatarios')
 
     const unsubDest = onValue(destRef, (snap) => {
       if (snap.exists()) {
@@ -1102,9 +1230,29 @@ export function subscribeToRemoteCadastros(): () => void {
       }
     })
 
+    const unsubContracts = onValue(contractsRef, (snap) => {
+      if (!snap.exists()) return
+      const remoteContracts = snap.val()
+      if (!remoteContracts || typeof remoteContracts !== 'object' || Array.isArray(remoteContracts)) return
+
+      const localContracts = loadLocalDestinatarioContracts()
+      const mergedContracts = { ...localContracts }
+      Object.entries(remoteContracts).forEach(([cnpj, contract]) => {
+        if (CONTRATOS_DESTINATARIO.includes(contract as ContratoDestinatario)) {
+          mergedContracts[cleanDigits(cnpj)] = contract as ContratoDestinatario
+        } else {
+          delete mergedContracts[cleanDigits(cnpj)]
+        }
+      })
+      if (JSON.stringify(mergedContracts) !== JSON.stringify(localContracts)) {
+        saveLocalDestinatarioContracts(mergedContracts)
+      }
+    })
+
     return () => {
       unsubDest()
       unsubTrans()
+      unsubContracts()
     }
   } catch (err) {
     return () => {}

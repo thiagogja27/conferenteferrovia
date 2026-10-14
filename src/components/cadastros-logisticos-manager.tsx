@@ -1,7 +1,6 @@
 'use client'
 
 import React, { useState, useEffect, useMemo } from 'react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -20,7 +19,6 @@ import {
   Trash2,
   Edit2,
   CheckCircle2,
-  Sparkles,
   Info,
   ShieldCheck,
   Copy,
@@ -42,12 +40,47 @@ import {
   saveCustomTransbordo,
   deleteCustomTransbordo,
   subscribeCadastrosChanges,
-  matchDestinatarioFromTextOrCnpj,
-  matchTransbordoFromText,
+  saveDestinatarioContract,
+  CONTRATOS_DESTINATARIO,
   type CadastroDestinatario,
   type CadastroTransbordo,
+  type ContratoDestinatario,
 } from '@/lib/cadastros-logisticos-service'
 import { formatCNPJ } from '@/lib/destinatario-utils'
+
+const normalizeSearchText = (value: string) =>
+  value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+
+interface BulkDestinatarioRow {
+  nome: string
+  cnpj: string
+  nomenclatura: string
+  contrato: string
+  line: number
+}
+
+function splitDelimitedRow(line: string, delimiter: string): string[] {
+  const values: string[] = []
+  let value = ''
+  let quoted = false
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index]
+    if (character === '"' && line[index + 1] === '"' && quoted) {
+      value += '"'
+      index += 1
+    } else if (character === '"') {
+      quoted = !quoted
+    } else if (character === delimiter && !quoted) {
+      values.push(value.trim())
+      value = ''
+    } else {
+      value += character
+    }
+  }
+  values.push(value.trim())
+  return values
+}
 
 interface CadastrosLogisticosManagerProps {
   onNotify?: (message: string, type?: 'success' | 'error' | 'warning' | 'info') => void
@@ -57,6 +90,22 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   const [activeSubTab, setActiveSubTab] = useState<'destinatarios' | 'transbordos'>('destinatarios')
   const [searchFilter, setSearchFilter] = useState('')
   const [originFilter, setOriginFilter] = useState<'TODOS' | 'CUSTOM' | 'SISTEMA'>('TODOS')
+  const [isBulkDestModalOpen, setIsBulkDestModalOpen] = useState(false)
+  const [bulkDestRows, setBulkDestRows] = useState<BulkDestinatarioRow[]>(
+    () => Array.from({ length: 5 }, () => ({ nome: '', cnpj: '', nomenclatura: '', contrato: '', line: 0 }))
+  )
+  const [bulkDestError, setBulkDestError] = useState('')
+  const [isSavingBulkDest, setIsSavingBulkDest] = useState(false)
+  const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState(false)
+  const [bulkEditFilter, setBulkEditFilter] = useState('')
+  const [bulkEditSelectedIds, setBulkEditSelectedIds] = useState<string[]>([])
+  const [bulkEditNameEnabled, setBulkEditNameEnabled] = useState(false)
+  const [bulkEditNomenclatureEnabled, setBulkEditNomenclatureEnabled] = useState(false)
+  const [bulkEditContractEnabled, setBulkEditContractEnabled] = useState(false)
+  const [bulkEditName, setBulkEditName] = useState('')
+  const [bulkEditNomenclature, setBulkEditNomenclature] = useState('')
+  const [bulkEditContract, setBulkEditContract] = useState<ContratoDestinatario | ''>('')
+  const [bulkEditError, setBulkEditError] = useState('')
 
   // Listas locais de dados
   const [destinatarios, setDestinatarios] = useState<CadastroDestinatario[]>([])
@@ -71,7 +120,9 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
 
   // Formulário Destinatário
   const [destNome, setDestNome] = useState('')
+  const [destNomenclatura, setDestNomenclatura] = useState('')
   const [destCnpj, setDestCnpj] = useState('')
+  const [destContrato, setDestContrato] = useState<ContratoDestinatario | ''>('')
   const [destCnpjsAdicionais, setDestCnpjsAdicionais] = useState('')
   const [destAliases, setDestAliases] = useState('')
   const [destCidade, setDestCidade] = useState('')
@@ -86,13 +137,6 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   const [transOperadora, setTransOperadora] = useState<'RUMO' | 'VLI' | 'OUTRA' | string>('RUMO')
   const [transAliases, setTransAliases] = useState('')
   const [transObservacoes, setTransObservacoes] = useState('')
-
-  // Simulador / Testador de Reconhecimento em Tempo Real
-  const [testInput, setTestInput] = useState('')
-  const [testResult, setTestResult] = useState<{
-    destMatch: string | null
-    transMatch: string | null
-  } | null>(null)
 
   // Carrega e assina atualizações
   const reloadData = () => {
@@ -112,7 +156,9 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   const openNewDestModal = () => {
     setEditingDest(null)
     setDestNome('')
+    setDestNomenclatura('')
     setDestCnpj('')
+    setDestContrato('')
     setDestCnpjsAdicionais('')
     setDestAliases('')
     setDestCidade('')
@@ -124,7 +170,9 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   const openEditDestModal = (dest: CadastroDestinatario) => {
     setEditingDest(dest)
     setDestNome(dest.nome)
+    setDestNomenclatura(dest.nomenclatura || '')
     setDestCnpj(dest.cnpjPrincipal)
+    setDestContrato(dest.contrato || '')
     setDestCnpjsAdicionais((dest.cnpjsAdicionais || []).join(', '))
     setDestAliases((dest.aliases || []).join(', '))
     setDestCidade(dest.cidade || '')
@@ -134,7 +182,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   }
 
   // Salvar Destinatário
-  const handleSaveDestinatario = (e: React.FormEvent) => {
+  const handleSaveDestinatario = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!destNome.trim()) {
       onNotify?.('Informe o nome ou razão social do destinatário.', 'error')
@@ -156,24 +204,206 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
       .map((s) => s.trim())
       .filter(Boolean)
 
-    saveCustomDestinatario({
-      id: editingDest && !editingDest.isSistema ? editingDest.id : undefined,
-      nome: destNome.trim().toUpperCase(),
-      cnpjPrincipal: formatCNPJ(destCnpj),
-      cnpjsAdicionais: adCnpjs,
-      aliases,
-      cidade: destCidade.trim(),
-      uf: destUf.trim().toUpperCase(),
-      observacoes: destObservacoes.trim(),
-      ativo: true,
-    })
+    let recipientChanged = false
+    try {
+      await saveDestinatarioContract(cleanCnpj, destContrato)
+      recipientChanged =
+        !editingDest?.isSistema ||
+        destNome.trim().toUpperCase() !== editingDest.nome ||
+        destNomenclatura.trim() !== (editingDest.nomenclatura || '') ||
+        adCnpjs.join(',') !== (editingDest.cnpjsAdicionais || []).join(',') ||
+        aliases.join(',') !== (editingDest.aliases || []).join(',') ||
+        destCidade.trim() !== (editingDest.cidade || '') ||
+        destUf.trim().toUpperCase() !== (editingDest.uf || '') ||
+        destObservacoes.trim() !== (editingDest.observacoes || '')
+
+      if (recipientChanged) {
+        await saveCustomDestinatario({
+          id: editingDest && !editingDest.isSistema ? editingDest.id : undefined,
+          nome: destNome.trim().toUpperCase(),
+          nomenclatura: destNomenclatura.trim(),
+          cnpjPrincipal: formatCNPJ(destCnpj),
+          cnpjsAdicionais: adCnpjs,
+          aliases,
+          cidade: destCidade.trim(),
+          uf: destUf.trim().toUpperCase(),
+          observacoes: destObservacoes.trim(),
+          ativo: true,
+        })
+      }
+
+    } catch (err) {
+      onNotify?.(
+        err instanceof Error
+          ? `Erro ao salvar/sincronizar destinatário: ${err.message}`
+          : 'Erro ao salvar/sincronizar destinatário.',
+        'error'
+      )
+      return
+    }
 
     setIsDestModalOpen(false)
     reloadData()
-    onNotify?.(editingDest?.isSistema
+    onNotify?.(editingDest?.isSistema && recipientChanged
       ? `Personalização salva. O nome "${destNome.trim().toUpperCase()}" substituirá o padrão nas notas correspondentes.`
-      : `Destinatário "${destNome.trim().toUpperCase()}" salvo com sucesso! O sistema passará a buscá-lo automaticamente nas notas.`,
+      : `Destinatário "${destNome.trim().toUpperCase()}" e contrato salvos com sucesso.`,
     'success')
+  }
+
+  const updateBulkDestCell = (
+    rowIndex: number,
+    column: keyof Omit<BulkDestinatarioRow, 'line'>,
+    value: string
+  ) => {
+    setBulkDestError('')
+    setBulkDestRows((current) => {
+      const updated = [...current]
+      while (updated.length <= rowIndex) {
+        updated.push({ nome: '', cnpj: '', nomenclatura: '', contrato: '', line: 0 })
+      }
+      updated[rowIndex] = { ...updated[rowIndex], [column]: value }
+      return updated
+    })
+  }
+
+  const handleBulkDestPaste = (
+    event: React.ClipboardEvent<HTMLInputElement>,
+    startRow: number,
+    startColumn: number
+  ) => {
+    const pastedText = event.clipboardData.getData('text')
+    if (!pastedText.includes('\t') && !pastedText.includes('\n') && !pastedText.includes(';')) return
+
+    event.preventDefault()
+    setBulkDestError('')
+    const lines = pastedText.trimEnd().split(/\r?\n/)
+    const delimiter = pastedText.includes('\t') ? '\t' : pastedText.includes(';') ? ';' : ','
+    const matrix = lines.map((line) => splitDelimitedRow(line, delimiter))
+    const firstRow = matrix[0]?.map(normalizeSearchText) || []
+    const hasHeader = startRow === 0 && startColumn === 0 &&
+      firstRow.some((cell) => cell.includes('CNPJ')) &&
+      firstRow.some((cell) => cell.includes('DESTINATARIO') || cell.includes('NOME'))
+    const rowsToPaste = hasHeader ? matrix.slice(1) : matrix
+    const columns: Array<keyof Omit<BulkDestinatarioRow, 'line'>> = [
+      'nome',
+      'cnpj',
+      'nomenclatura',
+      'contrato',
+    ]
+
+    setBulkDestRows((current) => {
+      const updated = [...current]
+      rowsToPaste.forEach((values, rowOffset) => {
+        const targetRow = startRow + rowOffset
+        while (updated.length <= targetRow) {
+          updated.push({ nome: '', cnpj: '', nomenclatura: '', contrato: '', line: 0 })
+        }
+        values.forEach((value, columnOffset) => {
+          const targetColumn = columns[startColumn + columnOffset]
+          if (targetColumn) updated[targetRow] = { ...updated[targetRow], [targetColumn]: value }
+        })
+      })
+      return updated
+    })
+  }
+
+  const handleBulkSaveDestinatarios = async () => {
+    const rows: BulkDestinatarioRow[] = bulkDestRows
+      .map((row, index) => ({ ...row, line: index + 1 }))
+      .filter((row) => row.nome.trim() || row.cnpj.trim() || row.nomenclatura.trim() || row.contrato.trim())
+    if (rows.length === 0) {
+      const message = 'Preencha ao menos uma linha com destinatário e CNPJ/CPF.'
+      setBulkDestError(message)
+      onNotify?.(message, 'error')
+      return
+    }
+
+    const invalidRows: string[] = []
+    const seenCnpjs = new Set<string>()
+    rows.forEach((row) => {
+      const cleanCnpj = row.cnpj.replace(/\D/g, '')
+      if (!row.nome || (cleanCnpj.length !== 14 && cleanCnpj.length !== 11)) {
+        invalidRows.push(`linha ${row.line}: informe nome e CNPJ/CPF válido`)
+      } else if (seenCnpjs.has(cleanCnpj)) {
+        invalidRows.push(`linha ${row.line}: CNPJ/CPF duplicado na lista`)
+      } else {
+        seenCnpjs.add(cleanCnpj)
+      }
+      if (row.contrato && !CONTRATOS_DESTINATARIO.includes(row.contrato.toUpperCase() as ContratoDestinatario)) {
+        invalidRows.push(`linha ${row.line}: contrato "${row.contrato}" não reconhecido`)
+      }
+    })
+
+    if (invalidRows.length > 0) {
+      const message = `Revise a lista: ${invalidRows.slice(0, 5).join('; ')}${invalidRows.length > 5 ? '; ...' : ''}.`
+      setBulkDestError(message)
+      onNotify?.(message, 'error')
+      return
+    }
+
+    setBulkDestError('')
+    setIsSavingBulkDest(true)
+    let processedCount = 0
+    const saveErrors: string[] = []
+    try {
+      for (const row of rows) {
+        const cleanCnpj = row.cnpj.replace(/\D/g, '')
+        const existing = getAllDestinatarios().find(
+          (recipient) => recipient.cnpjPrincipal.replace(/\D/g, '') === cleanCnpj
+        )
+        const recipientSave = saveCustomDestinatario({
+          id: existing && !existing.isSistema ? existing.id : undefined,
+          nome: row.nome.trim().toUpperCase(),
+          nomenclatura: row.nomenclatura.trim() || existing?.nomenclatura || '',
+          cnpjPrincipal: formatCNPJ(row.cnpj),
+          cnpjsAdicionais: existing?.cnpjsAdicionais || [],
+          aliases: existing?.aliases || [],
+          cidade: existing?.cidade || '',
+          uf: existing?.uf || '',
+          observacoes: existing?.observacoes || '',
+          ativo: true,
+        })
+        try {
+          await recipientSave
+        } catch (err) {
+          saveErrors.push(`${row.nome}: ${err instanceof Error ? err.message : 'falha ao sincronizar destinatário'}`)
+        }
+        if (row.contrato || existing?.contrato) {
+          try {
+            await saveDestinatarioContract(
+              cleanCnpj,
+              row.contrato
+                ? row.contrato.toUpperCase() as ContratoDestinatario
+                : existing?.contrato || ''
+            )
+          } catch (err) {
+            saveErrors.push(`${row.nome}: ${err instanceof Error ? err.message : 'falha ao sincronizar contrato'}`)
+          }
+        }
+        processedCount += 1
+      }
+      reloadData()
+      if (saveErrors.length > 0) {
+        console.error('Erros na sincronização dos destinatários em massa:', saveErrors)
+        const message = `${processedCount} linha(s) processada(s), mas houve falha ao sincronizar com o banco. A grade foi mantida para você poder revisar e tentar novamente. ${saveErrors.slice(0, 3).join('; ')}${saveErrors.length > 3 ? '; ...' : ''}`
+        setBulkDestError(message)
+        onNotify?.(message, 'warning')
+      } else {
+        setBulkDestRows(Array.from({ length: 5 }, () => ({ nome: '', cnpj: '', nomenclatura: '', contrato: '', line: 0 })))
+        setBulkDestError('')
+        setIsBulkDestModalOpen(false)
+        onNotify?.(`${processedCount} destinatário(s) cadastrado(s)/atualizado(s) com sucesso.`, 'success')
+      }
+    } catch (err) {
+      reloadData()
+      const message = `${processedCount} destinatário(s) foram processados antes da falha. A grade foi mantida; corrija ou tente novamente. ${
+        err instanceof Error ? err.message : 'Ocorreu um erro ao salvar a lista.'
+      }`
+      setBulkDestError(message)
+      onNotify?.(message, 'error')
+    } finally {
+      setIsSavingBulkDest(false)
+    }
   }
 
   // Deletar Destinatário
@@ -259,14 +489,6 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
     setTimeout(() => setCopiedId(null), 2000)
   }
 
-  // Simulador de Teste
-  const handleRunTest = () => {
-    if (!testInput.trim()) return
-    const destMatch = matchDestinatarioFromTextOrCnpj(testInput, testInput, testInput)
-    const transMatch = matchTransbordoFromText(testInput)
-    setTestResult({ destMatch, transMatch })
-  }
-
   // Filtragem dos Destinatários
   const filteredDestinatarios = useMemo(() => {
     return destinatarios.filter((d) => {
@@ -274,14 +496,121 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
       if (originFilter === 'SISTEMA' && !d.isSistema) return false
 
       if (!searchFilter.trim()) return true
-      const q = searchFilter.toUpperCase()
-      const inNome = d.nome.toUpperCase().includes(q)
-      const inCnpj = (d.cnpjPrincipal || '').replace(/\D/g, '').includes(q.replace(/\D/g, '')) || d.cnpjPrincipal.includes(q)
-      const inAliases = (d.aliases || []).some((a) => a.toUpperCase().includes(q))
-      const inCidade = (d.cidade || '').toUpperCase().includes(q)
-      return inNome || inCnpj || inAliases || inCidade
+      const q = normalizeSearchText(searchFilter.trim())
+      const digitsQuery = searchFilter.replace(/\D/g, '')
+      const inNome = normalizeSearchText(d.nome).includes(q)
+      const inNomenclatura = normalizeSearchText(d.nomenclatura || '').includes(q)
+      const inCnpj = Boolean(digitsQuery) && (d.cnpjPrincipal || '').replace(/\D/g, '').includes(digitsQuery)
+      const inCnpjsAdicionais = Boolean(digitsQuery) &&
+        (d.cnpjsAdicionais || []).some((cnpj) => cnpj.replace(/\D/g, '').includes(digitsQuery))
+      const inAliases = (d.aliases || []).some((a) => normalizeSearchText(a).includes(q))
+      const inCidade = normalizeSearchText(d.cidade || '').includes(q)
+      return inNome || inNomenclatura || inCnpj || inCnpjsAdicionais || inAliases || inCidade
     })
   }, [destinatarios, searchFilter, originFilter])
+
+  const bulkEditFilteredDestinatarios = useMemo(() => {
+    const query = normalizeSearchText(bulkEditFilter.trim())
+    if (!query) return destinatarios
+    const digitsQuery = bulkEditFilter.replace(/\D/g, '')
+    return destinatarios.filter((recipient) =>
+      normalizeSearchText(recipient.nome).includes(query) ||
+      normalizeSearchText(recipient.nomenclatura || '').includes(query) ||
+      (recipient.aliases || []).some((alias) => normalizeSearchText(alias).includes(query)) ||
+      (recipient.cidade && normalizeSearchText(recipient.cidade).includes(query)) ||
+      (digitsQuery && (
+        recipient.cnpjPrincipal.replace(/\D/g, '').includes(digitsQuery) ||
+        (recipient.cnpjsAdicionais || []).some((cnpj) => cnpj.replace(/\D/g, '').includes(digitsQuery))
+      ))
+    )
+  }, [destinatarios, bulkEditFilter])
+
+  const openBulkEditModal = () => {
+    setBulkEditFilter('')
+    setBulkEditSelectedIds([])
+    setBulkEditNameEnabled(false)
+    setBulkEditNomenclatureEnabled(false)
+    setBulkEditContractEnabled(false)
+    setBulkEditName('')
+    setBulkEditNomenclature('')
+    setBulkEditContract('')
+    setBulkEditError('')
+    setIsBulkEditModalOpen(true)
+  }
+
+  const handleBulkEditDestinatarios = async () => {
+    const selected = destinatarios.filter((recipient) => bulkEditSelectedIds.includes(recipient.id))
+    if (selected.length === 0) {
+      setBulkEditError('Selecione ao menos um destinatário.')
+      return
+    }
+    if (!bulkEditNameEnabled && !bulkEditNomenclatureEnabled && !bulkEditContractEnabled) {
+      setBulkEditError('Selecione ao menos uma informação para aplicar.')
+      return
+    }
+    if (bulkEditNameEnabled && !bulkEditName.trim()) {
+      setBulkEditError('Informe o novo nome do destinatário.')
+      return
+    }
+
+    setIsSavingBulkDest(true)
+    setBulkEditError('')
+    const errors: string[] = []
+    let processed = 0
+    try {
+      for (const recipient of selected) {
+        if (bulkEditNameEnabled || bulkEditNomenclatureEnabled) {
+          try {
+            await saveCustomDestinatario({
+              id: recipient.isSistema ? undefined : recipient.id,
+              nome: bulkEditNameEnabled ? bulkEditName.trim().toUpperCase() : recipient.nome,
+              nomenclatura: bulkEditNomenclatureEnabled
+                ? bulkEditNomenclature.trim()
+                : recipient.nomenclatura || '',
+              cnpjPrincipal: recipient.cnpjPrincipal,
+              cnpjsAdicionais: recipient.cnpjsAdicionais || [],
+              aliases: recipient.aliases || [],
+              cidade: recipient.cidade || '',
+              uf: recipient.uf || '',
+              observacoes: recipient.observacoes || '',
+              ativo: recipient.ativo,
+            })
+          } catch (err) {
+            errors.push(`${recipient.nome}: ${err instanceof Error ? err.message : 'falha ao salvar destinatário'}`)
+          }
+        }
+
+        if (bulkEditContractEnabled) {
+          try {
+            await saveDestinatarioContract(
+              recipient.cnpjPrincipal,
+              bulkEditContract || ''
+            )
+          } catch (err) {
+            errors.push(`${recipient.nome}: ${err instanceof Error ? err.message : 'falha ao salvar contrato'}`)
+          }
+        }
+        processed += 1
+      }
+
+      reloadData()
+      if (errors.length > 0) {
+        const message = `${processed} destinatário(s) processado(s), mas houve falha ao salvar/sincronizar. ${errors.slice(0, 3).join('; ')}${errors.length > 3 ? '; ...' : ''}`
+        setBulkEditError(message)
+        onNotify?.(message, 'warning')
+        return
+      }
+
+      setIsBulkEditModalOpen(false)
+      onNotify?.(`Alteração aplicada a ${processed} destinatário(s).`, 'success')
+    } catch (err) {
+      const message = `Erro ao aplicar a alteração em massa: ${err instanceof Error ? err.message : 'falha inesperada.'}`
+      setBulkEditError(message)
+      onNotify?.(message, 'error')
+    } finally {
+      setIsSavingBulkDest(false)
+    }
+  }
 
   // Filtragem dos Transbordos
   const filteredTransbordos = useMemo(() => {
@@ -290,11 +619,12 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
       if (originFilter === 'SISTEMA' && !t.isSistema) return false
 
       if (!searchFilter.trim()) return true
-      const q = searchFilter.toUpperCase()
-      const inNome = t.nome.toUpperCase().includes(q)
-      const inCnpj = t.cnpj ? t.cnpj.includes(q) : false
-      const inAliases = (t.aliases || []).some((a) => a.toUpperCase().includes(q))
-      const inCidade = (t.cidade || '').toUpperCase().includes(q)
+      const q = normalizeSearchText(searchFilter.trim())
+      const digitsQuery = searchFilter.replace(/\D/g, '')
+      const inNome = normalizeSearchText(t.nome).includes(q)
+      const inCnpj = Boolean(digitsQuery) && Boolean(t.cnpj?.replace(/\D/g, '').includes(digitsQuery))
+      const inAliases = (t.aliases || []).some((a) => normalizeSearchText(a).includes(q))
+      const inCidade = normalizeSearchText(t.cidade || '').includes(q)
       return inNome || inCnpj || inAliases || inCidade
     })
   }, [transbordos, searchFilter, originFilter])
@@ -322,15 +652,17 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <Button
-            type="button"
-            size="sm"
-            onClick={activeSubTab === 'destinatarios' ? openNewDestModal : openNewTransModal}
-            className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white cursor-pointer shadow-xs flex items-center gap-1.5 h-9 px-3.5"
-          >
-            <Plus className="h-4 w-4" />
-            {activeSubTab === 'destinatarios' ? 'Novo Destinatário' : 'Novo Transbordo'}
-          </Button>
+          {activeSubTab === 'transbordos' && (
+            <Button
+              type="button"
+              size="sm"
+              onClick={openNewTransModal}
+              className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white cursor-pointer shadow-xs flex items-center gap-1.5 h-9 px-3.5"
+            >
+              <Plus className="h-4 w-4" />
+              Novo Transbordo
+            </Button>
+          )}
           <Button
             type="button"
             size="sm"
@@ -343,74 +675,6 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
           </Button>
         </div>
       </div>
-
-      {/* Caixa de Simulação / Teste Rápido de Reconhecimento */}
-      <Card className="border border-indigo-100 dark:border-indigo-950/60 bg-indigo-50/20 dark:bg-indigo-950/10 shadow-2xs">
-        <CardContent className="p-4 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 dark:text-indigo-200">
-            <Sparkles className="h-4 w-4 text-indigo-600" />
-            <span>Simulador de Reconhecimento em Tempo Real</span>
-          </div>
-          <p className="text-[11px] text-zinc-500">
-            Cole um CNPJ, razão social ou trecho de informação complementar da nota para testar se os cadastros ativos já conseguem identificá-lo:
-          </p>
-          <div className="flex flex-col sm:flex-row items-center gap-2">
-            <Input
-              value={testInput}
-              onChange={(e) => {
-                setTestInput(e.target.value)
-                if (testResult) setTestResult(null)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRunTest()
-              }}
-              placeholder="Ex: 04.626.426/0001-90, USINA TIETE, ou 'TRANSBORDO EM UBERABA TIUB'..."
-              className="text-xs h-9 bg-white dark:bg-zinc-900"
-            />
-            <Button
-              type="button"
-              size="sm"
-              onClick={handleRunTest}
-              className="text-xs h-9 font-semibold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer shrink-0"
-            >
-              Testar Reconhecimento
-            </Button>
-          </div>
-
-          {testResult && (
-            <div className="mt-2 p-3 rounded-xl bg-white dark:bg-zinc-900 border border-indigo-200 dark:border-indigo-800 text-xs space-y-1.5 animate-fadeIn">
-              <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-1">
-                <span className="font-bold text-zinc-700 dark:text-zinc-300">Resultado da Simulação:</span>
-                <span className="text-[10px] text-zinc-400 font-mono">Motor de Busca Ativo</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                <div className="p-2 rounded bg-zinc-50 dark:bg-zinc-800/60">
-                  <span className="font-semibold text-zinc-500 block mb-0.5">Destinatário Identificado:</span>
-                  {testResult.destMatch ? (
-                    <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      {testResult.destMatch}
-                    </span>
-                  ) : (
-                    <span className="text-zinc-400 italic">Nenhum destinatário correspondente encontrado</span>
-                  )}
-                </div>
-                <div className="p-2 rounded bg-zinc-50 dark:bg-zinc-800/60">
-                  <span className="font-semibold text-zinc-500 block mb-0.5">Transbordo Identificado:</span>
-                  {testResult.transMatch ? (
-                    <span className="font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      {testResult.transMatch}
-                    </span>
-                  ) : (
-                    <span className="text-zinc-400 italic">Nenhum transbordo correspondente encontrado</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       {/* Sub-Abas: Destinatários vs Transbordos */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-200 dark:border-zinc-800 pb-3">
@@ -493,15 +757,38 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
             <span>
               Exibindo <strong>{filteredDestinatarios.length}</strong> de <strong>{destinatarios.length}</strong> destinatário(s) cadastrado(s)
             </span>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={openNewDestModal}
-              className="text-xs h-7 cursor-pointer text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-900"
-            >
-              <Plus className="h-3.5 w-3.5 mr-1" /> Cadastrar Destinatário
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setBulkDestError('')
+                  setIsBulkDestModalOpen(true)
+                }}
+                className="text-xs h-7 cursor-pointer"
+              >
+                Cadastro/edição em massa
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={openBulkEditModal}
+                className="text-xs h-7 cursor-pointer"
+              >
+                Filtrar e editar em massa
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={openNewDestModal}
+                className="text-xs h-7 cursor-pointer text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-900"
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" /> Cadastrar Destinatário
+              </Button>
+            </div>
           </div>
 
           {filteredDestinatarios.length === 0 ? (
@@ -511,7 +798,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                 Nenhum destinatário encontrado com os filtros atuais
               </p>
               <p className="text-xs text-zinc-500">
-                Clique no botão &quot;Novo Destinatário&quot; para cadastrar uma nova empresa e seu CNPJ.
+                Clique em &quot;Cadastrar Destinatário&quot; para cadastrar uma nova empresa e seu CNPJ.
               </p>
             </div>
           ) : (
@@ -535,6 +822,11 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                           <span className="font-bold text-xs text-zinc-900 dark:text-zinc-100">
                             {dest.nome}
                           </span>
+                          {dest.contrato && (
+                            <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                              {dest.contrato}
+                            </span>
+                          )}
                           {isCustom ? (
                             <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
                               Personalizado
@@ -545,6 +837,11 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                             </span>
                           )}
                         </div>
+                        {dest.nomenclatura && (
+                          <div className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                            Nomenclatura: <span className="font-semibold">{dest.nomenclatura}</span>
+                          </div>
+                        )}
 
                         {(dest.cidade || dest.uf) && (
                           <div className="text-[11px] text-zinc-500 flex items-center gap-1">
@@ -824,7 +1121,12 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Building2 className="h-5 w-5 text-blue-600" />
-              {editingDest ? 'Editar Destinatário' : 'Cadastrar Novo Destinatário'}
+              {editingDest ? `Editar ${editingDest.nome}` : 'Cadastrar Novo Destinatário'}
+              {destContrato && (
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                  {destContrato}
+                </span>
+              )}
             </DialogTitle>
             <DialogDescription className="text-xs">
               O nome cadastrado será exibido quando o CNPJ principal, uma filial ou a raiz do CNPJ forem encontrados na nota.
@@ -843,6 +1145,34 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                 required
                 className="text-xs uppercase"
               />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300 block mb-1">
+                Nomenclatura (opcional)
+              </label>
+              <Input
+                value={destNomenclatura}
+                onChange={(e) => setDestNomenclatura(e.target.value)}
+                placeholder="Nome alternativo associado a este destinatário"
+                className="text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300 block mb-1">
+                Contrato (opcional)
+              </label>
+              <select
+                value={destContrato}
+                onChange={(e) => setDestContrato(e.target.value as ContratoDestinatario | '')}
+                className="w-full text-xs h-9 rounded-md border border-input bg-background px-3 py-1 text-foreground shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <option value="">Sem contrato</option>
+                {CONTRATOS_DESTINATARIO.map((contrato) => (
+                  <option key={contrato} value={contrato}>{contrato}</option>
+                ))}
+              </select>
             </div>
 
             <div>
@@ -952,6 +1282,257 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isBulkEditModalOpen} onOpenChange={setIsBulkEditModalOpen}>
+        <DialogContent className="max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Filtrar e editar destinatários em massa</DialogTitle>
+            <DialogDescription className="text-xs">
+              Filtre pelo nome, nomenclatura, CNPJ ou alias; selecione os destinatários e marque quais campos deseja aplicar igualmente a todos.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-zinc-400" />
+              <Input
+                value={bulkEditFilter}
+                onChange={(event) => setBulkEditFilter(event.target.value)}
+                placeholder="Filtrar destinatários por nome, nomenclatura, CNPJ ou alias..."
+                className="h-9 pl-8 text-xs"
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs">
+              <span>
+                {bulkEditFilteredDestinatarios.length} resultado(s); {bulkEditSelectedIds.length} selecionado(s)
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const visibleIds = bulkEditFilteredDestinatarios.map((recipient) => recipient.id)
+                  const allVisibleSelected = visibleIds.every((id) => bulkEditSelectedIds.includes(id))
+                  setBulkEditSelectedIds((current) => allVisibleSelected
+                    ? current.filter((id) => !visibleIds.includes(id))
+                    : Array.from(new Set([...current, ...visibleIds]))
+                  )
+                }}
+                className="font-semibold text-blue-600 hover:underline dark:text-blue-400"
+              >
+                {bulkEditFilteredDestinatarios.length > 0 &&
+                  bulkEditFilteredDestinatarios.every((recipient) => bulkEditSelectedIds.includes(recipient.id))
+                  ? 'Desmarcar resultados'
+                  : 'Selecionar todos os resultados'}
+              </button>
+            </div>
+
+            <div className="max-h-56 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+              {bulkEditFilteredDestinatarios.length === 0 ? (
+                <div className="p-5 text-center text-xs text-zinc-500">Nenhum destinatário encontrado.</div>
+              ) : (
+                bulkEditFilteredDestinatarios.map((recipient) => (
+                  <label
+                    key={recipient.id}
+                    className="flex cursor-pointer items-center gap-2 border-b border-zinc-100 px-3 py-2 text-xs last:border-b-0 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-900"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={bulkEditSelectedIds.includes(recipient.id)}
+                      onChange={(event) => setBulkEditSelectedIds((current) => event.target.checked
+                        ? [...current, recipient.id]
+                        : current.filter((id) => id !== recipient.id)
+                      )}
+                    />
+                    <span className="min-w-0 flex-1 truncate font-semibold">{recipient.nome}</span>
+                    <span className="text-zinc-500">{recipient.cnpjPrincipal}</span>
+                    {recipient.nomenclatura && <span className="text-zinc-500">{recipient.nomenclatura}</span>}
+                    {recipient.contrato && <span className="font-semibold text-indigo-600 dark:text-indigo-400">{recipient.contrato}</span>}
+                  </label>
+                ))
+              )}
+            </div>
+
+            <div className="grid gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-800 md:grid-cols-3">
+              <label className="space-y-2 text-xs">
+                <span className="flex items-center gap-2 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={bulkEditNameEnabled}
+                    onChange={(event) => setBulkEditNameEnabled(event.target.checked)}
+                  />
+                  Aplicar mesmo nome a todos
+                </span>
+                <Input
+                  value={bulkEditName}
+                  onChange={(event) => setBulkEditName(event.target.value)}
+                  disabled={!bulkEditNameEnabled}
+                  placeholder="Novo nome do destinatário"
+                  className="h-8 text-xs"
+                />
+              </label>
+
+              <label className="space-y-2 text-xs">
+                <span className="flex items-center gap-2 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={bulkEditNomenclatureEnabled}
+                    onChange={(event) => setBulkEditNomenclatureEnabled(event.target.checked)}
+                  />
+                  Aplicar mesma nomenclatura
+                </span>
+                <Input
+                  value={bulkEditNomenclature}
+                  onChange={(event) => setBulkEditNomenclature(event.target.value)}
+                  disabled={!bulkEditNomenclatureEnabled}
+                  placeholder="Nomenclatura (vazio remove)"
+                  className="h-8 text-xs"
+                />
+              </label>
+
+              <label className="space-y-2 text-xs">
+                <span className="flex items-center gap-2 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={bulkEditContractEnabled}
+                    onChange={(event) => setBulkEditContractEnabled(event.target.checked)}
+                  />
+                  Aplicar mesmo contrato
+                </span>
+                <select
+                  value={bulkEditContract}
+                  onChange={(event) => setBulkEditContract(event.target.value as ContratoDestinatario | '')}
+                  disabled={!bulkEditContractEnabled}
+                  className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <option value="">Sem contrato (limpar)</option>
+                  {CONTRATOS_DESTINATARIO.map((contract) => (
+                    <option key={contract} value={contract}>{contract}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {bulkEditError && (
+              <div role="alert" className="rounded-md border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
+                {bulkEditError}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsBulkEditModalOpen(false)}
+              disabled={isSavingBulkDest}
+              className="text-xs"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleBulkEditDestinatarios}
+              disabled={isSavingBulkDest}
+              className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {isSavingBulkDest ? 'Aplicando...' : `Aplicar aos ${bulkEditSelectedIds.length} selecionado(s)`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cadastro em massa também atualiza destinatários existentes pelo CNPJ. */}
+      <Dialog open={isBulkDestModalOpen} onOpenChange={setIsBulkDestModalOpen}>
+        <DialogContent className="max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Cadastro/edição em massa de destinatários</DialogTitle>
+            <DialogDescription className="text-xs">
+              Preencha as colunas abaixo ou cole as quatro colunas copiadas de uma planilha na primeira célula.
+              Destinatário e CNPJ/CPF são obrigatórios; nomenclatura e contrato podem ficar vazios.
+              CNPJs já cadastrados serão atualizados, preservando os demais campos.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="max-h-[55vh] overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+              <table className="w-full min-w-[760px] border-collapse text-xs">
+                <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-800">
+                  <tr className="text-left">
+                    <th className="p-2 font-semibold">Destinatário *</th>
+                    <th className="p-2 font-semibold">CNPJ/CPF *</th>
+                    <th className="p-2 font-semibold">Nomenclatura</th>
+                    <th className="p-2 font-semibold">Contrato</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bulkDestRows.map((row, rowIndex) => (
+                    <tr key={rowIndex} className="border-t border-zinc-200 dark:border-zinc-800">
+                      {(['nome', 'cnpj', 'nomenclatura', 'contrato'] as const).map((column, columnIndex) => (
+                        <td key={column} className="p-1.5">
+                          <Input
+                            value={row[column]}
+                            onChange={(event) => updateBulkDestCell(rowIndex, column, event.target.value)}
+                            onPaste={(event) => handleBulkDestPaste(event, rowIndex, columnIndex)}
+                            placeholder={
+                              column === 'nome' ? 'Nome do destinatário' :
+                              column === 'cnpj' ? '00.000.000/0001-00' :
+                              column === 'nomenclatura' ? 'Opcional' :
+                              'Ex.: CGL-T'
+                            }
+                            className={`h-8 text-xs ${column === 'cnpj' ? 'font-mono' : ''}`}
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {bulkDestError && (
+              <div
+                role="alert"
+                className="rounded-md border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200"
+              >
+                {bulkDestError}
+              </div>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setBulkDestRows((rows) => [
+                ...rows,
+                { nome: '', cnpj: '', nomenclatura: '', contrato: '', line: 0 },
+              ])}
+              className="text-xs"
+            >
+              <Plus className="mr-1 h-3.5 w-3.5" /> Adicionar linha
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsBulkDestModalOpen(false)}
+              disabled={isSavingBulkDest}
+              className="text-xs"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleBulkSaveDestinatarios}
+              disabled={isSavingBulkDest}
+              className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {isSavingBulkDest ? 'Salvando...' : 'Validar e salvar lista'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

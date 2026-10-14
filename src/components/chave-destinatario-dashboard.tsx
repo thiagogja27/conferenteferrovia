@@ -4,7 +4,11 @@ import React, { useState, useMemo, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { subscribeCadastrosChanges } from '@/lib/cadastros-logisticos-service'
+import {
+  getDestinatarioContractByCnpj,
+  getDestinatarioNomenclatureByCnpj,
+  subscribeCadastrosChanges,
+} from '@/lib/cadastros-logisticos-service'
 import {
   PieChart,
   Pie,
@@ -438,6 +442,8 @@ export function ChaveDestinatarioDashboard({
       'CNPJ na Chave': item.chaveCnpjFormatted,
       'CNPJ Destinatário': item.destCNPJFormatted || 'Não Informado',
       'Destinatário (Razão Social)': item.destNome,
+      Nomenclatura: getDestinatarioNomenclatureByCnpj(item.destCNPJ) || '-',
+      Contrato: getDestinatarioContractByCnpj(item.destCNPJ) || '-',
       'CNPJ Emitente': item.emitCNPJFormatted || 'Não Informado',
       'Emitente (Razão Social)': item.emitNome,
       'Chave Pertence ao Emitente?': item.matchesEmitente ? 'SIM' : 'NÃO',
@@ -459,6 +465,8 @@ export function ChaveDestinatarioDashboard({
       { wch: 22 }, // CNPJ Chave
       { wch: 22 }, // CNPJ Dest
       { wch: 35 }, // Destinatário
+      { wch: 24 }, // Nomenclatura
+      { wch: 14 }, // Contrato
       { wch: 22 }, // CNPJ Emit
       { wch: 35 }, // Emitente
       { wch: 25 }, // Pertence Emitente?

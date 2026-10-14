@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useMemo, useRef } from 'react'
 import {
   Upload,
   FileSpreadsheet,
@@ -27,13 +27,11 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
 } from 'recharts'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { getDatabaseInstance, getOperatorName } from '@/lib/firebase-realtime'
-import { ref, onValue, push, remove } from 'firebase/database'
+import { getOperatorName } from '@/lib/firebase-realtime'
 import {
   RumoFileEntry,
   RumoExtractionResult,
@@ -45,14 +43,11 @@ import {
 import { extractPdfTextWithPdfJs } from '@/lib/client-pdf-parser'
 import { notifyWhatsAppEvent } from '@/lib/whatsapp-notifications'
 
-const RUMO_STORAGE_KEY = 'rumo_conversor_historico_v1'
-
 interface RumoConverterTabProps {
   onNotify?: (message: string, type?: 'success' | 'warning' | 'error') => void
 }
 
 export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) => {
-  // Sub-abas internas
   const [subTab, setSubTab] = useState<'conversao' | 'dashboard' | 'historico'>('conversao')
 
   // Estados de Upload e Processamento
@@ -70,93 +65,8 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
   // Filtros de busca e controle de linhas concluídas (conferência)
   const [searchQuery, setSearchQuery] = useState('')
   const [completedDesmembreRows, setCompletedDesmembreRows] = useState<number[]>([])
-
-  // Histórico de Envios
   const [historyFiles, setHistoryFiles] = useState<RumoFileEntry[]>([])
-
-  // Dashboard de BI
-  const [selectedTrainId, setSelectedTrainId] = useState<string>('')
-
-  // 1. Carregar histórico do localStorage e sincronizar com Firebase Realtime Database
-  useEffect(() => {
-    // Carrega do localStorage primeiro (fallback instantâneo)
-    try {
-      const stored = localStorage.getItem(RUMO_STORAGE_KEY)
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        if (Array.isArray(parsed)) {
-          setHistoryFiles(parsed)
-        }
-      }
-    } catch (e) {
-      console.error('Erro ao ler histórico Rumo local:', e)
-    }
-
-    // Sincroniza com Firebase Realtime Database
-    const db = getDatabaseInstance()
-    if (db) {
-      try {
-        const filesRef = ref(db, 'rumo_files')
-        const unsubscribe = onValue(
-          filesRef,
-          (snapshot) => {
-            const data = snapshot.val()
-            if (data && typeof data === 'object') {
-              const list: RumoFileEntry[] = Object.keys(data).map((key) => ({
-                id: key,
-                ...data[key],
-              }))
-              list.sort(
-                (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-              )
-              setHistoryFiles(list)
-              try {
-                localStorage.setItem(RUMO_STORAGE_KEY, JSON.stringify(list))
-              } catch {
-                // ignore quota
-              }
-            }
-          },
-          (err) => {
-            console.warn('Conexão Firebase offline para rumo_files, usando storage local:', err)
-          }
-        )
-        return () => unsubscribe()
-      } catch (err) {
-        console.warn('Erro ao configurar listener Firebase para rumo_files:', err)
-      }
-    }
-  }, [])
-
-  // 2. Salvar novo registro de trem no Firebase e LocalStorage
-  const saveEntryToStorage = async (entry: Omit<RumoFileEntry, 'id'>) => {
-    const localId = `rumo_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
-    const newEntry: RumoFileEntry = {
-      id: localId,
-      ...entry,
-    }
-
-    setHistoryFiles((prev) => {
-      const updated = [newEntry, ...prev.filter((item) => item.name !== newEntry.name)]
-      try {
-        localStorage.setItem(RUMO_STORAGE_KEY, JSON.stringify(updated))
-      } catch {
-        // ignore
-      }
-      return updated
-    })
-
-    // Sincroniza com Firebase se disponível
-    const db = getDatabaseInstance()
-    if (db) {
-      try {
-        const filesRef = ref(db, 'rumo_files')
-        await push(filesRef, entry)
-      } catch (err) {
-        console.warn('Não foi possível persistir no Firebase rumo_files:', err)
-      }
-    }
-  }
+  const [selectedTrainId, setSelectedTrainId] = useState('')
 
   // 3. Processar arquivo PDF (Client-First com Fallback de Servidor e Tratamento Seguro de JSON)
   const handlePdfUpload = async (file: File) => {
@@ -261,20 +171,6 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
       setActiveFileName(file.name)
       setActiveFileBase64Excel(excelBase64)
 
-      // Salva no histórico local e Firebase Realtime
-      await saveEntryToStorage({
-        originalName: file.name,
-        name: extractionResult.outputFileName,
-        createdAt: new Date().toISOString(),
-        prefixo: extractionResult.prefixo,
-        trainName: extractionResult.trainName,
-        desmembreCount: extractionResult.desmembreCount,
-        desmembreRemetenteCount: extractionResult.desmembreRemetenteCount,
-        tableData: extractionResult.aoaData,
-        desmembreRows: extractionResult.desmembreRows,
-        cnpjData: extractionResult.cnpjData,
-      })
-
       // Download automático do Excel gerado
       if (excelBase64) {
         downloadBase64Excel(excelBase64, extractionResult.outputFileName)
@@ -298,14 +194,8 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
       notifyWhatsAppEvent({
         type: 'rumo',
         title: 'Composição Rumo Processada',
-        description: `Arquivo "${file.name}" convertido com sucesso: ${extractionResult.aoaData.length - 1} vagões e ${extractionResult.desmembreCount} desmembres.`,
+        description: 'PDF de composição processado e planilha Excel gerada com sucesso.',
         operatorName: getOperatorName(),
-        metadata: {
-          trainName: extractionResult.trainName || extractionResult.prefixo || 'Trem',
-          prefixo: extractionResult.prefixo,
-          totalVagoes: extractionResult.aoaData.length - 1,
-          desmembreCount: extractionResult.desmembreCount,
-        },
       }).catch(() => {})
     } catch (err: any) {
       console.error('Erro no processamento do PDF Rumo:', err)
@@ -524,27 +414,9 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
     }
   }
 
-  // 10. Excluir item do histórico
-  const handleDeleteHistoric = async (id: string) => {
-    setHistoryFiles((prev) => {
-      const updated = prev.filter((f) => f.id !== id)
-      try {
-        localStorage.setItem(RUMO_STORAGE_KEY, JSON.stringify(updated))
-      } catch {
-        // ignore
-      }
-      return updated
-    })
-
-    const db = getDatabaseInstance()
-    if (db) {
-      try {
-        const itemRef = ref(db, `rumo_files/${id}`)
-        await remove(itemRef)
-      } catch (e) {
-        console.warn('Erro ao remover do Firebase:', e)
-      }
-    }
+  // 10. Remover item da lista local temporária
+  const handleDeleteHistoric = (id: string) => {
+    setHistoryFiles((prev) => prev.filter((file) => file.id !== id))
   }
 
   return (
@@ -562,7 +434,7 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                   Conversor Resumo Rumo
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                  PDF para Excel + BI
+                  PDF para Excel
                 </span>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
                   TEAG & Baltech
@@ -570,53 +442,9 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
               </div>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
                 Extração inteligente de composições ferroviárias, conferência e identificação de
-                desmembres com geração de planilhas e dashboard operacional.
+                desmembres com geração de planilhas Excel.
               </p>
             </div>
-          </div>
-
-          {/* Sub-menu de navegação interna */}
-          <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-800/80 p-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700/60 self-start md:self-auto">
-            <button
-              onClick={() => setSubTab('conversao')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                subTab === 'conversao'
-                  ? 'bg-white dark:bg-zinc-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
-                  : 'text-zinc-600 dark:text-zinc-400 hover:text-foreground'
-              }`}
-            >
-              <FileSpreadsheet className="h-3.5 w-3.5" />
-              <span>Conversão & Desmembres</span>
-            </button>
-
-            <button
-              onClick={() => setSubTab('dashboard')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                subTab === 'dashboard'
-                  ? 'bg-white dark:bg-zinc-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
-                  : 'text-zinc-600 dark:text-zinc-400 hover:text-foreground'
-              }`}
-            >
-              <BarChart3 className="h-3.5 w-3.5" />
-              <span>Dashboard BI</span>
-            </button>
-
-            <button
-              onClick={() => setSubTab('historico')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                subTab === 'historico'
-                  ? 'bg-white dark:bg-zinc-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
-                  : 'text-zinc-600 dark:text-zinc-400 hover:text-foreground'
-              }`}
-            >
-              <History className="h-3.5 w-3.5" />
-              <span>Últimos Envios</span>
-              {historyFiles.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-600">
-                  {historyFiles.length}
-                </span>
-              )}
-            </button>
           </div>
         </div>
       </div>
@@ -1274,7 +1102,6 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                 onClick={() => {
                   if (confirm('Deseja limpar o histórico local de envios do Conversor Rumo?')) {
                     setHistoryFiles([])
-                    localStorage.removeItem(RUMO_STORAGE_KEY)
                   }
                 }}
                 className="text-xs text-red-600 hover:text-red-700 h-8 cursor-pointer gap-1.5"

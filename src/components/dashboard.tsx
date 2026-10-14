@@ -21,6 +21,8 @@ import {
   isCarrierCnpj,
 } from "@/lib/destinatario-utils"
 import {
+  getDestinatarioContractByCnpj,
+  getDestinatarioNomenclatureByCnpj,
   matchTransbordoFromText,
   subscribeCadastrosChanges,
 } from "@/lib/cadastros-logisticos-service"
@@ -412,6 +414,8 @@ export function Dashboard({ files }: DashboardProps) {
     category: string
     fullName: string
     files: DashboardFileItem[]
+    contractName?: string
+    nomenclatureName?: string
   } | null>(null)
 
   const [dashboardView, setDashboardView] = useState<"logistica" | "chave-destinatario">("logistica")
@@ -420,7 +424,7 @@ export function Dashboard({ files }: DashboardProps) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
 
   // Re-avalia as notas quando um novo destinatário ou transbordo for cadastrado no Monitor
-  const [, setCadastrosVersion] = useState(0)
+  const [cadastrosVersion, setCadastrosVersion] = useState(0)
   useEffect(() => {
     return subscribeCadastrosChanges(() => {
       setCadastrosVersion((v) => v + 1)
@@ -676,6 +680,8 @@ export function Dashboard({ files }: DashboardProps) {
           fullName,
           destNome,
           destCNPJ,
+          contractName: getDestinatarioContractByCnpj(destCNPJ),
+          nomenclatureName: getDestinatarioNomenclatureByCnpj(destCNPJ),
           value,
           color: barColor,
           hasMultipleBranches,
@@ -796,7 +802,7 @@ export function Dashboard({ files }: DashboardProps) {
       totalNotesWithMissingData,
       totalAdjustedByAI,
     }
-  }, [files, logisticsOverrides])
+  }, [files, logisticsOverrides, cadastrosVersion])
 
   // Função para executar a auditoria com IA em notas com dados não informados
   const handleAuditMissingDataWithAI = async (targetFiles?: DashboardFileItem[]) => {
@@ -904,6 +910,8 @@ export function Dashboard({ files }: DashboardProps) {
         category: categoryLabel,
         fullName,
         files: relatedFiles,
+        contractName: payload.contractName,
+        nomenclatureName: payload.nomenclatureName,
       })
       setModalSearch("")
       setExpandedIndex(null)
@@ -956,6 +964,8 @@ export function Dashboard({ files }: DashboardProps) {
         "CNPJ Emitente": d.emitCNPJ,
         Destinatário: d.destNome,
         "CNPJ Destinatário": d.destCNPJ,
+        "Nomenclatura": selectedGroup.nomenclatureName || "-",
+        "Contrato": selectedGroup.contractName || "-",
         Produto: d.produto,
         "Terminal de Entrega": d.terminal,
         Transbordo: d.transbordo,
@@ -1399,6 +1409,11 @@ export function Dashboard({ files }: DashboardProps) {
                                 CNPJ / Filial: <span className="font-bold text-zinc-800 dark:text-zinc-200">{data.destCNPJ}</span>
                               </div>
                             )}
+                            {data.contractName && (
+                              <div className="text-indigo-600 dark:text-indigo-400 font-semibold text-[11px]">
+                                Contrato: {data.contractName}
+                              </div>
+                            )}
                             <div className="text-blue-600 dark:text-blue-400 font-semibold pt-0.5">
                               {data.value} nota(s) ({((data.value / (stats.totalNotas || 1)) * 100).toFixed(1)}%)
                             </div>
@@ -1770,6 +1785,11 @@ export function Dashboard({ files }: DashboardProps) {
                     <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">
                       {selectedGroup?.fullName}
                     </span>
+                    {selectedGroup?.contractName && (
+                      <span className="px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold">
+                        {selectedGroup.contractName}
+                      </span>
+                    )}
                   </span>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">

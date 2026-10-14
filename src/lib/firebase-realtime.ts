@@ -20,6 +20,9 @@ export interface FirebaseRealtimeConfig {
   apiKey?: string
   projectId?: string
   authDomain?: string
+  storageBucket?: string
+  messagingSenderId?: string
+  appId?: string
 }
 
 export interface RealtimeActivity {
@@ -128,34 +131,23 @@ export function setOperatorName(name: string): void {
   }
 }
 
-export const DEFAULT_FIREBASE_RTDB_URL = 'https://novoconferente-default-rtdb.firebaseio.com'
+export const DEFAULT_FIREBASE_RTDB_URL = 'https://conferente2-d10d9-default-rtdb.firebaseio.com'
 
 // Resgata configurações salvas ou de variáveis de ambiente
 export function getFirebaseConfig(): FirebaseRealtimeConfig {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_CONFIG)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      if (parsed?.databaseURL && parsed.databaseURL.includes('novoconferente')) {
-        return parsed
-      }
-    }
-  } catch (e) {
-    console.warn('Erro ao ler config do Firebase do localStorage:', e)
-  }
-
-  // Fallback para variáveis de ambiente VITE_
   const envDbUrl = import.meta.env.VITE_FIREBASE_DATABASE_URL
   if (envDbUrl) {
     return {
       databaseURL: envDbUrl,
-      apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyNovoconferenteDefaultKey',
-      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'novoconferente-default-rtdb',
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || undefined,
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.VITE_FIREBASE_APP_ID,
     }
   }
 
-  // Fallback para variáveis de ambiente em Next.js
   const nextEnvDbUrl = import.meta.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL
   if (nextEnvDbUrl) {
     return {
@@ -163,14 +155,33 @@ export function getFirebaseConfig(): FirebaseRealtimeConfig {
       apiKey: import.meta.env.NEXT_PUBLIC_FIREBASE_API_KEY,
       projectId: import.meta.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
       authDomain: import.meta.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+      storageBucket: import.meta.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.NEXT_PUBLIC_FIREBASE_APP_ID,
     }
   }
 
-  // Padrão definitivo: novoconferente-default-rtdb
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CONFIG)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed?.databaseURL) {
+        return parsed
+      }
+    }
+  } catch (e) {
+    console.warn('Erro ao ler config do Firebase do localStorage:', e)
+  }
+
+  // Fallback: projeto padrão do sistema
   return {
     databaseURL: DEFAULT_FIREBASE_RTDB_URL,
-    apiKey: 'AIzaSyNovoconferenteDefaultKey',
-    projectId: 'novoconferente-default-rtdb',
+    apiKey: 'AIzaSyCa9wWr2FiRUdkNkOC-45cNujJ-WH0yMYg',
+    projectId: 'conferente2-d10d9',
+    authDomain: 'conferente2-d10d9.firebaseapp.com',
+    storageBucket: 'conferente2-d10d9.firebasestorage.app',
+    messagingSenderId: '474054071613',
+    appId: '1:474054071613:web:65ae1639f332a0e02d6154',
   }
 }
 
@@ -296,10 +307,7 @@ export function getDatabaseInstance(): Database | null {
   try {
     const existingApps = getApps()
     appInstance = existingApps.length > 0 ? getApp() : initializeApp({
-      databaseURL: config.databaseURL,
-      apiKey: config.apiKey || 'AIzaSyDefaultPlaceholder',
-      projectId: config.projectId || 'vlic-default',
-      authDomain: config.authDomain,
+      ...config,
     })
 
     dbInstance = getDatabase(appInstance)

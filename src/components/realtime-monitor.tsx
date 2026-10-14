@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
   Dialog,
   DialogContent,
@@ -14,7 +13,6 @@ import {
 } from '@/components/ui/dialog'
 import {
   BarChart3,
-  FileSpreadsheet,
   Clock,
   Users,
   Calendar,
@@ -27,7 +25,6 @@ import {
   AlertTriangle,
   FileText,
   FileCode,
-  FileArchive,
   ArrowUpDown,
   Sparkles,
   Trash2,
@@ -35,33 +32,15 @@ import {
   Check,
   X,
   ExternalLink,
-  Laptop,
   ShieldCheck,
   Flame,
   Activity,
-  Radio,
-  MessageSquare,
   Lightbulb,
-  Crown,
-  UserCheck,
   ShieldAlert,
-  UserPlus,
-  Save,
-  ChevronLeft,
-  ChevronRight,
   Database,
   HardDrive,
   MessageSquareText,
 } from 'lucide-react'
-import {
-  subscribeAllUsersWithDepartments,
-  setUserDepartment,
-  predefineDepartmentByEmail,
-  type UserDatabaseProfile,
-  type UserDepartment,
-} from '@/lib/user-roles'
-import { ConferenceMirrorDashboard } from '@/components/conference-mirror-dashboard'
-import { WhatsAppNotificationSettings } from '@/components/whatsapp-notification-settings'
 import { SuggestionsMonitorAdmin } from '@/components/suggestions-monitor-admin'
 import { CadastrosLogisticosManager } from '@/components/cadastros-logisticos-manager'
 import { DatabaseStorageManager } from '@/components/database-storage-manager'
@@ -113,8 +92,8 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
 
   // Abas de Navegação do Monitor
   const [activeTab, setActiveTab] = useState<
-    'mirror' | 'dashboard' | 'files' | 'timeline' | 'operators' | 'whatsapp' | 'suggestions' | 'cadastros' | 'database'
-  >('mirror')
+    'dashboard' | 'timeline' | 'suggestions' | 'cadastros' | 'database'
+  >('dashboard')
 
   // Contador de sugestões pendentes de resposta da supervisão
   const [pendingSuggestionsCount, setPendingSuggestionsCount] = useState(0)
@@ -131,19 +110,9 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'yesterday' | '7days' | '30days'>('all')
   const [operatorFilter, setOperatorFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState<string>('')
-  const [fileTypeFilter, setFileTypeFilter] = useState<string>('ALL')
 
   // Modal de Impressão / Relatório Executivo
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false)
-
-  // Gestão de Departamentos e Usuários no Banco de Dados
-  const [dbUsers, setDbUsers] = useState<UserDatabaseProfile[]>([])
-  const [userDeptFilter, setUserDeptFilter] = useState<'all' | 'supervisor' | 'colaborador'>('all')
-  const [newEmailToPredefine, setNewEmailToPredefine] = useState('')
-  const [newDeptToPredefine, setNewDeptToPredefine] = useState<UserDepartment>('supervisor')
-  const [newNameToPredefine, setNewNameToPredefine] = useState('')
-  const [isSavingUserDept, setIsSavingUserDept] = useState<string | null>(null)
-  const [deptSaveSuccess, setDeptSaveSuccess] = useState<string | null>(null)
 
   // Assinaturas de telemetria
   useEffect(() => {
@@ -163,71 +132,13 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
       setOperators(ops)
     })
 
-    const unsubDbUsers = subscribeAllUsersWithDepartments((users) => {
-      setDbUsers(users)
-    })
-
     return () => {
       unsubConnection()
       unsubActivities()
       unsubFiles()
       unsubPresence()
-      unsubDbUsers()
     }
   }, [])
-
-  const handleDepartmentChange = async (targetUser: UserDatabaseProfile, newDept: UserDepartment) => {
-    try {
-      setIsSavingUserDept(targetUser.uid)
-      await setUserDepartment(
-        targetUser.uid,
-        targetUser.email,
-        newDept,
-        currentOperator,
-        targetUser.displayName
-      )
-      setDeptSaveSuccess(`Departamento de ${targetUser.displayName || targetUser.email} atualizado para ${newDept.toUpperCase()} no banco!`)
-      if (onNotify) {
-        onNotify(`Departamento de ${targetUser.displayName || targetUser.email} definido como ${newDept.toUpperCase()}.`, 'success')
-      }
-      setTimeout(() => setDeptSaveSuccess(null), 4000)
-    } catch (err: any) {
-      alert('Erro ao atualizar departamento no banco: ' + (err.message || 'Falha de conexão'))
-    } finally {
-      setIsSavingUserDept(null)
-    }
-  }
-
-  const handlePredefineUser = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newEmailToPredefine.trim()) return
-    try {
-      setIsSavingUserDept('predefine')
-      await predefineDepartmentByEmail(
-        newEmailToPredefine.trim(),
-        newDeptToPredefine,
-        currentOperator,
-        newNameToPredefine.trim() || undefined
-      )
-      setDeptSaveSuccess(`Usuário ${newEmailToPredefine} pré-configurado como ${newDeptToPredefine.toUpperCase()} no banco!`)
-      if (onNotify) {
-        onNotify(`Usuário ${newEmailToPredefine} cadastrado como ${newDeptToPredefine.toUpperCase()} no banco.`, 'success')
-      }
-      setNewEmailToPredefine('')
-      setNewNameToPredefine('')
-      setTimeout(() => setDeptSaveSuccess(null), 4000)
-    } catch (err: any) {
-      alert('Erro ao cadastrar usuário no banco: ' + (err.message || 'Falha'))
-    } finally {
-      setIsSavingUserDept(null)
-    }
-  }
-
-  // Usuários filtrados por departamento
-  const filteredDbUsers = useMemo(() => {
-    if (userDeptFilter === 'all') return dbUsers
-    return dbUsers.filter((u) => u.departamento === userDeptFilter)
-  }, [dbUsers, userDeptFilter])
 
   // Lista única de operadores que já registraram atividades
   const availableOperators = useMemo(() => {
@@ -287,24 +198,13 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
     })
   }, [activities, timeThreshold, operatorFilter, searchQuery])
 
-  // Paginação e controle de exibição de arquivos inputados
-  const [filesPage, setFilesPage] = useState(1)
-  const [filesPerPage, setFilesPerPage] = useState<number>(50)
-
-  // Reseta página de arquivos sempre que os filtros forem alterados
-  useEffect(() => {
-    setFilesPage(1)
-  }, [periodFilter, operatorFilter, fileTypeFilter, searchQuery])
-
-  // Arquivos inputados filtrados por período, operador, tipo e busca
+  // Arquivos filtrados por período, operador e busca para os indicadores do dashboard
   const filteredInputFiles = useMemo(() => {
     return inputFiles.filter((file) => {
       // Período
       if (file.timestamp < timeThreshold.start || file.timestamp > timeThreshold.end) return false
       // Operador
       if (operatorFilter !== 'all' && file.operatorName !== operatorFilter) return false
-      // Tipo de Arquivo
-      if (fileTypeFilter !== 'ALL' && file.fileType !== fileTypeFilter) return false
       // Busca
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase()
@@ -314,14 +214,7 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
       }
       return true
     })
-  }, [inputFiles, timeThreshold, operatorFilter, fileTypeFilter, searchQuery])
-
-  const totalFilesPages = Math.max(1, Math.ceil(filteredInputFiles.length / (filesPerPage || 50)))
-  const paginatedInputFiles = useMemo(() => {
-    if (filesPerPage <= 0) return filteredInputFiles
-    const start = (filesPage - 1) * filesPerPage
-    return filteredInputFiles.slice(start, start + filesPerPage)
-  }, [filteredInputFiles, filesPage, filesPerPage])
+  }, [inputFiles, timeThreshold, operatorFilter, searchQuery])
 
   // KPIs Consolidados
   const kpis = useMemo(() => {
@@ -570,23 +463,7 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
         aria-label="Navegação Lateral do Monitor"
         className="shrink-0 flex md:flex-col items-center gap-2 p-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-xs sticky top-4 z-20 w-full md:w-14"
       >
-        {/* 1. Espelho da Conferência */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('mirror')}
-          className={`relative p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
-            activeTab === 'mirror'
-              ? 'bg-emerald-600 text-white shadow-md'
-              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          }`}
-          title="Espelho da Conferência (Ao Vivo & Histórico)"
-          aria-label="Espelho da Conferência"
-        >
-          <Radio className={`h-5 w-5 ${activeTab === 'mirror' ? 'animate-pulse text-white' : 'text-emerald-500'}`} />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-        </button>
-
-        {/* 2. Produtividade Geral */}
+        {/* 1. Produtividade Geral */}
         <button
           type="button"
           onClick={() => setActiveTab('dashboard')}
@@ -601,27 +478,7 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
           <BarChart3 className="h-5 w-5" />
         </button>
 
-        {/* 3. Arquivos Inputados */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('files')}
-          className={`relative p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
-            activeTab === 'files'
-              ? 'bg-indigo-600 text-white shadow-md'
-              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          }`}
-          title={`Arquivos Inputados (${filteredInputFiles.length})`}
-          aria-label="Arquivos Inputados"
-        >
-          <FileSpreadsheet className="h-5 w-5" />
-          {filteredInputFiles.length > 0 && (
-            <span className="absolute -top-1 -right-1 px-1 rounded-full bg-indigo-600 text-white text-[9px] font-bold shadow-xs">
-              {filteredInputFiles.length > 99 ? '99+' : filteredInputFiles.length}
-            </span>
-          )}
-        </button>
-
-        {/* 4. Linha do Tempo */}
+        {/* 3. Linha do Tempo */}
         <button
           type="button"
           onClick={() => setActiveTab('timeline')}
@@ -641,37 +498,7 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
           )}
         </button>
 
-        {/* 5. Equipe & Departamentos */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('operators')}
-          className={`p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
-            activeTab === 'operators'
-              ? 'bg-indigo-600 text-white shadow-md'
-              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          }`}
-          title={`Equipe & Departamentos (${operators.length})`}
-          aria-label="Equipe & Departamentos"
-        >
-          <Users className="h-5 w-5" />
-        </button>
-
-        {/* 6. Alertas WhatsApp & Telegram */}
-        <button
-          type="button"
-          onClick={() => setActiveTab('whatsapp')}
-          className={`p-3 rounded-xl transition-all cursor-pointer flex items-center justify-center ${
-            activeTab === 'whatsapp'
-              ? 'bg-emerald-600 text-white shadow-md'
-              : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          }`}
-          title="Alertas WhatsApp & Notificações"
-          aria-label="Alertas WhatsApp & Notificações"
-        >
-          <MessageSquare className="h-5 w-5 text-emerald-500" />
-        </button>
-
-        {/* 7. Caixa de Sugestões & Respostas da Supervisão */}
+        {/* 5. Caixa de Sugestões & Respostas da Supervisão */}
         <button
           type="button"
           onClick={() => setActiveTab('suggestions')}
@@ -767,22 +594,6 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
         {/* Top Header com Status & Controles de Auditoria */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 p-5 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xs">
           <div className="space-y-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-                <BarChart3 className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-                Central de Auditoria & Monitoramento em Tempo Real
-              </h1>
-              <span
-                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full inline-flex items-center gap-1.5 ${
-                  isConnected
-                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                    : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300'
-                }`}
-              >
-                <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-ping' : 'bg-indigo-500'}`} />
-                {isConnected ? 'Firebase Realtime Sincronizado' : 'Telemetria Operacional Ativa'}
-              </span>
-            </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-2xl">
               Comprovante executivo de produtividade dos funcionários, rastreabilidade fiscal de notas e conciliações de vagões para prestação de contas à chefia.
             </p>
@@ -957,40 +768,16 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
         {/* Indicador da Aba Ativa Selecionada na Barra Lateral */}
         <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-2">
           <div className="flex items-center gap-2">
-            {activeTab === 'mirror' && (
-              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
-                <Radio className="h-3.5 w-3.5 text-emerald-500 animate-pulse" />
-                Espelho da Conferência (Ao Vivo & Histórico)
-              </span>
-            )}
             {activeTab === 'dashboard' && (
               <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
                 <BarChart3 className="h-3.5 w-3.5 text-indigo-500" />
                 Produtividade Geral & Indicadores Executivos
               </span>
             )}
-            {activeTab === 'files' && (
-              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
-                <FileSpreadsheet className="h-3.5 w-3.5 text-indigo-500" />
-                Arquivos Inputados ({filteredInputFiles.length})
-              </span>
-            )}
             {activeTab === 'timeline' && (
               <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
                 <Clock className="h-3.5 w-3.5 text-indigo-500" />
                 Linha do Tempo de Atividades ({filteredActivities.length})
-              </span>
-            )}
-            {activeTab === 'operators' && (
-              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-xs font-bold">
-                <Users className="h-3.5 w-3.5 text-indigo-500" />
-                Equipe & Departamentos ({operators.length})
-              </span>
-            )}
-            {activeTab === 'whatsapp' && (
-              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
-                <MessageSquare className="h-3.5 w-3.5 text-emerald-500" />
-                Alertas WhatsApp & Telegram
               </span>
             )}
             {activeTab === 'suggestions' && (
@@ -1013,11 +800,6 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
             )}
           </div>
         </div>
-
-      {/* ABA 0: ESPELHO DO PAINEL DE CONFERÊNCIA (TEMPO REAL & CONSULTAS HISTÓRICAS) */}
-      {activeTab === 'mirror' && (
-        <ConferenceMirrorDashboard />
-      )}
 
       {/* ABA 1: DASHBOARD DE CONFERÊNCIAS & PRODUTIVIDADE */}
       {activeTab === 'dashboard' && (
@@ -1271,218 +1053,6 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
         </div>
       )}
 
-      {/* ABA 2: ARQUIVOS INPUTADOS POR DATA */}
-      {activeTab === 'files' && (
-        <Card className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 shadow-xs">
-          <CardHeader className="p-4 border-b border-zinc-100 dark:border-zinc-800">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <CardTitle className="text-sm font-bold flex items-center gap-2">
-                  <FileSpreadsheet className="h-4 w-4 text-emerald-500" />
-                  Registro de Arquivos Inputados por Data e Funcionário
-                  <span className="ml-2 text-xs font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
-                    <Database className="h-3 w-3" />
-                    {filteredInputFiles.length.toLocaleString('pt-BR')} arquivos
-                  </span>
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Histórico completo com data, hora, responsável e volumes conferidos
-                </CardDescription>
-              </div>
-
-              {/* Filtro por Formato de Arquivo */}
-              <div className="flex items-center gap-1 overflow-x-auto text-xs">
-                {['ALL', 'XML_NFE', 'PDF_DANFE', 'EXCEL_PLANILHA', 'XML_MDFE', 'ZIP_LOTE'].map((fmt) => (
-                  <button
-                    key={fmt}
-                    onClick={() => setFileTypeFilter(fmt)}
-                    className={`px-2 py-1 rounded-md font-medium cursor-pointer transition-colors shrink-0 ${
-                      fileTypeFilter === fmt
-                        ? 'bg-emerald-600 text-white font-bold'
-                        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200'
-                    }`}
-                  >
-                    {fmt === 'ALL'
-                      ? 'Todos'
-                      : fmt === 'XML_NFE'
-                      ? 'XML NF-e'
-                      : fmt === 'PDF_DANFE'
-                      ? 'PDF DANFE'
-                      : fmt === 'EXCEL_PLANILHA'
-                      ? 'Excel'
-                      : fmt === 'XML_MDFE'
-                      ? 'MDF-e'
-                      : 'ZIP'}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </CardHeader>
-
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-200 dark:border-zinc-800 text-zinc-500 font-bold">
-                  <th className="py-2.5 px-4">Data e Hora</th>
-                  <th className="py-2.5 px-3">Funcionário / Operador</th>
-                  <th className="py-2.5 px-4">Nome do Arquivo Inputado</th>
-                  <th className="py-2.5 px-3">Formato</th>
-                  <th className="py-2.5 px-3">Itens / Notas</th>
-                  <th className="py-2.5 px-3">Valor Total R$</th>
-                  <th className="py-2.5 px-4 text-right">Status da Conferência</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                {filteredInputFiles.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-center py-8 text-zinc-400">
-                      Nenhum arquivo inputado encontrado para os filtros selecionados.
-                    </td>
-                  </tr>
-                ) : (
-                  paginatedInputFiles.map((file) => (
-                    <tr key={file.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/40">
-                      <td className="py-3 px-4 font-mono text-[11px] text-zinc-600 dark:text-zinc-400 whitespace-nowrap">
-                        <span className="font-bold text-foreground">{file.dateFormatted}</span> às {file.timeFormatted}
-                      </td>
-                      <td className="py-3 px-3 font-semibold text-zinc-800 dark:text-zinc-200">
-                        {file.operatorName}
-                      </td>
-                      <td className="py-3 px-4 font-medium text-foreground flex items-center gap-1.5 max-w-xs truncate">
-                        {file.fileType === 'EXCEL_PLANILHA' ? (
-                          <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                        ) : file.fileType === 'PDF_DANFE' ? (
-                          <FileText className="h-3.5 w-3.5 text-rose-600 shrink-0" />
-                        ) : file.fileType === 'ZIP_LOTE' ? (
-                          <FileArchive className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                        ) : (
-                          <FileCode className="h-3.5 w-3.5 text-blue-600 shrink-0" />
-                        )}
-                        <span className="truncate" title={file.fileName}>
-                          {file.fileName}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
-                          {file.fileType}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 font-bold text-foreground">
-                        {file.itemsCount} {file.itemsCount === 1 ? 'item' : 'itens'}
-                      </td>
-                      <td className="py-3 px-3 font-mono text-[11px] text-zinc-700 dark:text-zinc-300">
-                        {file.totalValor && file.totalValor > 0
-                          ? `R$ ${file.totalValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
-                          : '-'}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        {file.status === 'COM_DIVERGENCIA' ? (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 inline-flex items-center gap-1">
-                            <AlertTriangle className="h-3 w-3" />
-                            Divergência
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 inline-flex items-center gap-1">
-                            <CheckCircle2 className="h-3 w-3" />
-                            Conferido OK
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-
-            {/* Barra de Paginação dos Arquivos Inputados */}
-            {filteredInputFiles.length > 0 && (
-              <div className="p-3.5 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-                <div className="text-zinc-600 dark:text-zinc-400 font-medium">
-                  Exibindo registros{' '}
-                  <span className="font-bold text-foreground">
-                    {filesPerPage <= 0 ? 1 : (filesPage - 1) * filesPerPage + 1}
-                  </span>{' '}
-                  a{' '}
-                  <span className="font-bold text-foreground">
-                    {filesPerPage <= 0
-                      ? filteredInputFiles.length
-                      : Math.min(filesPage * filesPerPage, filteredInputFiles.length)}
-                  </span>{' '}
-                  de{' '}
-                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                    {filteredInputFiles.length.toLocaleString('pt-BR')}
-                  </span>{' '}
-                  arquivos no banco
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1 text-[11px] text-zinc-500 mr-2">
-                    <span>Exibir:</span>
-                    {[50, 100, 250, 500].map((size) => (
-                      <button
-                        key={size}
-                        onClick={() => {
-                          setFilesPerPage(size)
-                          setFilesPage(1)
-                        }}
-                        className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors ${
-                          filesPerPage === size
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-zinc-200/80 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-300'
-                        }`}
-                      >
-                        {size}
-                      </button>
-                    ))}
-                    <button
-                      onClick={() => {
-                        setFilesPerPage(0)
-                        setFilesPage(1)
-                      }}
-                      className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer transition-colors ${
-                        filesPerPage === 0
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-zinc-200/80 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-300'
-                      }`}
-                    >
-                      Todos
-                    </button>
-                  </div>
-
-                  {filesPerPage > 0 && totalFilesPages > 1 && (
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={filesPage <= 1}
-                        onClick={() => setFilesPage((p) => Math.max(1, p - 1))}
-                        className="h-7 px-2 text-xs gap-1"
-                      >
-                        <ChevronLeft className="h-3.5 w-3.5" />
-                        Anterior
-                      </Button>
-                      <span className="px-2 py-1 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
-                        {filesPage} / {totalFilesPages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={filesPage >= totalFilesPages}
-                        onClick={() => setFilesPage((p) => Math.min(totalFilesPages, p + 1))}
-                        className="h-7 px-2 text-xs gap-1"
-                      >
-                        Próxima
-                        <ChevronRight className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
       {/* ABA 3: RASTREABILIDADE / TIMELINE DE USO */}
       {activeTab === 'timeline' && (
         <Card className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 shadow-xs">
@@ -1585,336 +1155,7 @@ export function RealtimeMonitor({ onNotify }: RealtimeMonitorProps = {}) {
         </Card>
       )}
 
-      {/* ABA 4: OPERADORES, PRESENÇAS & GESTÃO DE DEPARTAMENTOS NO BANCO DE DADOS */}
-      {activeTab === 'operators' && (
-        <div className="space-y-6">
-          {/* Notificação de sucesso de salvamento no banco */}
-          {deptSaveSuccess && (
-            <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-2 animate-in fade-in">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-              <span className="font-semibold">{deptSaveSuccess}</span>
-            </div>
-          )}
-
-          {/* CARD 1: SESSÕES E OPERADORES CONECTADOS NO MOMENTO */}
-          <Card className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 shadow-xs">
-            <CardHeader className="p-4 border-b border-zinc-100 dark:border-zinc-800">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <Users className="h-4 w-4 text-indigo-500" />
-                    Sessões e Operadores Conectados no Sistema
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Monitoramento ativo de quem está utilizando o sistema neste momento
-                  </CardDescription>
-                </div>
-                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 px-2.5 py-1 rounded-full self-start sm:self-auto flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  {operators.filter((o) => o.online).length} online
-                </span>
-              </div>
-            </CardHeader>
-            <CardContent className="p-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {operators.length === 0 ? (
-                  <div className="col-span-3 text-center py-10 text-zinc-400 text-xs">
-                    <Laptop className="h-8 w-8 mx-auto mb-2 text-zinc-300 dark:text-zinc-700" />
-                    Nenhum operador conectado neste instante.
-                  </div>
-                ) : (
-                  operators.map((op) => (
-                    <div
-                      key={op.sessionId}
-                      className={`p-4 rounded-xl border ${
-                        op.operatorName === currentOperator
-                          ? 'border-indigo-300 bg-indigo-50/40 dark:border-indigo-800 dark:bg-indigo-950/20'
-                          : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
-                          <span
-                            className={`w-2.5 h-2.5 rounded-full ${
-                              op.online ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'
-                            }`}
-                          />
-                          {op.operatorName}
-                        </span>
-                        {op.operatorName === currentOperator && (
-                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
-                            Sua Sessão
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-zinc-500 mb-1">
-                        <strong>Módulo Ativo:</strong> {op.currentModule || 'Painel de Conferência'}
-                      </p>
-                      <p className="text-[11px] text-zinc-400">
-                        <strong>Dispositivo:</strong> {op.deviceInfo || 'Web'}
-                      </p>
-                      <p className="text-[10px] text-zinc-400 mt-2 font-mono">
-                        Visto às: {formatTimeBR(op.lastSeen)}
-                      </p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* CARD 2: GESTÃO DE DEPARTAMENTOS E PERMISSÕES DE ACESSO (BANCO DE DADOS) */}
-          <Card className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 shadow-xs">
-            <CardHeader className="p-4 border-b border-zinc-100 dark:border-zinc-800">
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-sm font-bold flex items-center gap-2 text-foreground">
-                    <Crown className="h-4 w-4 text-purple-600 dark:text-purple-400" />
-                    Controle de Departamentos e Permissão de Acesso à Aba Monitor
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Configuração no banco de dados Firebase: usuários com departamento <strong>Supervisor</strong> visualizam e acessam a aba Monitor; usuários <strong>Colaborador</strong> acessam o sistema sem a aba.
-                  </CardDescription>
-                </div>
-
-                {/* Filtros de departamento */}
-                <div className="flex items-center gap-1.5 bg-zinc-100 dark:bg-zinc-800 p-1 rounded-xl text-xs font-semibold self-start lg:self-auto">
-                  <button
-                    type="button"
-                    onClick={() => setUserDeptFilter('all')}
-                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
-                      userDeptFilter === 'all'
-                        ? 'bg-white dark:bg-zinc-700 text-foreground shadow-xs'
-                        : 'text-zinc-500 hover:text-foreground'
-                    }`}
-                  >
-                    Todos ({dbUsers.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setUserDeptFilter('supervisor')}
-                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                      userDeptFilter === 'supervisor'
-                        ? 'bg-purple-600 text-white shadow-xs'
-                        : 'text-purple-600 dark:text-purple-400 hover:text-foreground'
-                    }`}
-                  >
-                    <Crown className="h-3 w-3" />
-                    Supervisores ({dbUsers.filter((u) => u.departamento === 'supervisor').length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setUserDeptFilter('colaborador')}
-                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                      userDeptFilter === 'colaborador'
-                        ? 'bg-zinc-700 text-white shadow-xs'
-                        : 'text-zinc-500 hover:text-foreground'
-                    }`}
-                  >
-                    <UserCheck className="h-3 w-3" />
-                    Colaboradores ({dbUsers.filter((u) => u.departamento === 'colaborador').length})
-                  </button>
-                </div>
-              </div>
-            </CardHeader>
-
-            <CardContent className="p-0 overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-200 dark:border-zinc-800 text-zinc-500 font-bold">
-                    <th className="py-2.5 px-4">Usuário / Nome</th>
-                    <th className="py-2.5 px-3">E-mail Cadastrado</th>
-                    <th className="py-2.5 px-3">Departamento no Banco de Dados</th>
-                    <th className="py-2.5 px-3">Acesso à Aba Monitor</th>
-                    <th className="py-2.5 px-3">Último Acesso</th>
-                    <th className="py-2.5 px-4 text-right">Ação / Alterar Acesso</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                  {filteredDbUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="text-center py-8 text-zinc-400">
-                        Nenhum usuário encontrado no banco para este filtro.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredDbUsers.map((u) => {
-                      const isSup = u.departamento === 'supervisor'
-                      const isSaving = isSavingUserDept === u.uid
-
-                      return (
-                        <tr key={u.uid} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-800/40 transition-colors">
-                          <td className="py-3 px-4 font-bold text-foreground">
-                            <div className="flex items-center gap-2">
-                              <div className={`w-7 h-7 rounded-full ${isSup ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300' : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300'} flex items-center justify-center font-bold text-xs shrink-0`}>
-                                {(u.displayName || u.email || 'U').slice(0, 2).toUpperCase()}
-                              </div>
-                              <div>
-                                <span className="block leading-tight">{u.displayName || u.email.split('@')[0]}</span>
-                                <span className="text-[10px] text-zinc-400 font-normal">
-                                  {u.cargo || (isSup ? 'Supervisor' : 'Colaborador')}
-                                </span>
-                              </div>
-                            </div>
-                          </td>
-
-                          <td className="py-3 px-3 font-mono text-zinc-600 dark:text-zinc-300">
-                            {u.email}
-                          </td>
-
-                          <td className="py-3 px-3">
-                            <div className="inline-flex items-center gap-1.5">
-                              {isSup ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-700 dark:bg-purple-950/80 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
-                                  <Crown className="h-3 w-3" />
-                                  Supervisor
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700">
-                                  <UserCheck className="h-3 w-3" />
-                                  Colaborador
-                                </span>
-                              )}
-                            </div>
-                          </td>
-
-                          <td className="py-3 px-3">
-                            {isSup ? (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-900">
-                                <CheckCircle2 className="h-3 w-3" />
-                                Aba Monitor Liberada
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 rounded-md">
-                                Aba Monitor Oculta
-                              </span>
-                            )}
-                          </td>
-
-                          <td className="py-3 px-3 text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
-                            {u.lastLogin ? formatTimeBR(u.lastLogin) : '—'}
-                          </td>
-
-                          <td className="py-3 px-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              {isSup ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={isSaving}
-                                  onClick={() => handleDepartmentChange(u, 'colaborador')}
-                                  className="text-xs h-7 px-2.5 border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
-                                  title="Mudar para Colaborador (sem acesso à aba Monitor)"
-                                >
-                                  {isSaving ? (
-                                    <RefreshCw className="h-3 w-3 animate-spin mr-1" />
-                                  ) : (
-                                    <UserCheck className="h-3 w-3 mr-1 text-zinc-500" />
-                                  )}
-                                  Tornar Colaborador
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="default"
-                                  size="sm"
-                                  disabled={isSaving}
-                                  onClick={() => handleDepartmentChange(u, 'supervisor')}
-                                  className="text-xs h-7 px-2.5 bg-purple-600 hover:bg-purple-700 text-white cursor-pointer shadow-2xs"
-                                  title="Mudar para Supervisor (libera a aba Monitor)"
-                                >
-                                  {isSaving ? (
-                                    <RefreshCw className="h-3 w-3 animate-spin mr-1" />
-                                  ) : (
-                                    <Crown className="h-3 w-3 mr-1" />
-                                  )}
-                                  Tornar Supervisor
-                                </Button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })
-                  )}
-                </tbody>
-              </table>
-
-              {/* Formulário de Pré-definição de Usuário / E-mail */}
-              <div className="p-4 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-850/40">
-                <form onSubmit={handlePredefineUser} className="space-y-2">
-                  <div className="flex items-center gap-2 mb-2">
-                    <UserPlus className="h-4 w-4 text-indigo-500" />
-                    <span className="text-xs font-bold text-foreground">
-                      Pré-cadastrar ou Definir Departamento por E-mail no Banco de Dados
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                    Defina o departamento antes do colaborador logar pela primeira vez. Ao efetuar o login, as permissões serão aplicadas automaticamente.
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-2">
-                    <div className="sm:col-span-5">
-                      <Input
-                        type="email"
-                        required
-                        placeholder="e-mail@empresa.com"
-                        value={newEmailToPredefine}
-                        onChange={(e) => setNewEmailToPredefine(e.target.value)}
-                        className="text-xs h-9"
-                      />
-                    </div>
-                    <div className="sm:col-span-3">
-                      <Input
-                        type="text"
-                        placeholder="Nome do Operador (opcional)"
-                        value={newNameToPredefine}
-                        onChange={(e) => setNewNameToPredefine(e.target.value)}
-                        className="text-xs h-9"
-                      />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <select
-                        value={newDeptToPredefine}
-                        onChange={(e) => setNewDeptToPredefine(e.target.value as UserDepartment)}
-                        className="w-full text-xs h-9 rounded-md border border-input bg-background px-3 py-1 text-foreground shadow-xs focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-                      >
-                        <option value="supervisor">Supervisor (com Monitor)</option>
-                        <option value="colaborador">Colaborador (sem Monitor)</option>
-                      </select>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <Button
-                        type="submit"
-                        disabled={isSavingUserDept === 'predefine' || !newEmailToPredefine.trim()}
-                        className="w-full h-9 text-xs bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
-                      >
-                        {isSavingUserDept === 'predefine' ? (
-                          <>
-                            <RefreshCw className="h-3 w-3 animate-spin mr-1" />
-                            Salvando...
-                          </>
-                        ) : (
-                          <>
-                            <Save className="h-3 w-3 mr-1" />
-                            Salvar no Banco
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </form>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* ABA 5: CONFIGURAÇÕES E DISPAROS DO WHATSAPP (CALLMEBOT / WEBHOOK) */}
-      {activeTab === 'whatsapp' && (
-        <WhatsAppNotificationSettings onNotify={onNotify} />
-      )}
-
-      {/* ABA 6: CAIXA DE SUGESTÕES & RESPOSTAS DA SUPERVISÃO */}
+      {/* ABA 5: CAIXA DE SUGESTÕES & RESPOSTAS DA SUPERVISÃO */}
       {activeTab === 'suggestions' && (
         <SuggestionsMonitorAdmin
           currentSupervisor={currentOperator}

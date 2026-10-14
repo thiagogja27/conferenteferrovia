@@ -46,6 +46,10 @@ import {
   type WeightAuditResponse,
 } from '@/lib/weight-ai-auditor'
 import { logRealtimeActivity } from '@/lib/firebase-realtime'
+import {
+  getDestinatarioContractByCnpj,
+  getDestinatarioNomenclatureByCnpj,
+} from '@/lib/cadastros-logisticos-service'
 
 interface ProcessedFile {
   fileName: string
@@ -1094,10 +1098,22 @@ export function ExcelReconciliationTab({
 
   // Helper para criar e formatar largura das colunas das abas do Excel
   const createFormattedWorksheet = (rows: any[]) => {
-    const ws = XLSX.utils.json_to_sheet(rows.length > 0 ? rows : [{ Mensagem: 'Nenhum registro encontrado nesta categoria' }])
-    if (rows.length > 0) {
+    const rowsWithContracts = rows.map((row) => {
+      const recipientCnpjKey = Object.keys(row).find((key) =>
+        /destinat[aá]rio.*cnpj|cnpj.*destinat[aá]rio/i.test(key)
+      )
+      return recipientCnpjKey
+        ? {
+            ...row,
+            Nomenclatura: getDestinatarioNomenclatureByCnpj(String(row[recipientCnpjKey] ?? '')) || '-',
+            Contrato: getDestinatarioContractByCnpj(String(row[recipientCnpjKey] ?? '')) || '-',
+          }
+        : row
+    })
+    const ws = XLSX.utils.json_to_sheet(rowsWithContracts.length > 0 ? rowsWithContracts : [{ Mensagem: 'Nenhum registro encontrado nesta categoria' }])
+    if (rowsWithContracts.length > 0) {
       const maxLenMap: number[] = []
-      rows.forEach((row) => {
+      rowsWithContracts.forEach((row) => {
         Object.keys(row).forEach((colKey, colIdx) => {
           const valStr = String(row[colKey] ?? '')
           maxLenMap[colIdx] = Math.max(maxLenMap[colIdx] || 0, valStr.length, colKey.length)

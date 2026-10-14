@@ -32,6 +32,10 @@ import { LoginScreen } from '@/components/login-screen'
 import { useAuth } from '@/context/auth-context'
 import { logRealtimeActivity, updatePresence, logInputedFiles } from '@/lib/firebase-realtime'
 import {
+  getDestinatarioContractByCnpj,
+  getDestinatarioNomenclatureByCnpj,
+} from '@/lib/cadastros-logisticos-service'
+import {
   buildConferenceDashboardSnapshot,
   publishConferenceDashboard,
 } from '@/lib/conference-dashboard-sync'
@@ -1064,6 +1068,8 @@ export function XMLConverter() {
         "CNPJ na Chave",
         "Destinatário CNPJ",
         "Destinatário Razão Social",
+        "Nomenclatura",
+        "Contrato",
         "Validação CNPJ (Chave x Destinatário)",
         "Confronto Chave vs Destinatário",
         "Comprovação da Divergência / Detalhes",
@@ -1091,6 +1097,8 @@ export function XMLConverter() {
         "CNPJ na Chave",
         "Destinatário CNPJ",
         "Destinatário Razão Social",
+        "Nomenclatura",
+        "Contrato",
         "Validação CNPJ (Chave x Destinatário)",
         "Confronto Chave vs Destinatário",
         "Comprovação da Divergência / Detalhes",
@@ -1176,6 +1184,8 @@ export function XMLConverter() {
             vCNPJ.chaveCnpj || "N/I",
             destCNPJ,
             destNome,
+            getDestinatarioNomenclatureByCnpj(destCNPJ) || '-',
+            getDestinatarioContractByCnpj(destCNPJ) || '-',
             vCNPJ.statusLabel,
             vCNPJ.confrontoChaveXDest,
             vCNPJ.details,
@@ -1206,6 +1216,8 @@ export function XMLConverter() {
               vCNPJ.chaveCnpj || "N/I",
               destCNPJ,
               destNome,
+              getDestinatarioNomenclatureByCnpj(destCNPJ) || '-',
+              getDestinatarioContractByCnpj(destCNPJ) || '-',
               vCNPJ.statusLabel,
               vCNPJ.confrontoChaveXDest,
               vCNPJ.details,

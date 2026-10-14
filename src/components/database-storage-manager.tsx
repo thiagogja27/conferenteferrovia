@@ -359,7 +359,7 @@ export function DatabaseStorageManager({ onNotify }: DatabaseStorageManagerProps
           <p className="text-xs text-zinc-600 dark:text-zinc-400 max-w-2xl leading-relaxed">
             Conectado ao Firebase Realtime Database:{' '}
             <code className="px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-emerald-700 dark:text-emerald-300 font-mono text-[11px] font-bold">
-              {stats.databaseUrl || 'https://novoconferente-default-rtdb.firebaseio.com'}
+              {stats.databaseUrl || 'https://conferente2-d10d9-default-rtdb.firebaseio.com'}
             </code>
             . Você pode <strong>limpar qualquer coluna individualmente</strong> ou <strong>limpar todas de uma vez</strong> para otimizar o banco.
           </p>
