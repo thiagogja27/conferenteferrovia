@@ -49,6 +49,7 @@ import { logRealtimeActivity } from '@/lib/firebase-realtime'
 import {
   getDestinatarioContractByCnpj,
   getDestinatarioNomenclatureByCnpj,
+  getRemetenteNomenclatureByCnpj,
 } from '@/lib/cadastros-logisticos-service'
 
 interface ProcessedFile {
@@ -349,6 +350,7 @@ interface ExcelReconciliationTabProps {
   onSelectFile?: (index: number) => void
   externalAuditMap?: Record<string, WeightAuditItemResult>
   onUpdateAuditMap?: (map: Record<string, WeightAuditItemResult>) => void
+  sharedExcelFile?: File | null
 }
 
 export function ExcelReconciliationTab({
@@ -357,6 +359,7 @@ export function ExcelReconciliationTab({
   onSelectFile,
   externalAuditMap,
   onUpdateAuditMap,
+  sharedExcelFile,
 }: ExcelReconciliationTabProps) {
   const [excelData, setExcelData] = useState<ExcelData | null>(null)
   const [rawWorkbook, setRawWorkbook] = useState<XLSX.WorkBook | null>(null)
@@ -1005,6 +1008,12 @@ export function ExcelReconciliationTab({
     }
   }
 
+  React.useEffect(() => {
+    if (sharedExcelFile) {
+      void parseExcelForKeys(sharedExcelFile)
+    }
+  }, [sharedExcelFile])
+
   const validFiles = files.filter(f => f.nfeData !== null)
 
   const getNormalizedKey = (f: ProcessedFile): string => {
@@ -1102,13 +1111,23 @@ export function ExcelReconciliationTab({
       const recipientCnpjKey = Object.keys(row).find((key) =>
         /destinat[aá]rio.*cnpj|cnpj.*destinat[aá]rio/i.test(key)
       )
-      return recipientCnpjKey
-        ? {
-            ...row,
+      const senderCnpjKey = Object.keys(row).find((key) =>
+        /emitente.*cnpj|cnpj.*emitente/i.test(key)
+      )
+      return {
+        ...row,
+        ...(recipientCnpjKey
+          ? {
             Nomenclatura: getDestinatarioNomenclatureByCnpj(String(row[recipientCnpjKey] ?? '')) || '-',
             Contrato: getDestinatarioContractByCnpj(String(row[recipientCnpjKey] ?? '')) || '-',
           }
-        : row
+          : {}),
+        ...(senderCnpjKey
+          ? {
+              'Nomenclatura Remetente': getRemetenteNomenclatureByCnpj(String(row[senderCnpjKey] ?? '')) || '-',
+            }
+          : {}),
+      }
     })
     const ws = XLSX.utils.json_to_sheet(rowsWithContracts.length > 0 ? rowsWithContracts : [{ Mensagem: 'Nenhum registro encontrado nesta categoria' }])
     if (rowsWithContracts.length > 0) {

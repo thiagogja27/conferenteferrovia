@@ -34,6 +34,7 @@ import { logRealtimeActivity, updatePresence, logInputedFiles } from '@/lib/fire
 import {
   getDestinatarioContractByCnpj,
   getDestinatarioNomenclatureByCnpj,
+  getRemetenteNomenclatureByCnpj,
 } from '@/lib/cadastros-logisticos-service'
 import {
   buildConferenceDashboardSnapshot,
@@ -220,8 +221,11 @@ export function XMLConverter() {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<string>('list')
   const [converterMode, setConverterMode] = useState<
-    'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'conversor-resumo-rumo' | 'documentation' | 'realtime-monitor'
+    'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'mrs-guided' | 'conversor-resumo-rumo' | 'documentation' | 'realtime-monitor'
   >('xml-to-pdf')
+  const [mrsGuidedStep, setMrsGuidedStep] = useState<1 | 2 | 3>(1)
+  const [mrsGuidedExcelFile, setMrsGuidedExcelFile] = useState<File | null>(null)
+  const [mrsGuidedMdfReady, setMrsGuidedMdfReady] = useState(false)
   const [processFileType, setProcessFileType] = useState<'all' | 'xml' | 'pdf'>('all')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
@@ -1069,6 +1073,7 @@ export function XMLConverter() {
         "Destinatário CNPJ",
         "Destinatário Razão Social",
         "Nomenclatura",
+        "Nomenclatura Remetente",
         "Contrato",
         "Validação CNPJ (Chave x Destinatário)",
         "Confronto Chave vs Destinatário",
@@ -1098,6 +1103,7 @@ export function XMLConverter() {
         "Destinatário CNPJ",
         "Destinatário Razão Social",
         "Nomenclatura",
+        "Nomenclatura Remetente",
         "Contrato",
         "Validação CNPJ (Chave x Destinatário)",
         "Confronto Chave vs Destinatário",
@@ -1185,6 +1191,7 @@ export function XMLConverter() {
             destCNPJ,
             destNome,
             getDestinatarioNomenclatureByCnpj(destCNPJ) || '-',
+            getRemetenteNomenclatureByCnpj(emitCNPJ) || '-',
             getDestinatarioContractByCnpj(destCNPJ) || '-',
             vCNPJ.statusLabel,
             vCNPJ.confrontoChaveXDest,
@@ -1217,6 +1224,7 @@ export function XMLConverter() {
               destCNPJ,
               destNome,
               getDestinatarioNomenclatureByCnpj(destCNPJ) || '-',
+              getRemetenteNomenclatureByCnpj(emitCNPJ) || '-',
               getDestinatarioContractByCnpj(destCNPJ) || '-',
               vCNPJ.statusLabel,
               vCNPJ.confrontoChaveXDest,
@@ -1398,7 +1406,7 @@ export function XMLConverter() {
 
         {/* Seletor de Módulos (Menu Principal Intuitivo e Unificado) */}
         <div className="mb-6">
-          <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRealtimeAdmin ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-2.5 bg-zinc-100/80 dark:bg-zinc-900 p-1.5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800`}>
+          <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRealtimeAdmin ? 'lg:grid-cols-6' : 'lg:grid-cols-5'} gap-2.5 bg-zinc-100/80 dark:bg-zinc-900 p-1.5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800`}>
             <button
               onClick={() => {
                 setConverterMode('xml-to-pdf')
@@ -1418,6 +1426,30 @@ export function XMLConverter() {
               </div>
               <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
                 NF-e, DANFE, Chaves
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setConverterMode('mrs-guided')
+                setMrsGuidedStep(1)
+                setActiveTab('list')
+                updatePresence('Fluxo Guiado MRS')
+              }}
+              className={`flex flex-col items-start p-3 rounded-xl transition-all text-left cursor-pointer border ${
+                converterMode === 'mrs-guided'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-indigo-300 dark:border-indigo-600 shadow-xs'
+                  : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1 w-full">
+                <div className={`p-1.5 rounded-lg ${converterMode === 'mrs-guided' ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
+                  <TrainTrack className="h-4 w-4" />
+                </div>
+                <span className="text-xs font-bold truncate">Fluxo guiado MRS</span>
+              </div>
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+                Conferência em etapas
               </span>
             </button>
 
@@ -1523,7 +1555,45 @@ export function XMLConverter() {
         </div>
 
         {/* Módulos do Sistema Preservados em Memória */}
-        <div className={converterMode === 'xml-to-pdf' ? 'block' : 'hidden'}>
+        {converterMode === 'mrs-guided' && (
+          <Card className="mb-6 border-indigo-200 dark:border-indigo-900">
+            <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-bold text-indigo-900 dark:text-indigo-200">
+                  Fluxo guiado MRS — etapa {mrsGuidedStep} de 3
+                </p>
+                <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                  {mrsGuidedStep === 1 && 'Carregue as notas e confira o painel, o dashboard e as divergências.'}
+                  {mrsGuidedStep === 2 && 'Carregue os MDF-e e a planilha mensal para confrontar MDF x vagões.'}
+                  {mrsGuidedStep === 3 && 'Confira as notas com a mesma planilha e carregue os CT-e necessários.'}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                {mrsGuidedStep > 1 && (
+                  <Button variant="outline" size="sm" onClick={() => setMrsGuidedStep((step) => (step - 1) as 1 | 2 | 3)}>
+                    Voltar
+                  </Button>
+                )}
+                {mrsGuidedStep < 3 && (
+                  <Button
+                    size="sm"
+                    disabled={mrsGuidedStep === 1 ? files.length === 0 : !mrsGuidedExcelFile || !mrsGuidedMdfReady}
+                    onClick={() => setMrsGuidedStep((step) => (step + 1) as 1 | 2 | 3)}
+                  >
+                    {mrsGuidedStep === 1 ? 'Avançar para MDF x vagões' : 'Avançar para notas x Excel'}
+                  </Button>
+                )}
+                {mrsGuidedStep === 3 && (
+                  <Button size="sm" variant="outline" onClick={() => setMrsGuidedStep(1)}>
+                    Ir para notas
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <div className={converterMode === 'xml-to-pdf' || (converterMode === 'mrs-guided' && mrsGuidedStep === 1) ? 'block' : 'hidden'}>
           {/* Upload Area */}
           <Card className='mb-6 shadow-xs border-zinc-200 dark:border-zinc-800'>
               <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3">
@@ -2722,9 +2792,47 @@ export function XMLConverter() {
         </div>
 
         {/* Módulo MDF-e x EXCEL (Vagões) Preservado */}
-        <div className={converterMode === 'mdf-x-excel' ? 'block' : 'hidden'}>
-          <MDFExcelComparator onOpenDoc={() => setConverterMode('documentation')} />
+        <div className={converterMode === 'mdf-x-excel' || (converterMode === 'mrs-guided' && mrsGuidedStep === 2) ? 'block' : 'hidden'}>
+          {converterMode === 'mrs-guided' && (
+            <Card className="mb-4 border-amber-200 dark:border-amber-900">
+              <CardContent className="p-4 text-xs text-zinc-700 dark:text-zinc-300">
+                Selecione os arquivos MDF-e e a planilha deste mês. A mesma planilha será carregada automaticamente na próxima etapa.
+              </CardContent>
+            </Card>
+          )}
+          <MDFExcelComparator
+            onOpenDoc={() => setConverterMode('documentation')}
+            onExcelSelected={setMrsGuidedExcelFile}
+            onComparisonReady={setMrsGuidedMdfReady}
+            guidedFileUpload={converterMode === 'mrs-guided' && mrsGuidedStep === 2}
+          />
         </div>
+
+        {converterMode === 'mrs-guided' && mrsGuidedStep === 3 && (
+          <div className="space-y-4">
+            <Card className="border-emerald-200 dark:border-emerald-900">
+              <CardContent className="p-4 text-xs text-zinc-700 dark:text-zinc-300">
+                A planilha {mrsGuidedExcelFile ? <strong>{mrsGuidedExcelFile.name}</strong> : 'ainda não foi selecionada'} está compartilhada com esta conferência. Carregue abaixo os CT-e (XML ou PDF) para preencher os dados de transbordo/CCT.
+              </CardContent>
+            </Card>
+            <ExcelReconciliationTab
+              files={files}
+              speakText={speakText}
+              externalAuditMap={aiAuditMap}
+              onUpdateAuditMap={setAiAuditMap}
+              sharedExcelFile={mrsGuidedExcelFile}
+              onSelectFile={(index) => {
+                setMrsGuidedStep(1)
+                setActiveTab('list')
+                setExpandedIndex(index)
+                setTimeout(() => {
+                  const card = document.querySelector(`[data-file-index="${index}"]`)
+                  card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                }, 100)
+              }}
+            />
+          </div>
+        )}
 
         {/* Módulo Guia & Regras Preservado */}
         <div className={converterMode === 'documentation' ? 'block' : 'hidden'}>

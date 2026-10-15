@@ -23,6 +23,7 @@ import {
 import {
   getDestinatarioContractByCnpj,
   getDestinatarioNomenclatureByCnpj,
+  getRemetenteNomenclatureByCnpj,
   matchTransbordoFromText,
   subscribeCadastrosChanges,
 } from "@/lib/cadastros-logisticos-service"
@@ -972,6 +973,7 @@ export function Dashboard({ files }: DashboardProps) {
         Destinatário: d.destNome,
         "CNPJ Destinatário": d.destCNPJ,
         "Nomenclatura": selectedGroup.nomenclatureName || "-",
+        "Nomenclatura Remetente": getRemetenteNomenclatureByCnpj(d.emitCNPJ) || "-",
         "Contrato": selectedGroup.contractName || "-",
         Produto: d.produto,
         "Terminal de Entrega": d.terminal,

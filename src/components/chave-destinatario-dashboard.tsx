@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import {
   getDestinatarioContractByCnpj,
   getDestinatarioNomenclatureByCnpj,
+  getRemetenteNomenclatureByCnpj,
   subscribeCadastrosChanges,
 } from '@/lib/cadastros-logisticos-service'
 import {
@@ -443,6 +444,7 @@ export function ChaveDestinatarioDashboard({
       'CNPJ Destinatário': item.destCNPJFormatted || 'Não Informado',
       'Destinatário (Razão Social)': item.destNome,
       Nomenclatura: getDestinatarioNomenclatureByCnpj(item.destCNPJ) || '-',
+      'Nomenclatura Remetente': getRemetenteNomenclatureByCnpj(item.emitCNPJ) || '-',
       Contrato: getDestinatarioContractByCnpj(item.destCNPJ) || '-',
       'CNPJ Emitente': item.emitCNPJFormatted || 'Não Informado',
       'Emitente (Razão Social)': item.emitNome,
@@ -466,6 +468,7 @@ export function ChaveDestinatarioDashboard({
       { wch: 22 }, // CNPJ Dest
       { wch: 35 }, // Destinatário
       { wch: 24 }, // Nomenclatura
+      { wch: 24 }, // Nomenclatura Remetente
       { wch: 14 }, // Contrato
       { wch: 22 }, // CNPJ Emit
       { wch: 35 }, // Emitente

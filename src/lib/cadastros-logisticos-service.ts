@@ -16,6 +16,7 @@ export interface CadastroDestinatario {
   id: string
   nome: string
   nomenclatura?: string
+  nomenclaturaRemetente?: string
   cnpjPrincipal: string
   contrato?: ContratoDestinatario
   cnpjsAdicionais?: string[]
@@ -970,12 +971,12 @@ export function getDestinatarioContractByCnpj(cnpj?: string): ContratoDestinatar
   return matchingRecipient?.contrato
 }
 
-export function getDestinatarioNomenclatureByCnpj(cnpj?: string): string | undefined {
+function getDestinatarioByCnpj(cnpj?: string): CadastroDestinatario | undefined {
   const cleanCnpj = cleanDigits(cnpj)
   if (!cleanCnpj) return undefined
 
   const recipients = getAllDestinatarios()
-  const matchingRecipient =
+  return (
     recipients.find((destinatario) =>
       [destinatario.cnpjPrincipal, ...(destinatario.cnpjsAdicionais || [])]
         .map(cleanDigits)
@@ -986,8 +987,15 @@ export function getDestinatarioNomenclatureByCnpj(cnpj?: string): string | undef
         .map(cleanDigits)
         .some((recipientCnpj) => recipientCnpj.length === 8 && cleanCnpj.startsWith(recipientCnpj))
     )
+  )
+}
 
-  return matchingRecipient?.nomenclatura
+export function getDestinatarioNomenclatureByCnpj(cnpj?: string): string | undefined {
+  return getDestinatarioByCnpj(cnpj)?.nomenclatura
+}
+
+export function getRemetenteNomenclatureByCnpj(cnpj?: string): string | undefined {
+  return getDestinatarioByCnpj(cnpj)?.nomenclaturaRemetente
 }
 
 export async function saveDestinatarioContract(

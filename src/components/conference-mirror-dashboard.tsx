@@ -68,6 +68,7 @@ import { Button } from '@/components/ui/button'
 import {
   getDestinatarioContractByCnpj,
   getDestinatarioNomenclatureByCnpj,
+  getRemetenteNomenclatureByCnpj,
 } from '@/lib/cadastros-logisticos-service'
 
 const PIE_COLORS = [
@@ -294,6 +295,7 @@ export function ConferenceMirrorDashboard() {
         'Destinatário CNPJ': n.destCNPJ,
         'Destinatário': n.destNome,
         Nomenclatura: getDestinatarioNomenclatureByCnpj(n.destCNPJ) || '-',
+        'Nomenclatura Remetente': getRemetenteNomenclatureByCnpj(n.emitCNPJ) || '-',
         Contrato: getDestinatarioContractByCnpj(n.destCNPJ) || '-',
         'Confronto Chave x Destinatário': n.confrontoChaveXDest,
         Emitente: n.emitNome,
@@ -333,6 +335,7 @@ export function ConferenceMirrorDashboard() {
         'Destinatário CNPJ': n.destCNPJ,
         'Destinatário': n.destNome,
         Nomenclatura: getDestinatarioNomenclatureByCnpj(n.destCNPJ) || '-',
+        'Nomenclatura Remetente': getRemetenteNomenclatureByCnpj(n.emitCNPJ) || '-',
         Contrato: getDestinatarioContractByCnpj(n.destCNPJ) || '-',
         'Status Chave x Destinatário': n.confrontoChaveXDest,
         Emitente: n.emitNome,

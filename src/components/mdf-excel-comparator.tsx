@@ -13,7 +13,6 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import {
-  parseMdfePdfClient,
   parseMdfeFromXml,
   parseMdfeFromText,
   executarComparacaoMdfeExcel,
@@ -27,6 +26,7 @@ import {
   type ResumoComparacao,
   type StatusComparacao,
 } from '@/lib/mdfe-parser'
+import { extractPdfTextClientPure } from '@/lib/client-pdf-parser'
 import {
   auditarDivergenciasComIA,
   type WeightAuditItemInput,
@@ -74,9 +74,81 @@ import * as XLSX from 'xlsx'
 
 interface MDFExcelComparatorProps {
   onOpenDoc?: () => void
+  onExcelSelected?: (file: File) => void
+  onComparisonReady?: (ready: boolean) => void
+  guidedFileUpload?: boolean
 }
 
-export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
+const PESO_DIVERGENCIA_TOLERANCIA_TONELADAS = 0.05
+
+function normalizarCabecalhoPeso(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function parsePesoPlanilha(value: unknown, columnName: string): number | undefined {
+  if (value === null || value === undefined || String(value).trim() === '') return undefined
+
+  let parsed: number
+  if (typeof value === 'number') {
+    parsed = value
+  } else {
+    const normalized = String(value).trim().replace(/\s/g, '')
+    const hasComma = normalized.includes(',')
+    const hasDot = normalized.includes('.')
+    const normalizedColumn = normalizarCabecalhoPeso(columnName)
+    const isKilogramColumn = /\bkg\b|quilo/.test(normalizedColumn)
+    const numericValue = hasComma && hasDot
+      ? normalized.replace(/\./g, '').replace(',', '.')
+      : hasComma
+        ? normalized.replace(',', '.')
+        : isKilogramColumn && /^\d{1,3}(?:\.\d{3})+$/.test(normalized)
+          ? normalized.replace(/\./g, '')
+        : normalized
+    parsed = Number(numericValue)
+  }
+
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined
+
+  const normalizedColumn = normalizarCabecalhoPeso(columnName)
+  if (/\bkg\b|quilo/.test(normalizedColumn) || parsed > 1000) {
+    parsed /= 1000
+  }
+  return Number(parsed.toFixed(3))
+}
+
+function hasComparisonWeightDivergence(item: ItemComparacao): boolean {
+  return (
+    (item.diferencaPeso !== undefined && Math.abs(item.diferencaPeso) > PESO_DIVERGENCIA_TOLERANCIA_TONELADAS) ||
+    (item.diferencaRateioMdf !== undefined && Math.abs(item.diferencaRateioMdf) > PESO_DIVERGENCIA_TOLERANCIA_TONELADAS) ||
+    (item.diferencaLiquidoMdf !== undefined && Math.abs(item.diferencaLiquidoMdf) > PESO_DIVERGENCIA_TOLERANCIA_TONELADAS) ||
+    (item.pesoMDF === undefined && item.pesoExcel !== undefined) ||
+    (item.pesoMDF !== undefined && item.pesoExcel === undefined)
+  )
+}
+
+function hasAiWeightDivergence(item: ItemComparacao): boolean {
+  return (
+    (item.diferencaPeso !== undefined && Math.abs(item.diferencaPeso) > PESO_DIVERGENCIA_TOLERANCIA_TONELADAS) ||
+    (item.pesoMDF === undefined && item.pesoExcel !== undefined) ||
+    (item.pesoMDF !== undefined && item.pesoExcel === undefined)
+  )
+}
+
+function formatTons(value: number): string {
+  return `${value.toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} t`
+}
+
+export function MDFExcelComparator({
+  onOpenDoc,
+  onExcelSelected,
+  onComparisonReady,
+  guidedFileUpload = false,
+}: MDFExcelComparatorProps) {
   // Estado dos arquivos do MDF
   const [mdfeList, setMdfeList] = useState<MdfeData[]>([])
   const [isProcessingMdf, setIsProcessingMdf] = useState(false)
@@ -93,6 +165,9 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   const [selectedWagonColumn, setSelectedWagonColumn] = useState<string>('')
   const [selectedSecondaryWagonColumn, setSelectedSecondaryWagonColumn] = useState<string>('')
   const [selectedWeightColumn, setSelectedWeightColumn] = useState<string>('')
+  const [selectedRateioColumn, setSelectedRateioColumn] = useState<string>('')
+  const [selectedGrossColumn, setSelectedGrossColumn] = useState<string>('')
+  const [selectedTareColumn, setSelectedTareColumn] = useState<string>('')
   const [isProcessingExcel, setIsProcessingExcel] = useState(false)
   const [excelError, setExcelError] = useState<string | null>(null)
   const [isDraggingExcel, setIsDraggingExcel] = useState(false)
@@ -116,10 +191,62 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   const [directPasteText, setDirectPasteText] = useState('')
   const [pastedTextTitle, setPastedTextTitle] = useState('DAMDFE')
 
+  const handleMdfeFilesUpload = async (filesToProcess: FileList | File[]) => {
+    const selectedFiles = Array.from(filesToProcess).filter((file) => /\.(pdf|xml)$/i.test(file.name))
+    if (selectedFiles.length === 0) {
+      setMdfError('Selecione arquivos MDF-e em PDF ou XML.')
+      return
+    }
+
+    onComparisonReady?.(false)
+    setIsProcessingMdf(true)
+    setMdfError(null)
+
+    const parsedFiles: MdfeData[] = []
+    const failedFiles: string[] = []
+    for (const file of selectedFiles) {
+      try {
+        let parsed: MdfeData
+        if (file.name.toLowerCase().endsWith('.xml')) {
+          parsed = parseMdfeFromXml(await file.text(), file.name)
+        } else {
+          const extracted = await extractPdfTextClientPure(await file.arrayBuffer())
+          parsed = parseMdfeFromText(extracted.text, file.name)
+        }
+        if (parsed.vagoes.length === 0) {
+          failedFiles.push(`${file.name} (nenhum vagão identificado)`)
+        } else {
+          parsedFiles.push(parsed)
+        }
+      } catch (error) {
+        console.error(`Erro ao processar MDF-e ${file.name}:`, error)
+        failedFiles.push(file.name)
+      }
+    }
+
+    if (parsedFiles.length > 0) {
+      setMdfeList((previous) => {
+        const existingKeys = new Set(previous.map((mdf) => mdf.chaveAcesso || mdf.fileName))
+        return [...previous, ...parsedFiles.filter((mdf) => !existingKeys.has(mdf.chaveAcesso || mdf.fileName))]
+      })
+    }
+
+    if (failedFiles.length > 0) {
+      setMdfError(
+        `${parsedFiles.length} arquivo(s) MDF-e processado(s). Não foi possível identificar vagões em: ${failedFiles.join(', ')}.`
+      )
+    } else if (parsedFiles.length === 0) {
+      setMdfError('Nenhum MDF-e válido foi processado.')
+    }
+
+    setIsProcessingMdf(false)
+  }
+
   // Processar texto colado diretamente do DAMDFE
   const handleProcessPastedText = (customText?: string) => {
     const textToProcess = customText !== undefined ? customText : directPasteText
     if (!textToProcess.trim()) return
+    onComparisonReady?.(false)
     setIsProcessingMdf(true)
     setMdfError(null)
     try {
@@ -147,6 +274,7 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   // 2. PROCESSAMENTO DO ARQUIVO EXCEL (.xlsx, .xls, .csv)
   // -------------------------------------------------------------
   const processExcelFile = useCallback(async (file: File) => {
+    onComparisonReady?.(false)
     setIsProcessingExcel(true)
     setExcelError(null)
     setExcelFileName(file.name)
@@ -155,6 +283,7 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
       const arrayBuffer = await file.arrayBuffer()
       const wb = XLSX.read(arrayBuffer, { type: 'array' })
       setWorkbook(wb)
+      onExcelSelected?.(file)
 
       const sheets = wb.SheetNames
       setAvailableSheets(sheets)
@@ -168,7 +297,7 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
     } finally {
       setIsProcessingExcel(false)
     }
-  }, [])
+  }, [onComparisonReady, onExcelSelected])
 
   const loadSheetData = (wb: XLSX.WorkBook, sheetName: string) => {
     try {
@@ -189,37 +318,40 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
       const cols = Object.keys(jsonData[0] || {})
       setExcelColumns(cols)
 
-      // Priorização e Auto-detecção das Colunas de Vagão
-      // Procura com máxima prioridade por "Número de ident.", "Numero de ident", "Número de ident. vagão", etc.
-      const isIdentWagonColumn = (c: string) => {
-        const cLower = c.toLowerCase().trim()
-        return (
-          cLower.includes('número de ident') ||
-          cLower.includes('numero de ident') ||
-          cLower.includes('num. ident') ||
-          cLower.includes('num ident') ||
-          cLower.includes('nº ident') ||
-          cLower.includes('nr ident') ||
-          cLower.includes('ident. vag') ||
-          cLower.includes('identifica') ||
-          cLower.includes('vag') ||
-          cLower.includes('wagon') ||
-          cLower.includes('carro') ||
-          cLower.includes('prefixo') ||
-          cLower.includes('equipamento') ||
-          cLower.includes('veiculo') ||
-          cLower.includes('veículo')
-        )
-      }
-
-      const wagonCandidates = cols.filter(isIdentWagonColumn)
+      const isWeightColumn = (column: string) =>
+        /\b(peso|rateio|bruto|tara|liquido|ton|volume|carga)\b/.test(normalizarCabecalhoPeso(column))
+      const wagonCandidates = cols
+        .filter((column) => {
+          const header = normalizarCabecalhoPeso(column)
+          return !isWeightColumn(column) && (
+            header.includes('numero de ident') ||
+            header.includes('num ident') ||
+            header.includes('identificacao') ||
+            header.includes('identificador') ||
+            header.includes('vagao') ||
+            header.includes('wagon') ||
+            header.includes('carro ferroviario') ||
+            header.includes('prefixo vagao') ||
+            header.includes('equipamento ferroviario')
+          )
+        })
+        .sort((left, right) => {
+          const score = (column: string) => {
+            const header = normalizarCabecalhoPeso(column)
+            if (header.includes('numero de ident')) return 0
+            if (header.includes('identificador') || header.includes('identificacao')) return 1
+            return 2
+          }
+          return score(left) - score(right)
+        })
 
       let detectedCol1 = wagonCandidates[0] || ''
-      let detectedCol2 = wagonCandidates.length > 1 ? wagonCandidates[1] : ''
+      let detectedCol2 = wagonCandidates[1] || ''
 
       // Se não achou pelos nomes, inspeciona valores das primeiras 10 linhas
       if (!detectedCol1) {
         for (const col of cols) {
+          if (isWeightColumn(col)) continue
           const isLikelyWagon = jsonData.slice(0, 10).some((row) => {
             const val = String(row[col] || '').trim()
             return /^[A-Z]{2,4}\s*\d{4,8}$/i.test(val) || /^\d{5,8}$/.test(val)
@@ -231,11 +363,20 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
         }
       }
 
-      setSelectedWagonColumn(detectedCol1 || cols[0] || '')
+      setSelectedWagonColumn(detectedCol1)
       setSelectedSecondaryWagonColumn(detectedCol2 || '')
 
       // Auto-detectar coluna de Peso (se existir)
-      const detectedWeightCol = cols.find((c) => {
+      const rateioCol = cols.find((column) => {
+        const header = normalizarCabecalhoPeso(column)
+        return header.includes('peso nota vagao') || header.includes('peso rateio')
+      }) || ''
+      const grossCol = cols.find((column) => {
+        const header = normalizarCabecalhoPeso(column)
+        return header.includes('peso bruto') || header === 'bruto'
+      }) || ''
+      const tareCol = cols.find((column) => normalizarCabecalhoPeso(column).includes('tara')) || ''
+      const detectedWeightCol = rateioCol || cols.find((c) => {
         if (c === detectedCol1 || c === detectedCol2) return false
         const cLower = c.toLowerCase().trim()
         return (
@@ -254,6 +395,9 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
       } else {
         setSelectedWeightColumn('')
       }
+      setSelectedRateioColumn(rateioCol)
+      setSelectedGrossColumn(grossCol)
+      setSelectedTareColumn(tareCol)
 
       logInputedFiles([{
         fileName: excelFileName || 'Planilha_Escala_Vagoes.xlsx',
@@ -281,7 +425,12 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   const excelVagoesList = useMemo<ExcelVagaoRow[]>(() => {
     if (!selectedWagonColumn || rawExcelRows.length === 0) return []
 
-    const list: ExcelVagaoRow[] = []
+    type ExcelVagaoRowWithWeights = ExcelVagaoRow & {
+      rateioDaLinha?: number
+      brutoDaLinha?: number
+      taraDaLinha?: number
+    }
+    const list: ExcelVagaoRowWithWeights[] = []
 
     rawExcelRows.forEach((row, idx) => {
       // 1. Extração da Coluna Principal de Vagão
@@ -292,14 +441,18 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
         const digits1 = extrairApenasDigitos(cleanStr1)
         const serie1 = extrairSerieVagao(cleanStr1)
 
-        let peso1: number | undefined
-        if (selectedWeightColumn && row[selectedWeightColumn] !== undefined) {
-          const rawWeight = String(row[selectedWeightColumn]).replace(/\./g, '').replace(',', '.')
-          const parsed = parseFloat(rawWeight)
-          if (!isNaN(parsed) && parsed > 0) {
-            peso1 = parsed
-          }
-        }
+        const peso1 = selectedWeightColumn
+          ? parsePesoPlanilha(row[selectedWeightColumn], selectedWeightColumn)
+          : undefined
+        const rateioDaLinha = selectedRateioColumn
+          ? parsePesoPlanilha(row[selectedRateioColumn], selectedRateioColumn)
+          : undefined
+        const brutoDaLinha = selectedGrossColumn
+          ? parsePesoPlanilha(row[selectedGrossColumn], selectedGrossColumn)
+          : undefined
+        const taraDaLinha = selectedTareColumn
+          ? parsePesoPlanilha(row[selectedTareColumn], selectedTareColumn)
+          : undefined
 
         if (norm1.length > 0 || digits1.length > 0) {
           list.push({
@@ -309,6 +462,9 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
             numeroApenas: digits1,
             serie: serie1,
             peso: peso1,
+            rateioDaLinha,
+            brutoDaLinha,
+            taraDaLinha,
             pesoFormatado: peso1 ? `${peso1.toLocaleString('pt-BR', { minimumFractionDigits: 3 })} t` : undefined,
             dadosCompletos: row,
           })
@@ -338,8 +494,56 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
       }
     })
 
-    return list
-  }, [rawExcelRows, selectedWagonColumn, selectedSecondaryWagonColumn, selectedWeightColumn])
+    const totalsByWagon = new Map<string, {
+      rateio: number
+      bruto?: number
+      tara?: number
+      linhasRateio: Set<number>
+    }>()
+    list.forEach((row) => {
+      const wagonKey = row.numeroApenas || row.vagaoNormalizado
+      if (!wagonKey) return
+      const current = totalsByWagon.get(wagonKey) || { rateio: 0, linhasRateio: new Set<number>() }
+      current.rateio += row.rateioDaLinha || 0
+      if (row.rateioDaLinha !== undefined) current.linhasRateio.add(row.rowIndex)
+      if (current.bruto === undefined && row.brutoDaLinha !== undefined) current.bruto = row.brutoDaLinha
+      if (current.tara === undefined && row.taraDaLinha !== undefined) current.tara = row.taraDaLinha
+      totalsByWagon.set(wagonKey, current)
+    })
+
+    return list.map(({ rateioDaLinha: _rateio, brutoDaLinha: _bruto, taraDaLinha: _tara, ...row }) => {
+      const total = totalsByWagon.get(row.numeroApenas || row.vagaoNormalizado)
+      const pesoRateioSomado = total && total.rateio > 0 ? Number(total.rateio.toFixed(3)) : undefined
+      const pesoLiquidoPlanilha = total?.bruto !== undefined && total.tara !== undefined
+        ? Number((total.bruto - total.tara).toFixed(3))
+        : undefined
+      return {
+        ...row,
+        pesoRateioSomado,
+        pesoBrutoPlanilha: total?.bruto,
+        taraPlanilha: total?.tara,
+        pesoLiquidoPlanilha,
+        linhasRateio: total ? Array.from(total.linhasRateio).sort((a, b) => a - b) : undefined,
+      }
+    })
+  }, [
+    rawExcelRows,
+    selectedWagonColumn,
+    selectedSecondaryWagonColumn,
+    selectedWeightColumn,
+    selectedRateioColumn,
+    selectedGrossColumn,
+    selectedTareColumn,
+  ])
+
+  React.useEffect(() => {
+    onComparisonReady?.(
+      !isProcessingMdf &&
+      !isProcessingExcel &&
+      mdfeList.length > 0 &&
+      excelVagoesList.length > 0
+    )
+  }, [excelVagoesList.length, isProcessingExcel, isProcessingMdf, mdfeList.length, onComparisonReady])
 
   // -------------------------------------------------------------
   // 4. CONSOLIDAÇÃO DE TODOS OS VAGÕES DOS MDF-es
@@ -392,12 +596,20 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
         }
       }
 
+      const diferencaRateioMdf = pesoMDF !== undefined && item.vagaoExcel?.pesoRateioSomado !== undefined
+        ? Number((pesoMDF - item.vagaoExcel.pesoRateioSomado).toFixed(3))
+        : undefined
+      const diferencaLiquidoMdf = pesoMDF !== undefined && item.vagaoExcel?.pesoLiquidoPlanilha !== undefined
+        ? Number((pesoMDF - item.vagaoExcel.pesoLiquidoPlanilha).toFixed(3))
+        : undefined
       const isAuditando = auditingItemId === item.id || isAuditingAllWeights
 
       return {
         ...item,
         pesoMDF,
         diferencaPeso,
+        diferencaRateioMdf,
+        diferencaLiquidoMdf,
         auditoriaIA: auditResult,
         isAuditando,
       }
@@ -408,15 +620,12 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
   const itemsComDivergenciaPeso = useMemo(() => {
     return comparisonItems.filter((item) => {
       if (item.status !== 'CONFERIDO') return false
-      // Se a diferença de peso for perceptível (> 0.05 t) ou faltar peso em um dos lados
-      if (item.diferencaPeso !== undefined && Math.abs(item.diferencaPeso) > 0.05) return true
-      if (item.pesoMDF === undefined && item.pesoExcel !== undefined) return true
-      if (item.pesoMDF !== undefined && item.pesoExcel === undefined) return true
-      return false
+      return hasComparisonWeightDivergence(item)
     })
   }, [comparisonItems])
 
   const totalDivergenciasPeso = itemsComDivergenciaPeso.length
+  const totalAiDivergenciasPeso = itemsComDivergenciaPeso.filter(hasAiWeightDivergence).length
 
   const hasAnyPesoExcel = useMemo(() => {
     return excelVagoesList.some((v) => v.peso !== undefined && v.peso !== null && v.peso > 0) ||
@@ -450,11 +659,12 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
 
   // Handlers para a IA de Auditoria de Divergência de Peso
   const handleAuditAllWeightDivergences = async () => {
-    if (itemsComDivergenciaPeso.length === 0) return
+    const aiDivergentItems = itemsComDivergenciaPeso.filter(hasAiWeightDivergence)
+    if (aiDivergentItems.length === 0) return
     setIsAuditingAllWeights(true)
 
     try {
-      const payload: WeightAuditItemInput[] = itemsComDivergenciaPeso.map((item) => ({
+      const payload: WeightAuditItemInput[] = aiDivergentItems.map((item) => ({
         id: item.id,
         identificador: item.identificadorExibicao,
         numeroApenas: item.numeroApenas,
@@ -543,10 +753,7 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
     if (activeFilter === 'DIVERGENCIA_PESO') {
       result = result.filter((item) => {
         if (item.status !== 'CONFERIDO') return false
-        if (item.diferencaPeso !== undefined && Math.abs(item.diferencaPeso) > 0.05) return true
-        if (item.pesoMDF === undefined && item.pesoExcel !== undefined) return true
-        if (item.pesoMDF !== undefined && item.pesoExcel === undefined) return true
-        return false
+        return hasComparisonWeightDivergence(item)
       })
     } else if (activeFilter !== 'TODOS') {
       result = result.filter((item) => item.status === activeFilter)
@@ -623,6 +830,13 @@ export function MDFExcelComparator({ onOpenDoc }: MDFExcelComparatorProps) {
         'Linha Excel': item.vagaoExcel?.rowIndex || '',
         'Peso Excel (t)': item.pesoExcel ?? '',
         'Dif Peso (t)': item.diferencaPeso ?? '',
+        'Soma Peso Nota Vagão (rateio, t)': item.vagaoExcel?.pesoRateioSomado ?? '',
+        'Linhas do rateio': item.vagaoExcel?.linhasRateio?.join(', ') ?? '',
+        'Diferença MDF x rateio somado (t)': item.diferencaRateioMdf ?? '',
+        'Peso Bruto planilha (t)': item.vagaoExcel?.pesoBrutoPlanilha ?? '',
+        'Tara planilha (t)': item.vagaoExcel?.taraPlanilha ?? '',
+        'Líquido planilha (bruto - tara, t)': item.vagaoExcel?.pesoLiquidoPlanilha ?? '',
+        'Diferença MDF x líquido planilha (t)': item.diferencaLiquidoMdf ?? '',
         'Quantidade Encontrada pela IA (Valor Real t)': pesoIaEncontrado,
         'Auditoria IA (Status / Causa)': itemAudit?.status === 'ERRO_LEITURA_SISTEMA'
           ? 'ERRO DE LEITURA DO SISTEMA (VALOR REAL ENCONTRADO)'
@@ -777,6 +991,25 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
           </CardHeader>
 
           <CardContent className="space-y-3">
+            {guidedFileUpload && (
+              <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-indigo-300 bg-indigo-50/50 p-3 text-xs text-indigo-900 hover:border-indigo-500 dark:border-indigo-800 dark:bg-indigo-950/20 dark:text-indigo-200">
+                <Upload className="h-4 w-4 shrink-0" />
+                <span>Carregar MDF-e/DAMDFE em PDF ou XML</span>
+                <input
+                  type="file"
+                  accept=".pdf,.xml"
+                  multiple
+                  className="sr-only"
+                  onChange={(event) => {
+                    if (event.target.files?.length) {
+                      void handleMdfeFilesUpload(event.target.files)
+                      event.target.value = ''
+                    }
+                  }}
+                />
+              </label>
+            )}
+
             {mdfeList.length > 0 && (
               <div className="space-y-3">
                 {mdfeList.map((mdf, idx) => (
@@ -1061,6 +1294,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                         onChange={(e) => setSelectedWagonColumn(e.target.value)}
                         className="w-full h-8 px-2 text-xs font-semibold rounded-lg border border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200"
                       >
+                        <option value="">-- Selecione a identificação do vagão --</option>
                         {excelColumns.map((col) => (
                           <option key={col} value={col}>
                             {col} {col === selectedWagonColumn ? '✓' : ''}
@@ -1109,6 +1343,50 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                       </select>
                     </div>
                   </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+                    {[
+                      {
+                        label: 'Peso Nota Vagão (rateio)',
+                        value: selectedRateioColumn,
+                        onChange: setSelectedRateioColumn,
+                        empty: '-- Não calcular rateio --',
+                      },
+                      {
+                        label: 'Peso Bruto do vagão',
+                        value: selectedGrossColumn,
+                        onChange: setSelectedGrossColumn,
+                        empty: '-- Não calcular líquido --',
+                      },
+                      {
+                        label: 'Tara do vagão',
+                        value: selectedTareColumn,
+                        onChange: setSelectedTareColumn,
+                        empty: '-- Não calcular líquido --',
+                      },
+                    ].map((column) => (
+                      <div key={column.label}>
+                        <label className="mb-1 block text-[10px] font-bold uppercase text-zinc-500 dark:text-zinc-400">
+                          {column.label}
+                        </label>
+                        <select
+                          value={column.value}
+                          onChange={(event) => column.onChange(event.target.value)}
+                          className="h-8 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2 text-xs text-zinc-800 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                        >
+                          <option value="">{column.empty}</option>
+                          {excelColumns.map((col) => (
+                            <option key={col} value={col}>{col}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                    O rateio é somado por vagão, mesmo quando aparece em várias linhas. Bruto e tara são considerados uma vez por vagão; valores em kg são convertidos para toneladas.
+                  </p>
+                  <p className="text-[10px] text-emerald-700 dark:text-emerald-300">
+                    Os arquivos MDF-e e Excel são processados neste navegador, não são enviados ao servidor nem gravados no histórico. O conteúdo fica apenas na memória durante a conferência.
+                  </p>
                 </div>
 
                 <div className="flex items-center justify-between pt-1">
@@ -1310,7 +1588,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
             >
               <CardContent className="p-3.5 space-y-1">
                 <div className="flex items-center justify-between text-purple-700 dark:text-purple-300">
-                  <span className="text-[11px] font-bold uppercase tracking-wider">Dif. de Peso</span>
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Divergências de Peso</span>
                   <Scale className="h-4 w-4 text-purple-600" />
                 </div>
                 <div className={`text-2xl font-black ${totalDivergenciasPeso > 0 ? 'text-purple-700 dark:text-purple-400' : 'text-zinc-900 dark:text-zinc-50'}`}>
@@ -1318,17 +1596,20 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                 </div>
                 <p className="text-[10px] text-purple-600 dark:text-purple-300 font-medium">
                   {!hasAnyPesoExcel
-                    ? 'Sem dados na peso selecionado'
+                    ? 'Sem pesos disponíveis para comparar'
                     : totalDivergenciasPeso > 0
                     ? `${Math.abs(resumo.diferencaPesoTotal).toFixed(3)} t dif total`
-                    : 'Pesos alinhados'}
+                    : 'Rateio e bruto − tara alinhados'}
                 </p>
               </CardContent>
             </Card>
           </div>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Para conferir cada vagão, veja a última coluna da tabela: ela mostra a diferença entre MDF-e e rateio somado, e entre MDF-e e (bruto − tara). O cartão “Divergências de Peso” filtra os vagões com diferença acima de 0,05 t.
+          </p>
 
           {/* BANNER DA IA AUDITORA DE PESO (ULTRA ECONÔMICA & INDEPENDENTE) */}
-          {totalDivergenciasPeso > 0 && (
+          {totalAiDivergenciasPeso > 0 && (
             <Card className="border border-purple-200 dark:border-purple-900/60 bg-gradient-to-r from-purple-50/80 via-indigo-50/40 to-purple-50/80 dark:from-purple-950/30 dark:via-indigo-950/20 dark:to-purple-950/30 shadow-xs">
               <CardContent className="p-4 space-y-3">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -1343,7 +1624,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                         Ultra Econômica (&lt; 150 tokens/item)
                       </span>
                       <span className="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-400">
-                        • Atua exclusivamente nas {totalDivergenciasPeso} divergências detectadas
+                        • Atua exclusivamente nas {totalAiDivergenciasPeso} divergências de peso da comparação principal
                       </span>
                     </div>
                     <p className="text-xs text-zinc-600 dark:text-zinc-300">
@@ -1361,12 +1642,12 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                       {isAuditingAllWeights ? (
                         <>
                           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          Auditando {totalDivergenciasPeso} itens...
+                          Auditando {totalAiDivergenciasPeso} itens...
                         </>
                       ) : (
                         <>
                           <Sparkles className="h-3.5 w-3.5" />
-                          Conferir Divergências com IA ({totalDivergenciasPeso})
+                          Conferir Divergências com IA ({totalAiDivergenciasPeso})
                         </>
                       )}
                     </Button>
@@ -1537,7 +1818,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                       <th className="py-2.5 px-3">Série / Nº</th>
                       <th className="py-2.5 px-3">MDF-e (Seq / Ton)</th>
                       <th className="py-2.5 px-3">Excel (Linha / Peso)</th>
-                      <th className="py-2.5 px-3">Divergência & Auditoria IA</th>
+                      <th className="py-2.5 px-3">Conferência de Pesos (rateio / bruto − tara)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200/80 dark:divide-zinc-800">
@@ -1551,9 +1832,10 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                       filteredItems.map((item, idx) => {
                         const isMatch = item.status === 'CONFERIDO'
                         const isFaltaExcel = item.status === 'FALTA_NO_EXCEL'
-                        const hasWeightDivergence = isMatch && ((item.diferencaPeso !== undefined && Math.abs(item.diferencaPeso) > 0.05) || (item.pesoMDF === undefined && item.pesoExcel !== undefined))
+                        const hasWeightDivergence = isMatch && hasComparisonWeightDivergence(item)
+                        const hasAiDivergence = isMatch && hasAiWeightDivergence(item)
                         const isOverridden = overrideWeightsMap[item.id] !== undefined
-                        const isRowAuditing = auditingItemId === item.id || (isAuditingAllWeights && hasWeightDivergence)
+                        const isRowAuditing = auditingItemId === item.id || (isAuditingAllWeights && hasAiDivergence)
 
                         return (
                           <tr
@@ -1632,7 +1914,17 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                                   </span>
                                   {item.pesoExcel !== undefined && (
                                     <span className="ml-2 font-bold text-zinc-900 dark:text-zinc-100">
-                                      {item.pesoExcel.toLocaleString('pt-BR', { minimumFractionDigits: 3 })} t
+                                      {formatTons(item.pesoExcel)}
+                                    </span>
+                                  )}
+                                  {item.vagaoExcel.pesoRateioSomado !== undefined && (
+                                    <span className="mt-1 block text-[11px] text-zinc-600 dark:text-zinc-300">
+                                      Rateio somado ({item.vagaoExcel.linhasRateio?.length || 1} linha(s)): <strong>{formatTons(item.vagaoExcel.pesoRateioSomado)}</strong>
+                                    </span>
+                                  )}
+                                  {item.vagaoExcel.pesoLiquidoPlanilha !== undefined && (
+                                    <span className="block text-[11px] text-zinc-600 dark:text-zinc-300">
+                                      Bruto {formatTons(item.vagaoExcel.pesoBrutoPlanilha!)} − Tara {formatTons(item.vagaoExcel.taraPlanilha!)} = <strong>{formatTons(item.vagaoExcel.pesoLiquidoPlanilha)}</strong>
                                     </span>
                                   )}
                                 </div>
@@ -1643,6 +1935,28 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
 
                             {/* Divergência & Auditoria IA */}
                             <td className="py-2.5 px-3 max-w-xs">
+                              <div className="mb-1 space-y-0.5">
+                                {item.diferencaRateioMdf !== undefined && (
+                                  <span className={`block text-[10px] font-semibold ${
+                                    Math.abs(item.diferencaRateioMdf) > PESO_DIVERGENCIA_TOLERANCIA_TONELADAS
+                                      ? 'text-rose-700 dark:text-rose-300'
+                                      : 'text-emerald-700 dark:text-emerald-300'
+                                  }`}>
+                                    MDF − rateio: {item.diferencaRateioMdf > 0 ? '+' : ''}{formatTons(item.diferencaRateioMdf)}
+                                    {Math.abs(item.diferencaRateioMdf) > PESO_DIVERGENCIA_TOLERANCIA_TONELADAS ? ' · Divergente' : ' · OK'}
+                                  </span>
+                                )}
+                                {item.diferencaLiquidoMdf !== undefined && (
+                                  <span className={`block text-[10px] font-semibold ${
+                                    Math.abs(item.diferencaLiquidoMdf) > PESO_DIVERGENCIA_TOLERANCIA_TONELADAS
+                                      ? 'text-rose-700 dark:text-rose-300'
+                                      : 'text-emerald-700 dark:text-emerald-300'
+                                  }`}>
+                                    MDF − (bruto − tara): {item.diferencaLiquidoMdf > 0 ? '+' : ''}{formatTons(item.diferencaLiquidoMdf)}
+                                    {Math.abs(item.diferencaLiquidoMdf) > PESO_DIVERGENCIA_TOLERANCIA_TONELADAS ? ' · Divergente' : ' · OK'}
+                                  </span>
+                                )}
+                              </div>
                               {/* Se tiver auditoria da IA realizada para esta linha */}
                               {item.auditoriaIA ? (
                                 <div className="space-y-1">
@@ -1705,7 +2019,7 @@ ${faltamMdf.length > 0 ? faltamMdf.join(', ') : 'Nenhum'}
                                   </span>
 
                                   {/* Botão individual para conferir com IA sob demanda */}
-                                  {hasWeightDivergence && (
+                                  {hasAiDivergence && (
                                     <Button
                                       type="button"
                                       variant="outline"

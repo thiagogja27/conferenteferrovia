@@ -55,6 +55,7 @@ interface BulkDestinatarioRow {
   nome: string
   cnpj: string
   nomenclatura: string
+  nomenclaturaRemetente: string
   contrato: string
   line: number
 }
@@ -92,7 +93,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   const [originFilter, setOriginFilter] = useState<'TODOS' | 'CUSTOM' | 'SISTEMA'>('TODOS')
   const [isBulkDestModalOpen, setIsBulkDestModalOpen] = useState(false)
   const [bulkDestRows, setBulkDestRows] = useState<BulkDestinatarioRow[]>(
-    () => Array.from({ length: 5 }, () => ({ nome: '', cnpj: '', nomenclatura: '', contrato: '', line: 0 }))
+    () => Array.from({ length: 5 }, () => ({ nome: '', cnpj: '', nomenclatura: '', nomenclaturaRemetente: '', contrato: '', line: 0 }))
   )
   const [bulkDestError, setBulkDestError] = useState('')
   const [isSavingBulkDest, setIsSavingBulkDest] = useState(false)
@@ -101,9 +102,11 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   const [bulkEditSelectedIds, setBulkEditSelectedIds] = useState<string[]>([])
   const [bulkEditNameEnabled, setBulkEditNameEnabled] = useState(false)
   const [bulkEditNomenclatureEnabled, setBulkEditNomenclatureEnabled] = useState(false)
+  const [bulkEditSenderNomenclatureEnabled, setBulkEditSenderNomenclatureEnabled] = useState(false)
   const [bulkEditContractEnabled, setBulkEditContractEnabled] = useState(false)
   const [bulkEditName, setBulkEditName] = useState('')
   const [bulkEditNomenclature, setBulkEditNomenclature] = useState('')
+  const [bulkEditSenderNomenclature, setBulkEditSenderNomenclature] = useState('')
   const [bulkEditContract, setBulkEditContract] = useState<ContratoDestinatario | ''>('')
   const [bulkEditError, setBulkEditError] = useState('')
 
@@ -121,6 +124,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   // Formulário Destinatário
   const [destNome, setDestNome] = useState('')
   const [destNomenclatura, setDestNomenclatura] = useState('')
+  const [destNomenclaturaRemetente, setDestNomenclaturaRemetente] = useState('')
   const [destCnpj, setDestCnpj] = useState('')
   const [destContrato, setDestContrato] = useState<ContratoDestinatario | ''>('')
   const [destCnpjsAdicionais, setDestCnpjsAdicionais] = useState('')
@@ -157,6 +161,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
     setEditingDest(null)
     setDestNome('')
     setDestNomenclatura('')
+    setDestNomenclaturaRemetente('')
     setDestCnpj('')
     setDestContrato('')
     setDestCnpjsAdicionais('')
@@ -171,6 +176,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
     setEditingDest(dest)
     setDestNome(dest.nome)
     setDestNomenclatura(dest.nomenclatura || '')
+    setDestNomenclaturaRemetente(dest.nomenclaturaRemetente || '')
     setDestCnpj(dest.cnpjPrincipal)
     setDestContrato(dest.contrato || '')
     setDestCnpjsAdicionais((dest.cnpjsAdicionais || []).join(', '))
@@ -211,6 +217,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
         !editingDest?.isSistema ||
         destNome.trim().toUpperCase() !== editingDest.nome ||
         destNomenclatura.trim() !== (editingDest.nomenclatura || '') ||
+        destNomenclaturaRemetente.trim() !== (editingDest.nomenclaturaRemetente || '') ||
         adCnpjs.join(',') !== (editingDest.cnpjsAdicionais || []).join(',') ||
         aliases.join(',') !== (editingDest.aliases || []).join(',') ||
         destCidade.trim() !== (editingDest.cidade || '') ||
@@ -222,6 +229,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
           id: editingDest && !editingDest.isSistema ? editingDest.id : undefined,
           nome: destNome.trim().toUpperCase(),
           nomenclatura: destNomenclatura.trim(),
+          nomenclaturaRemetente: destNomenclaturaRemetente.trim(),
           cnpjPrincipal: formatCNPJ(destCnpj),
           cnpjsAdicionais: adCnpjs,
           aliases,
@@ -259,7 +267,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
     setBulkDestRows((current) => {
       const updated = [...current]
       while (updated.length <= rowIndex) {
-        updated.push({ nome: '', cnpj: '', nomenclatura: '', contrato: '', line: 0 })
+        updated.push({ nome: '', cnpj: '', nomenclatura: '', nomenclaturaRemetente: '', contrato: '', line: 0 })
       }
       updated[rowIndex] = { ...updated[rowIndex], [column]: value }
       return updated
@@ -288,6 +296,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
       'nome',
       'cnpj',
       'nomenclatura',
+      'nomenclaturaRemetente',
       'contrato',
     ]
 
@@ -296,7 +305,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
       rowsToPaste.forEach((values, rowOffset) => {
         const targetRow = startRow + rowOffset
         while (updated.length <= targetRow) {
-          updated.push({ nome: '', cnpj: '', nomenclatura: '', contrato: '', line: 0 })
+          updated.push({ nome: '', cnpj: '', nomenclatura: '', nomenclaturaRemetente: '', contrato: '', line: 0 })
         }
         values.forEach((value, columnOffset) => {
           const targetColumn = columns[startColumn + columnOffset]
@@ -310,7 +319,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   const handleBulkSaveDestinatarios = async () => {
     const rows: BulkDestinatarioRow[] = bulkDestRows
       .map((row, index) => ({ ...row, line: index + 1 }))
-      .filter((row) => row.nome.trim() || row.cnpj.trim() || row.nomenclatura.trim() || row.contrato.trim())
+      .filter((row) => row.nome.trim() || row.cnpj.trim() || row.nomenclatura.trim() || row.nomenclaturaRemetente.trim() || row.contrato.trim())
     if (rows.length === 0) {
       const message = 'Preencha ao menos uma linha com destinatário e CNPJ/CPF.'
       setBulkDestError(message)
@@ -355,6 +364,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
           id: existing && !existing.isSistema ? existing.id : undefined,
           nome: row.nome.trim().toUpperCase(),
           nomenclatura: row.nomenclatura.trim() || existing?.nomenclatura || '',
+          nomenclaturaRemetente: row.nomenclaturaRemetente.trim() || existing?.nomenclaturaRemetente || '',
           cnpjPrincipal: formatCNPJ(row.cnpj),
           cnpjsAdicionais: existing?.cnpjsAdicionais || [],
           aliases: existing?.aliases || [],
@@ -389,7 +399,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
         setBulkDestError(message)
         onNotify?.(message, 'warning')
       } else {
-        setBulkDestRows(Array.from({ length: 5 }, () => ({ nome: '', cnpj: '', nomenclatura: '', contrato: '', line: 0 })))
+        setBulkDestRows(Array.from({ length: 5 }, () => ({ nome: '', cnpj: '', nomenclatura: '', nomenclaturaRemetente: '', contrato: '', line: 0 })))
         setBulkDestError('')
         setIsBulkDestModalOpen(false)
         onNotify?.(`${processedCount} destinatário(s) cadastrado(s)/atualizado(s) com sucesso.`, 'success')
@@ -500,12 +510,13 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
       const digitsQuery = searchFilter.replace(/\D/g, '')
       const inNome = normalizeSearchText(d.nome).includes(q)
       const inNomenclatura = normalizeSearchText(d.nomenclatura || '').includes(q)
+      const inSenderNomenclature = normalizeSearchText(d.nomenclaturaRemetente || '').includes(q)
       const inCnpj = Boolean(digitsQuery) && (d.cnpjPrincipal || '').replace(/\D/g, '').includes(digitsQuery)
       const inCnpjsAdicionais = Boolean(digitsQuery) &&
         (d.cnpjsAdicionais || []).some((cnpj) => cnpj.replace(/\D/g, '').includes(digitsQuery))
       const inAliases = (d.aliases || []).some((a) => normalizeSearchText(a).includes(q))
       const inCidade = normalizeSearchText(d.cidade || '').includes(q)
-      return inNome || inNomenclatura || inCnpj || inCnpjsAdicionais || inAliases || inCidade
+      return inNome || inNomenclatura || inSenderNomenclature || inCnpj || inCnpjsAdicionais || inAliases || inCidade
     })
   }, [destinatarios, searchFilter, originFilter])
 
@@ -516,6 +527,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
     return destinatarios.filter((recipient) =>
       normalizeSearchText(recipient.nome).includes(query) ||
       normalizeSearchText(recipient.nomenclatura || '').includes(query) ||
+      normalizeSearchText(recipient.nomenclaturaRemetente || '').includes(query) ||
       (recipient.aliases || []).some((alias) => normalizeSearchText(alias).includes(query)) ||
       (recipient.cidade && normalizeSearchText(recipient.cidade).includes(query)) ||
       (digitsQuery && (
@@ -530,9 +542,11 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
     setBulkEditSelectedIds([])
     setBulkEditNameEnabled(false)
     setBulkEditNomenclatureEnabled(false)
+    setBulkEditSenderNomenclatureEnabled(false)
     setBulkEditContractEnabled(false)
     setBulkEditName('')
     setBulkEditNomenclature('')
+    setBulkEditSenderNomenclature('')
     setBulkEditContract('')
     setBulkEditError('')
     setIsBulkEditModalOpen(true)
@@ -544,7 +558,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
       setBulkEditError('Selecione ao menos um destinatário.')
       return
     }
-    if (!bulkEditNameEnabled && !bulkEditNomenclatureEnabled && !bulkEditContractEnabled) {
+    if (!bulkEditNameEnabled && !bulkEditNomenclatureEnabled && !bulkEditSenderNomenclatureEnabled && !bulkEditContractEnabled) {
       setBulkEditError('Selecione ao menos uma informação para aplicar.')
       return
     }
@@ -559,7 +573,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
     let processed = 0
     try {
       for (const recipient of selected) {
-        if (bulkEditNameEnabled || bulkEditNomenclatureEnabled) {
+        if (bulkEditNameEnabled || bulkEditNomenclatureEnabled || bulkEditSenderNomenclatureEnabled) {
           try {
             await saveCustomDestinatario({
               id: recipient.isSistema ? undefined : recipient.id,
@@ -567,6 +581,9 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
               nomenclatura: bulkEditNomenclatureEnabled
                 ? bulkEditNomenclature.trim()
                 : recipient.nomenclatura || '',
+              nomenclaturaRemetente: bulkEditSenderNomenclatureEnabled
+                ? bulkEditSenderNomenclature.trim()
+                : recipient.nomenclaturaRemetente || '',
               cnpjPrincipal: recipient.cnpjPrincipal,
               cnpjsAdicionais: recipient.cnpjsAdicionais || [],
               aliases: recipient.aliases || [],
@@ -839,7 +856,12 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                         </div>
                         {dest.nomenclatura && (
                           <div className="text-[11px] text-zinc-600 dark:text-zinc-400">
-                            Nomenclatura: <span className="font-semibold">{dest.nomenclatura}</span>
+                            Nomenclatura destinatário: <span className="font-semibold">{dest.nomenclatura}</span>
+                          </div>
+                        )}
+                        {dest.nomenclaturaRemetente && (
+                          <div className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                            Nomenclatura remetente: <span className="font-semibold">{dest.nomenclaturaRemetente}</span>
                           </div>
                         )}
 
@@ -1149,12 +1171,24 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
 
             <div>
               <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300 block mb-1">
-                Nomenclatura (opcional)
+                Nomenclatura do destinatário (opcional)
               </label>
               <Input
                 value={destNomenclatura}
                 onChange={(e) => setDestNomenclatura(e.target.value)}
-                placeholder="Nome alternativo associado a este destinatário"
+                placeholder="Nomenclatura associada ao destinatário"
+                className="text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300 block mb-1">
+                Nomenclatura do remetente (opcional)
+              </label>
+              <Input
+                value={destNomenclaturaRemetente}
+                onChange={(e) => setDestNomenclaturaRemetente(e.target.value)}
+                placeholder="Nomenclatura associada ao remetente"
                 className="text-xs"
               />
             </div>
@@ -1290,7 +1324,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
           <DialogHeader>
             <DialogTitle>Filtrar e editar destinatários em massa</DialogTitle>
             <DialogDescription className="text-xs">
-              Filtre pelo nome, nomenclatura, CNPJ ou alias; selecione os destinatários e marque quais campos deseja aplicar igualmente a todos.
+              Filtre por nome, nomenclaturas, CNPJ ou alias; selecione os destinatários e marque quais campos deseja aplicar igualmente a todos.
             </DialogDescription>
           </DialogHeader>
 
@@ -1300,7 +1334,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
               <Input
                 value={bulkEditFilter}
                 onChange={(event) => setBulkEditFilter(event.target.value)}
-                placeholder="Filtrar destinatários por nome, nomenclatura, CNPJ ou alias..."
+                placeholder="Filtrar por nome, nomenclaturas, CNPJ ou alias..."
                 className="h-9 pl-8 text-xs"
               />
             </div>
@@ -1347,14 +1381,15 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                     />
                     <span className="min-w-0 flex-1 truncate font-semibold">{recipient.nome}</span>
                     <span className="text-zinc-500">{recipient.cnpjPrincipal}</span>
-                    {recipient.nomenclatura && <span className="text-zinc-500">{recipient.nomenclatura}</span>}
+                    {recipient.nomenclatura && <span className="text-zinc-500">Dest.: {recipient.nomenclatura}</span>}
+                    {recipient.nomenclaturaRemetente && <span className="text-zinc-500">Rem.: {recipient.nomenclaturaRemetente}</span>}
                     {recipient.contrato && <span className="font-semibold text-indigo-600 dark:text-indigo-400">{recipient.contrato}</span>}
                   </label>
                 ))
               )}
             </div>
 
-            <div className="grid gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-800 md:grid-cols-3">
+            <div className="grid gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-800 md:grid-cols-2 lg:grid-cols-4">
               <label className="space-y-2 text-xs">
                 <span className="flex items-center gap-2 font-semibold">
                   <input
@@ -1369,6 +1404,24 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                   onChange={(event) => setBulkEditName(event.target.value)}
                   disabled={!bulkEditNameEnabled}
                   placeholder="Novo nome do destinatário"
+                  className="h-8 text-xs"
+                />
+              </label>
+
+              <label className="space-y-2 text-xs">
+                <span className="flex items-center gap-2 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={bulkEditSenderNomenclatureEnabled}
+                    onChange={(event) => setBulkEditSenderNomenclatureEnabled(event.target.checked)}
+                  />
+                  Aplicar mesma nomenclatura do remetente
+                </span>
+                <Input
+                  value={bulkEditSenderNomenclature}
+                  onChange={(event) => setBulkEditSenderNomenclature(event.target.value)}
+                  disabled={!bulkEditSenderNomenclatureEnabled}
+                  placeholder="Nomenclatura do remetente (vazio remove)"
                   className="h-8 text-xs"
                 />
               </label>
@@ -1451,26 +1504,27 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
           <DialogHeader>
             <DialogTitle>Cadastro/edição em massa de destinatários</DialogTitle>
             <DialogDescription className="text-xs">
-              Preencha as colunas abaixo ou cole as quatro colunas copiadas de uma planilha na primeira célula.
-              Destinatário e CNPJ/CPF são obrigatórios; nomenclatura e contrato podem ficar vazios.
+              Preencha as colunas abaixo ou cole as cinco colunas copiadas de uma planilha na primeira célula.
+              Destinatário e CNPJ/CPF são obrigatórios; nomenclaturas e contrato podem ficar vazios.
               CNPJs já cadastrados serão atualizados, preservando os demais campos.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="max-h-[55vh] overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800">
-              <table className="w-full min-w-[760px] border-collapse text-xs">
+              <table className="w-full min-w-[980px] border-collapse text-xs">
                 <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-800">
                   <tr className="text-left">
                     <th className="p-2 font-semibold">Destinatário *</th>
                     <th className="p-2 font-semibold">CNPJ/CPF *</th>
-                    <th className="p-2 font-semibold">Nomenclatura</th>
+                    <th className="p-2 font-semibold">Nomenclatura destinatário</th>
+                    <th className="p-2 font-semibold">Nomenclatura remetente</th>
                     <th className="p-2 font-semibold">Contrato</th>
                   </tr>
                 </thead>
                 <tbody>
                   {bulkDestRows.map((row, rowIndex) => (
                     <tr key={rowIndex} className="border-t border-zinc-200 dark:border-zinc-800">
-                      {(['nome', 'cnpj', 'nomenclatura', 'contrato'] as const).map((column, columnIndex) => (
+                      {(['nome', 'cnpj', 'nomenclatura', 'nomenclaturaRemetente', 'contrato'] as const).map((column, columnIndex) => (
                         <td key={column} className="p-1.5">
                           <Input
                             value={row[column]}
@@ -1479,7 +1533,8 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                             placeholder={
                               column === 'nome' ? 'Nome do destinatário' :
                               column === 'cnpj' ? '00.000.000/0001-00' :
-                              column === 'nomenclatura' ? 'Opcional' :
+                              column === 'nomenclatura' ? 'Nomenclatura destinatário' :
+                              column === 'nomenclaturaRemetente' ? 'Nomenclatura remetente' :
                               'Ex.: CGL-T'
                             }
                             className={`h-8 text-xs ${column === 'cnpj' ? 'font-mono' : ''}`}
@@ -1505,7 +1560,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
               variant="outline"
               onClick={() => setBulkDestRows((rows) => [
                 ...rows,
-                { nome: '', cnpj: '', nomenclatura: '', contrato: '', line: 0 },
+                { nome: '', cnpj: '', nomenclatura: '', nomenclaturaRemetente: '', contrato: '', line: 0 },
               ])}
               className="text-xs"
             >

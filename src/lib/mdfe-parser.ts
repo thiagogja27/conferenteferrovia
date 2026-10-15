@@ -56,6 +56,11 @@ export interface ExcelVagaoRow {
   numeroApenas: string // Apenas dígitos
   serie: string // Se extraída
   peso?: number
+  pesoRateioSomado?: number
+  pesoBrutoPlanilha?: number
+  taraPlanilha?: number
+  pesoLiquidoPlanilha?: number
+  linhasRateio?: number[]
   pesoFormatado?: string
   dadosCompletos: Record<string, any>
 }
@@ -73,6 +78,8 @@ export interface ItemComparacao {
   pesoMDF?: number
   pesoExcel?: number
   diferencaPeso?: number // pesoMDF - pesoExcel
+  diferencaRateioMdf?: number
+  diferencaLiquidoMdf?: number
   observacao?: string
   trechoTexto?: string
   auditoriaIA?: WeightAuditItemResult
@@ -617,7 +624,7 @@ export function executarComparacaoMdfeExcel(
     if (matchExcel) {
       excelUtilizados.add(matchExcel.rowIndex)
       const pesoM = vagMdf.tonUtil
-      const pesoE = matchExcel.peso
+      const pesoE = matchExcel.pesoRateioSomado ?? matchExcel.peso
       const difPeso = pesoM !== undefined && pesoE !== undefined ? Number((pesoM - pesoE).toFixed(3)) : undefined
 
       itens.push({
