@@ -204,6 +204,7 @@ let connectionListeners: ((connected: boolean) => void)[] = []
 
 // Carrega histórico local salvo (apenas registros reais)
 function loadSavedLocalActivities(): RealtimeActivity[] {
+  if (typeof window === 'undefined') return []
   try {
     const raw = localStorage.getItem(STORAGE_KEY_ACTIVITIES)
     if (raw) {
@@ -224,6 +225,7 @@ function loadSavedLocalActivities(): RealtimeActivity[] {
 }
 
 function loadSavedLocalInputFiles(): InputedFileRecord[] {
+  if (typeof window === 'undefined') return []
   try {
     const raw = localStorage.getItem(STORAGE_KEY_INPUT_FILES)
     if (raw) {
