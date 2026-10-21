@@ -262,7 +262,7 @@ function parseNFeData(doc: Document, tipo: "NFe" | "NFSe" | "Desconhecido"): NFE
   }
 
   // Data e hora
-const dhEmi = getTextContent(doc, "dhEmi", ide) || getTextContent(doc, "dEmi", ide)
+  const dhEmi = getTextContent(doc, "dhEmi", ide) || getTextContent(doc, "dEmi", ide)
   const dhSaiEnt = getTextContent(doc, "dhSaiEnt", ide) || getTextContent(doc, "dSaiEnt", ide)
   
   // Extrair informações complementares para análise
@@ -299,25 +299,25 @@ const dhEmi = getTextContent(doc, "dhEmi", ide) || getTextContent(doc, "dEmi", i
   const verificacaoCNPJ = verifyChaveCNPJ(chaveAcesso, emitCnpj, destCnpj)
 
   return {
-  tipo,
-  numero: getTextContent(doc, "nNF", ide),
-  serie: getTextContent(doc, "serie", ide),
-  dataEmissao: formatDate(dhEmi),
-  horaEmissao: formatTime(dhEmi),
-  dataEntradaSaida: formatDate(dhSaiEnt),
-  horaEntradaSaida: formatTime(dhSaiEnt) || formatTime(getTextContent(doc, "hSaiEnt", ide)),
-  chaveAcesso,
-  verificacaoCNPJ,
-  protocolo: protNFe ? getTextContent(doc, "nProt", protNFe as Element) : "",
-  naturezaOperacao: getTextContent(doc, "natOp", ide),
-  tipoOperacao: (getTextContent(doc, "tpNF", ide) as "0" | "1") || "1",
-  folha: "1/1",
-  // Campos extraídos das informações complementares
-  terminalEntrega: extractTerminalEntrega(informacoesComplementares),
-  transbordo: extractTransbordo(informacoesComplementares, `${getTextContent(doc, "xMun", enderEmit)} ${getTextContent(doc, "xNome", emit)} ${getTextContent(doc, "xMun", enderDest)}`),
-  retirada: extractRetirada(informacoesComplementares),
-  tipoProduto: detectTipoProduto(descricaoProdutos, informacoesComplementares),
-  emitente: {
+    tipo,
+    numero: getTextContent(doc, "nNF", ide),
+    serie: getTextContent(doc, "serie", ide),
+    dataEmissao: formatDate(dhEmi),
+    horaEmissao: formatTime(dhEmi),
+    dataEntradaSaida: formatDate(dhSaiEnt),
+    horaEntradaSaida: formatTime(dhSaiEnt) || formatTime(getTextContent(doc, "hSaiEnt", ide)),
+    chaveAcesso,
+    verificacaoCNPJ,
+    protocolo: protNFe ? getTextContent(doc, "nProt", protNFe as Element) : "",
+    naturezaOperacao: getTextContent(doc, "natOp", ide),
+    tipoOperacao: (getTextContent(doc, "tpNF", ide) as "0" | "1") || "1",
+    folha: "1/1",
+    // Campos extraídos das informações complementares
+    terminalEntrega: extractTerminalEntrega(informacoesComplementares),
+    transbordo: extractTransbordo(informacoesComplementares, `${getTextContent(doc, "xMun", enderEmit)} ${getTextContent(doc, "xNome", emit)} ${getTextContent(doc, "xMun", enderDest)}`),
+    retirada: extractRetirada(informacoesComplementares),
+    tipoProduto: detectTipoProduto(descricaoProdutos, informacoesComplementares),
+    emitente: {
       cnpj: emitCnpj,
       nome: getTextContent(doc, "xNome", emit),
       nomeFantasia: getTextContent(doc, "xFant", emit),
@@ -414,16 +414,16 @@ function parseNFSeData(doc: Document, tipo: "NFe" | "NFSe" | "Desconhecido"): NF
     horaEmissao: formatTime(getTextContent(doc, "DataEmissao", infNfse)),
     dataEntradaSaida: "",
     horaEntradaSaida: "",
-chaveAcesso: getTextContent(doc, "CodigoVerificacao", infNfse),
-  protocolo: "",
-  naturezaOperacao: "Prestacao de Servicos",
-  tipoOperacao: "1",
-  folha: "1/1",
-  terminalEntrega: "",
-  transbordo: "",
-  retirada: "",
-  tipoProduto: "OUTRO",
-  emitente: {
+    chaveAcesso: getTextContent(doc, "CodigoVerificacao", infNfse),
+    protocolo: "",
+    naturezaOperacao: "Prestacao de Servicos",
+    tipoOperacao: "1",
+    folha: "1/1",
+    terminalEntrega: "",
+    transbordo: "",
+    retirada: "",
+    tipoProduto: "OUTRO",
+    emitente: {
       cnpj: formatCNPJ(getTextContent(doc, "Cnpj", prestador)),
       nome: getTextContent(doc, "RazaoSocial", prestador),
       nomeFantasia: getTextContent(doc, "NomeFantasia", prestador),
@@ -526,15 +526,15 @@ function parseGenericData(doc: Document, tipo: "NFe" | "NFSe" | "Desconhecido"):
     chaveAcesso: "",
     protocolo: "",
     naturezaOperacao: "",
-tipoOperacao: "1",
-  folha: "1/1",
-  terminalEntrega: "",
-  transbordo: "",
-  retirada: "",
-  tipoProduto: "OUTRO",
-  emitente: {
-  cnpj: "",
-  nome: "",
+    tipoOperacao: "1",
+    folha: "1/1",
+    terminalEntrega: "",
+    transbordo: "",
+    retirada: "",
+    tipoProduto: "OUTRO",
+    emitente: {
+      cnpj: "",
+      nome: "",
       nomeFantasia: "",
       endereco: "",
       numero: "",
@@ -654,10 +654,10 @@ function formatPhone(phone: string): string {
   if (!phone) return ""
   const cleaned = phone.replace(/\D/g, "")
   if (cleaned.length === 10) {
-  return cleaned.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3")
+    return cleaned.replace(/(\d{2})(\d{4})(\d{4})/, "($1) $2-$3")
   }
   if (cleaned.length === 11) {
-  return cleaned.replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3")
+    return cleaned.replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3")
   }
   return phone
 }
@@ -679,26 +679,26 @@ export function verifyChaveCNPJ(
     chaveCnpj = formatCNPJ(chaveCnpjRaw)
   }
 
-  // Se o destDigits for uma Inscrição Estadual (ex: 12 dígitos como 557061801119 ou 8-10 dígitos)
-  // e não um CNPJ (14 dígitos) ou CPF (11 dígitos)
-  const isDestIE = destDigits.length === 12 || (destDigits.length >= 8 && destDigits.length <= 10) || (destDigits.length > 11 && destDigits.length < 14)
-  const isEmitIE = emitDigits.length === 12 || (emitDigits.length >= 8 && emitDigits.length <= 10) || (emitDigits.length > 11 && emitDigits.length < 14)
+  // O destinatário só pode ser identificado pelo CNPJ (14 dígitos) ou CPF (11 dígitos).
+  // Nunca aceitar IE ou qualquer outro número encontrado no bloco do destinatário:
+  // esses valores não participam da comparação com o CNPJ da chave de acesso.
+  const isDestIE = destDigits.length !== 11 && destDigits.length !== 14
+  if (isDestIE) {
+    destDigits = ""
+  }
 
-  // Se o emitDigits for uma Inscrição Estadual e não tivermos o CNPJ do emitente
+  const isEmitIE = emitDigits.length !== 11 && emitDigits.length !== 14
+
+  // Se o emitente foi extraído como IE e não temos um CNPJ válido, usamos o CNPJ
+  // da chave apenas para evitar um falso alerta no confronto com o emitente.
   if (isEmitIE && chaveCnpjRaw) {
     emitDigits = chaveCnpjRaw
   }
 
-  const matchesEmitente = !!(
-    chaveCnpjRaw &&
-    emitDigits &&
-    (chaveCnpjRaw === emitDigits || emitDigits.includes(chaveCnpjRaw))
-  )
-  const matchesDestinatario = !!(
-    chaveCnpjRaw &&
-    destDigits &&
-    (chaveCnpjRaw === destDigits || destDigits.includes(chaveCnpjRaw))
-  )
+  // A chave identifica uma filial específica. A raiz do CNPJ não é suficiente:
+  // matriz e filiais devem ser tratadas como divergentes quando os 14 dígitos diferem.
+  const matchesEmitente = !!(chaveCnpjRaw && emitDigits && chaveCnpjRaw === emitDigits)
+  const matchesDestinatario = !!(chaveCnpjRaw && destDigits && chaveCnpjRaw === destDigits)
 
   const confrontoChaveXDest: "IGUAIS" | "DIVERGENTES" | "NÃO INFORMADO" =
     !chaveCnpjRaw || !destDigits
