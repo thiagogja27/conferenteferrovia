@@ -1,6 +1,6 @@
 // Utilitário de análise de texto de DANFE para conversão em XML (Processamento Local e Sem IA)
 
-import { sanitizeDestinatarioNome } from './destinatario-utils';
+import { sanitizeDestinatarioNome, isCarrierCnpj } from './destinatario-utils';
 import { getExplicitGuarujaTerminalCode } from './terminal-utils';
 
 const DANFE_HEADER_REGEX = /\bDANFE\b|DOCUMENTO AUXILIAR\s+(?:DA|DE)\s+(?:NOTA(?:\s+FISCAL)?|NF-?E)/i;
@@ -177,8 +177,9 @@ export function parseMultiDanfePdf(
   pagesText?: Array<{ num: number; text: string }>
 ): { items: PDFDanfeItem[]; xml: string; data: ParsedNFeData } {
   const baseName = defaultFileName ? defaultFileName.replace(/\.pdf$/i, '') : 'nota';
+  const allDocKeys = findKeysInText(fullText || '');
 
-  if (!pagesText?.length && !DANFE_HEADER_REGEX.test(fullText)) {
+  if (!pagesText?.length && allDocKeys.length === 0 && !DANFE_HEADER_REGEX.test(fullText || '')) {
     throw new Error('O PDF informado não apresenta uma página de DANFE/NF-e e foi ignorado.');
   }
 
@@ -187,42 +188,97 @@ export function parseMultiDanfePdf(
     const groupedItems: { key: string; pagesText: string[] }[] = [];
     let currentGroup: { key: string; pagesText: string[] } | null = null;
 
-    for (const page of pagesText) {
+    for (let pIdx = 0; pIdx < pagesText.length; pIdx++) {
+      const page = pagesText[pIdx];
       const pText = page.text || '';
-      const isDanfe = DANFE_HEADER_REGEX.test(pText);
+      const pageKeys = findKeysInText(pText);
       const isDCL = /\bDCL\b/i.test(pText) && /Documento de Carga|Fluxo Comercial|Rumo/i.test(pText);
       const isRomaneio = /Notas Fiscais Carregadas|Romaneio|Ticket de Pesagem/i.test(pText);
+      const isDanfe = DANFE_HEADER_REGEX.test(pText) ||
+        /(?:CHAVE DE ACESSO|DADOS DO PRODUTO|CÁLCULO DO IMPOSTO|DESTINATÁRIO\s*\/?\s*REMETENTE|DESTINATARIO\s*\/?\s*REMETENTE|Nº\s*\d{3}\.\d{3}\.\d{3})/i.test(pText);
 
-      const pageKeys = findKeysInText(pText);
+      if (isDCL || isRomaneio) {
+        // Folha de documento complementar / manifesto
+        let attached = false;
+        for (const g of groupedItems) {
+          if (g.key && pageKeys.includes(g.key)) {
+            g.pagesText.push(pText);
+            attached = true;
+          }
+        }
+        if (!attached && currentGroup) {
+          currentGroup.pagesText.push(pText);
+        }
+        continue;
+      }
 
-      if (isDanfe) {
-        // Encontrou página de DANFE legítima
-        const mainKey = pageKeys[0] || '';
-        if (mainKey) {
-          currentGroup = { key: mainKey, pagesText: [pText] };
+      // Se a página contém Chave(s) de Acesso de 44 dígitos
+      if (pageKeys.length > 0) {
+        const firstKey = pageKeys[0];
+        // Se já existe um grupo ativo e a chave é DIFERENTE da anterior:
+        if (currentGroup && currentGroup.key && currentGroup.key !== firstKey) {
+          // É uma nova nota fiscal!
+          currentGroup = { key: firstKey, pagesText: [pText] };
           groupedItems.push(currentGroup);
+        } else if (currentGroup && currentGroup.key === firstKey) {
+          // É folha de continuação da mesma nota que repete a chave no cabeçalho
+          currentGroup.pagesText.push(pText);
+        } else {
+          // Início do primeiro grupo ou grupo sem chave
+          currentGroup = { key: firstKey, pagesText: [pText] };
+          groupedItems.push(currentGroup);
+        }
+      } else {
+        // Página sem Chave de Acesso explícita de 44 dígitos
+        // Pode ser folha de continuação (itens/produtos) ou uma nova DANFE cujo código não foi extraído
+        if (isDanfe && (!currentGroup || /(?:DANFE\b|DOCUMENTO AUXILIAR\s+(?:DA|DE)\s+NOTA)/i.test(pText))) {
+          if (!currentGroup) {
+            currentGroup = { key: '', pagesText: [pText] };
+            groupedItems.push(currentGroup);
+          } else {
+            // Verificar se indica um novo número de nota fiscal diferente da nota anterior
+            const nNFMatch = pText.match(/(?:Nº|N[úu]mero)\s*[:.]?\s*(\d{1,3}(?:\.\d{3})+|\d{3,9})/i);
+            const prevText = currentGroup.pagesText.join(' ');
+            const prevNFMatch = prevText.match(/(?:Nº|N[úu]mero)\s*[:.]?\s*(\d{1,3}(?:\.\d{3})+|\d{3,9})/i);
+            if (nNFMatch && prevNFMatch && nNFMatch[1] !== prevNFMatch[1]) {
+              currentGroup = { key: '', pagesText: [pText] };
+              groupedItems.push(currentGroup);
+            } else {
+              currentGroup.pagesText.push(pText);
+            }
+          }
         } else if (currentGroup) {
+          // Continuação de dados da nota atual
           currentGroup.pagesText.push(pText);
         } else {
           currentGroup = { key: '', pagesText: [pText] };
           groupedItems.push(currentGroup);
         }
-      } else if (isDCL || isRomaneio) {
-        // É página de DCL, Romaneio ou Manifesto que referencia múltiplas chaves
-        // Anexa o texto do DCL/Romaneio a todos os grupos de notas correspondentes
-        for (const g of groupedItems) {
-          if (g.key && pageKeys.includes(g.key)) {
-            g.pagesText.push(pText);
+      }
+    }
+
+    // Se há chaves únicas no documento que não ganharam um grupo próprio:
+    if (allDocKeys.length > groupedItems.length && allDocKeys.length > 1) {
+      const assignedKeys = new Set(groupedItems.map(g => g.key).filter(Boolean));
+      for (const docKey of allDocKeys) {
+        if (!assignedKeys.has(docKey)) {
+          const matchingPages = pagesText.filter(p => {
+            const raw = (p.text || '').replace(/\D/g, '');
+            return raw.includes(docKey) || findKeysInText(p.text || '').includes(docKey);
+          });
+          if (matchingPages.length > 0) {
+            groupedItems.push({
+              key: docKey,
+              pagesText: matchingPages.map(p => p.text),
+            });
+            assignedKeys.add(docKey);
           }
         }
       }
     }
 
-    if (groupedItems.length === 0) {
-      throw new Error('O PDF informado não apresenta uma página de DANFE/NF-e e foi ignorado.');
-    }
-
-    if (groupedItems.length > 0) {
+    // Se conseguimos agrupar com sucesso e não há discrepância grave com chaves
+    if (groupedItems.length > 1 || (groupedItems.length === 1 && allDocKeys.length <= 1)) {
       const items: PDFDanfeItem[] = [];
       for (let i = 0; i < groupedItems.length; i++) {
         const group = groupedItems[i];
@@ -243,8 +299,8 @@ export function parseMultiDanfePdf(
     }
   }
 
-  // 2. Estratégia Secundária (Fallback): Análise do Texto Bruto Concatenado
-  const keys = findKeysInText(fullText);
+  // 2. Estratégia Secundária (Fallback / Segmentação por Chaves no Texto Bruto)
+  const keys = allDocKeys.length > 0 ? allDocKeys : findKeysInText(fullText);
 
   if (keys.length <= 1) {
     const single = parseDanfeText(fullText, defaultFileName, keys[0]);
@@ -368,36 +424,43 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
 
   // 3. Emitente
   let emitNome = '';
-  const reciboMatch = text.match(/RECEBEMOS DE\s+([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)\s+(?:OS PRODUTOS|DANFE|NF-e|CNPJ)/i);
+  const reciboMatch = cleanText.match(/RECEBEMOS\s+DE\s+([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)\s+(?:OS PRODUTOS|DANFE|NF-e|CNPJ)/i);
   if (reciboMatch) {
-    emitNome = reciboMatch[1].trim();
+    emitNome = reciboMatch[1].trim().replace(/[:=\-.,;]+$/, '').trim();
   }
 
   // Verificar se o nome capturado é ruído de cabeçalho do formulário
-  const isBoilerplate = (n: string) => !n || n.length < 4 || /^(?:INSCRI[ÇC][ÃA]O|IDENTIFICA[ÇC][ÃA]O|DOCUMENTO|DANFE|EMPRESA EMITENTE|SUBST|TRIBUT|CHAVE|PROTOCOLO)/i.test(n);
+  const isBoilerplate = (n: string) => !n || n.length < 4 ||
+    /^(?:INSCRI[ÇC][ÃA]O|IDENTIFICA[ÇC][ÃA]O|DOCUMENTO|DANFE|EMPRESA EMITENTE|SUBST|TRIBUT|CHAVE|PROTOCOLO|-?ENTRADA|-?SA[IÍ]DA|S[EÉ]RIE|DOC\s*AUX|FOLHA|FL\b)/i.test(n) ||
+    /DOCUMENTOAUXILIAR|SAÍDADAC|-ENTRADA1-SAÍDA/i.test(n);
 
   if (isBoilerplate(emitNome)) {
-    // Buscar próximo ao CNPJ do emitente ou debaixo do cabeçalho
-    if (/TIETE|TIET[ÊE]|51\.?843\.?514/i.test(text)) {
+    // Buscar pelo CNPJ do emitente (raiz) ou no texto fiscal antes dos dados adicionais
+    // para não confundir com municípios e terminais citados nas observações/infCpl
+    if (emitCNPJRaw.startsWith('61149589') || /USINA SAO JOSE|Cooperativa Prod/i.test(cleanText.substring(0, 800))) {
+      emitNome = 'COOPERATIVA PROD DE CANA-DE-ACUCAR (USINA SAO JOSE)';
+    } else if (emitCNPJRaw.startsWith('60498706') || /CARGILL/i.test(cleanText.substring(0, 800))) {
+      emitNome = 'CARGILL AGRICOLA SA';
+    } else if (emitCNPJRaw.startsWith('51843514')) {
       emitNome = 'TIETE AGROINDUSTRIAL S.A.';
-    } else if (/ALCOESTE|43\.?545\.?284/i.test(text)) {
+    } else if (emitCNPJRaw.startsWith('43545284')) {
       emitNome = 'ALCOESTE BIOENERGIA FERNANDOPOLIS S/A';
-    } else if (/CORURIPE|12\.?229\.?415/i.test(text)) {
+    } else if (emitCNPJRaw.startsWith('12229415')) {
       emitNome = 'S/A USINA CORURIPE ACUCAR E ALCOOL';
-    } else if (/SAO MARTINHO|SÃO MARTINHO|51\.?466\.?860/i.test(text)) {
+    } else if (emitCNPJRaw.startsWith('51466860')) {
       emitNome = 'USINA SAO MARTINHO S/A';
-    } else if (/COPERSUCAR|60\.?643\.?236/i.test(text)) {
+    } else if (emitCNPJRaw.startsWith('60643236')) {
       emitNome = 'COPERSUCAR S.A.';
     } else {
-      const topMatch = text.match(/([A-ZÀ-Ú0-9\s\.\-&]{5,70})\s+DANFE/i);
+      const topMatch = cleanText.match(/([A-ZÀ-Ú0-9\s\.\-&]{5,70})\s+DANFE/i);
       if (topMatch && !isBoilerplate(topMatch[1].trim())) {
         emitNome = topMatch[1].trim();
       } else {
-        const emitMatchBeforeNat = text.match(/([A-ZÀ-Ú0-9\s\.\-&]{5,70})\s+(?:NATUREZA DA OPERAÇÃO|NATUREZA DA OPERACAO)/i);
+        const emitMatchBeforeNat = cleanText.match(/([A-ZÀ-Ú0-9\s\.\-&]{5,70})\s+(?:NATUREZA DA OPERAÇÃO|NATUREZA DA OPERACAO)/i);
         if (emitMatchBeforeNat && !isBoilerplate(emitMatchBeforeNat[1].trim())) {
           emitNome = emitMatchBeforeNat[1].trim();
         } else {
-          emitNome = 'TIETE AGROINDUSTRIAL S.A.';
+          emitNome = 'COOPERATIVA / USINA EMITENTE';
         }
       }
     }
@@ -414,13 +477,61 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   let destNome = '';
   let destIE = '';
 
-  const destBlockMatch = text.match(/(?:DESTINATÁRIO\/REMETENTE|DESTINATARIO\/REMETENTE|DESTINATÁRIO|DESTINATARIO)([\s\S]{1,900})/i);
-  if (destBlockMatch) {
-    let block = destBlockMatch[1];
-    const endBlockIdx = block.search(/(?:CÁLCULO\s+DO\s+IMPOSTO|CALCULO\s+DO\s+IMPOSTO|BASE\s+DE\s+CÁLCULO|TRANSPORTADOR|DADOS\s+DOS\s+PRODUTOS)/i);
-    if (endBlockIdx > 0) {
-      block = block.substring(0, endBlockIdx);
+  // Isolar o texto estritamente fiscal antes de DADOS ADICIONAIS / INFORMAÇÕES COMPLEMENTARES
+  // Isso impede categoricamente que CNPJ de terminal portuário, armazém, operador ou cliente logístico citado
+  // nos dados adicionais seja indevidamente assumido como o CNPJ do Destinatário da nota.
+  const dadosAdicionaisIdx = text.search(/(?:INFORMA[ÇC][ÕO]ES\s+COMPLEMENTARES|INFORMAC[ÕO]ES\s+COMPLEMENTARES|INFORMACOES\s+COMPLEMENTARES|DADOS\s+ADICIONAIS|INF\.\s*CONTRIBUINTE|RESERVADO\s+AO\s+FISCO)/i);
+  const textFiscal = dadosAdicionaisIdx > 0 ? text.substring(0, dadosAdicionaisIdx) : text;
+
+  // Bloco de transportador para identificar e ignorar o CNPJ da transportadora
+  let transpBlockCNPJ = '';
+  const transpAdjacentMatch = textFiscal.match(/(?:TRANSPORTES?|LOGISTICA|CARGAS?)[\s\S]{0,80}?(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\b\d{14})/i);
+  if (transpAdjacentMatch) {
+    const candidateTransp = transpAdjacentMatch[1].replace(/\D/g, '');
+    if (candidateTransp !== emitCNPJRaw) {
+      transpBlockCNPJ = candidateTransp;
     }
+  }
+
+  if (!transpBlockCNPJ) {
+    const transpBlockMatch = textFiscal.match(/(?:TRANSPORTADOR\s*\/?\s*VOLUMES\s+TRANSPORTADOS|TRANSPORTADOR|DADOS\s+DO\s+TRANSPORTE)([\s\S]{1,600})/i);
+    if (transpBlockMatch) {
+      const allCnpjs = transpBlockMatch[1].match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b|\b\d{14}\b/g) || [];
+      for (const m of allCnpjs) {
+        const candidateTransp = m.replace(/\D/g, '');
+        if (candidateTransp !== emitCNPJRaw) {
+          transpBlockCNPJ = candidateTransp;
+          break;
+        }
+      }
+    }
+  }
+
+  // Identificar explicitamente CNPJs de LOCAL DE RETIRADA e LOCAL DE ENTREGA para NUNCA confundi-los com o Destinatário da NF-e
+  let retiradaCNPJ = '';
+  const retMatch = textFiscal.match(/(?:INF\.?\s*DO\s*LOCAL\s*DE\s*RETIRADA|LOCAL\s*DE\s*RETIRADA)[\s\S]{0,200}?(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\b\d{14}\b)/i);
+  if (retMatch) {
+    retiradaCNPJ = retMatch[1].replace(/\D/g, '');
+  }
+
+  let entregaCNPJ = '';
+  const entMatch = textFiscal.match(/(?:INF\.?\s*DO\s*LOCAL\s*DE\s*ENTREGA|LOCAL\s*DE\s*ENTREGA)[\s\S]{0,200}?(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\b\d{14}\b)/i);
+  if (entMatch) {
+    entregaCNPJ = entMatch[1].replace(/\D/g, '');
+  }
+
+  // Em alguns DANFEs o título DESTINATÁRIO/REMETENTE é impresso na vertical.
+  // O extrator pode devolver uma letra por linha, então normalizamos apenas esse rótulo antes de procurar o bloco.
+  const recipientTextForMatching = textFiscal
+    .replace(/D\s*E\s*S\s*T\s*I\s*N\s*A\s*T\s*[ÁA]\s*R\s*I\s*O\s*[\/-]?\s*R\s*E\s*M\s*E\s*T\s*E\s*N\s*T\s*E/gi, 'DESTINATÁRIO/REMETENTE')
+    .replace(/R\s*E\s*M\s*E\s*T\s*E\s*N\s*T\s*E\s*[\/-]?\s*D\s*E\s*S\s*T\s*I\s*N\s*A\s*T\s*[ÁA]\s*R\s*I\s*O/gi, 'REMETENTE/DESTINATÁRIO');
+
+  const destBlockMatch = recipientTextForMatching.match(/(?:DESTINAT[AÁ]RIO\s*[\/\-]\s*REMETENTE|REMETENTE\s*[\/\-]\s*DESTINAT[AÁ]RIO|DADOS\s+DO\s+DESTINAT[AÁ]RIO|DADOS\s+DO\s+REMETENTE|DESTINAT[AÁ]RIO|DESTINATARIO)([\s\S]+)/i);
+  if (destBlockMatch) {
+    const rawBlock = destBlockMatch[1];
+    // Delimitar com rigor o bloco do destinatário antes de qualquer outra seção da DANFE
+    const endBlockIdx = rawBlock.search(/(?:INF\.?\s*DO\s*LOCAL\s*DE\s*RETIRADA|LOCAL\s*DE\s*RETIRADA|INF\.?\s*DO\s*LOCAL\s*DE\s*ENTREGA|LOCAL\s*DE\s*ENTREGA|INFORMA[ÇC][ÕO]ES\s+COMPLEMENTARES|DADOS\s+ADICIONAIS|TRANSPORTADOR|DADOS\s+DO\s+TRANSPORTE|VOLUMES\s+TRANSPORTADOS|C[ÁA]LCULO\s+DO\s+IMPOSTO|CALCULO\s+DO\s+IMPOSTO)/i);
+    const block = endBlockIdx > 0 ? rawBlock.substring(0, endBlockIdx) : rawBlock;
 
     // Extrair Inscrição Estadual específica do destinatário no bloco
     const destIEMatch = block.match(/(?:INSCRIÇÃO\s*ESTADUAL|INSCRICAO\s*ESTADUAL|INSC\.?\s*ESTADUAL|I\.E\.|IE)[^\d]{1,15}(\d{8,15})/i);
@@ -429,62 +540,109 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     }
 
     // Extrair Nome / Razão Social do Destinatário
-    const nameMatch = block.match(/(?:NOME\s*\/\s*RAZÃO\s*SOCIAL|NOME\s*RAZAO\s*SOCIAL|RAZÃO\s*SOCIAL|RAZAO\s*SOCIAL|NOME)[\s\n\r:-]*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80})/i);
+    const nameMatch = block.match(/(?:NOME\s*\/\s*RAZÃO\s*SOCIAL|NOME\s*RAZAO\s*SOCIAL|RAZÃO\s*SOCIAL|RAZAO\s*SOCIAL|NOME)?[\s\n\r:-]*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80})/i);
     if (nameMatch) {
       let raw = nameMatch[1].trim();
-      const stopIdx = raw.search(/(?:ENDEREÇO|ENDEREC|BAIRRO|CNPJ|CPF|CEP|MUNICÍPIO|MUNICIPIO|UF|FONE|TELEFONE|INSCRIÇÃO|INSCRICAO|DATA|ENTRADA|SAIDA|SAÍDA|INSC|FASE)/i);
+      const stopIdx = raw.search(/(?:AVENIDA|AV\.|RUA|ROD|RODOVIA|ALAMEDA|ESTRADA|PRACA|PRAÇA|ENDEREÇO|ENDEREC|BAIRRO|CNPJ|CPF|CEP|MUNICÍPIO|MUNICIPIO|UF|FONE|TELEFONE|INSCRIÇÃO|INSCRICAO|DATA|ENTRADA|SAIDA|SAÍDA|INSC|FASE|CÓDIGO|CODIGO)/i);
       if (stopIdx > 0) {
         raw = raw.substring(0, stopIdx).trim();
       }
-      destNome = raw.replace(/[:=\-.,;]+$/, '').trim();
+      const candidate = raw.replace(/[:=\-.,;]+$/, '').trim();
+      if (candidate && candidate.length > 2 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL|DESTINAT[AÁ]RIO|REMETENTE)/i.test(candidate)) {
+        destNome = candidate;
+      }
     } else {
       // Fallback: pegar as primeiras linhas não vazias do bloco de destinatário que não sejam rótulos
       const blockLines = block.split(/[\r\n]+/).map(l => l.trim()).filter(l => l.length > 3);
       for (const line of blockLines) {
-        if (!/^(?:DESTINAT|ENDERE|BAIRRO|MUNIC|CNPJ|CPF|CEP|INSC|UF|TELEFONE|FONE|DATA)/i.test(line)) {
+        if (!/^(?:DESTINAT|REMETENT|ENDERE|BAIRRO|MUNIC|CNPJ|CPF|CEP|INSC|UF|TELEFONE|FONE|DATA|CÁLCULO|CALCULO|VALOR)/i.test(line)) {
           const stopIdx = line.search(/(?:ROD|RODOVIA|RUA|AV|AVENIDA|ALAMEDA|CNPJ|CPF|CEP)/i);
-          destNome = (stopIdx > 0 ? line.substring(0, stopIdx) : line).trim();
-          if (destNome.length > 3) break;
+          const candidateLine = (stopIdx > 0 ? line.substring(0, stopIdx) : line).trim();
+          if (candidateLine.length > 3 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL)/i.test(candidateLine)) {
+            destNome = candidateLine;
+            break;
+          }
         }
+      }
+    }
+
+    // 1. Buscar CNPJ/CPF explicitamente rotulado no bloco delimitado (NUNCA busca além de block!)
+    const labelledCnpj = block.match(/\bCNPJ(?:\s*\/\s*CPF)?[^\d]{0,20}(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}\-?\d{2}|\d{14})/i);
+    const labelledCpf = block.match(/\bCPF\b[^\d]{0,20}(\d{3}\.?\d{3}\.?\d{3}\-?\d{2}|\d{11})/i);
+    const labelledIdentity = labelledCnpj || labelledCpf;
+    if (labelledIdentity) {
+      const candidate = labelledIdentity[1].replace(/\D/g, '');
+      if ((candidate.length === 14 || (labelledIdentity === labelledCpf && candidate.length === 11)) &&
+          candidate !== destIE && candidate !== emitIE && candidate !== '12' &&
+          !isCarrierCnpj(candidate) && candidate !== transpBlockCNPJ && candidate !== retiradaCNPJ && candidate !== entregaCNPJ) {
+        destCNPJ = candidate;
+      }
+    }
+
+    // 2. Buscar CNPJs formatados no bloco delimitado
+    if (!destCNPJ) {
+      const formattedCnpjs = block.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g) || [];
+      const formattedCpfs = block.match(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g) || [];
+
+      for (const m of formattedCnpjs) {
+        const candidate = m.replace(/\D/g, '');
+        if (!isCarrierCnpj(candidate) && candidate !== emitIE && candidate !== destIE &&
+            candidate !== transpBlockCNPJ && candidate !== retiradaCNPJ && candidate !== entregaCNPJ) {
+          destCNPJ = candidate;
+          break;
+        }
+      }
+      if (!destCNPJ && formattedCpfs.length > 0 && /(?:CNPJ\s*\/\s*CPF|\bCPF\b)/i.test(block)) {
+        const explicitCpf = block.match(/\bCPF\b[^\d]{0,40}(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})/i);
+        if (explicitCpf) destCNPJ = explicitCpf[1].replace(/\D/g, '');
       }
     }
 
     // Limpar e sanitizar nome inicial capturado
-    destNome = sanitizeDestinatarioNome(destNome, '', text);
+    destNome = sanitizeDestinatarioNome(destNome, destCNPJ, textFiscal, emitNome, emitCNPJRaw);
+  }
 
-    // Buscar CNPJ/CPF formatado especificamente no bloco (com pontuação)
-    const formattedCnpjs = block.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g);
-    const formattedCpfs = block.match(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g);
-
-    if (formattedCnpjs && formattedCnpjs.length > 0) {
-      destCNPJ = formattedCnpjs[0].replace(/\D/g, '');
-    } else if (formattedCpfs && formattedCpfs.length > 0) {
-      destCNPJ = formattedCpfs[0].replace(/\D/g, '');
-    } else {
-      // Buscar após rótulo CNPJ / CPF garantindo não capturar Inscrição Estadual (IE)
-      const cnpjsInBlock = block.match(/(?:CNPJ\s*\/\s*CPF|CNPJ|CPF)[^\d]{1,50}(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{3}\.\d{3}\.\d{3}-\d{2}|\d{14}|\d{11})/i);
-      if (cnpjsInBlock) {
-        const candidate = cnpjsInBlock[1].replace(/\D/g, '');
-        // Garantir que não é a Inscrição Estadual
-        if (candidate !== destIE && candidate !== emitIE && candidate.length !== 12) {
-          destCNPJ = candidate;
-        }
+  // 3. Buscar CNPJ imediatamente adjacente à Data de Emissão/Saída no cabeçalho fiscal (como no layout Copersucar)
+  if (!destCNPJ) {
+    const destPos = textFiscal.search(/DESTINAT[AÁ]RIO|REMETENTE/i);
+    const searchScope = destPos > 0 ? textFiscal.substring(destPos) : textFiscal;
+    const dateAdjacentMatch = searchScope.match(/(\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b|\b\d{14}\b)\s+\d{2}\/\d{2}\/\d{2,4}/);
+    if (dateAdjacentMatch) {
+      const candidate = dateAdjacentMatch[1].replace(/\D/g, '');
+      if (candidate.length === 14 && candidate !== destIE && candidate !== emitIE &&
+          !isCarrierCnpj(candidate) && candidate !== transpBlockCNPJ && candidate !== retiradaCNPJ && candidate !== entregaCNPJ) {
+        destCNPJ = candidate;
       }
     }
   }
 
-  // Se o destCNPJ ainda não foi encontrado ou pegou a IE por engano, buscar em todo o texto
-  if (!destCNPJ || destCNPJ === destIE || destCNPJ === emitIE || destCNPJ.length === 12) {
-    const allCnpjsInText = text.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g);
-    if (allCnpjsInText && allCnpjsInText.length > 0) {
-      // Se tiver mais de um, e o primeiro for o emitente, pegar o segundo (destinatário) ou o primeiro se for a mesma empresa
-      destCNPJ = allCnpjsInText.length > 1 ? allCnpjsInText[1].replace(/\D/g, '') : allCnpjsInText[0].replace(/\D/g, '');
-    }
-  }
+  // 4. Verificar se há destinatário distinto explicitamente identificado na nota
+  const hasDistinctDest = Boolean(
+    destNome &&
+    destNome !== 'Não informado' &&
+    destNome !== 'DESTINATÁRIO NÃO IDENTIFICADO' &&
+    destNome.length > 3 &&
+    !destNome.includes(emitNome) &&
+    !emitNome.includes(destNome)
+  );
 
-  // Se o destinatário for da mesma empresa do emitente (ex: São Martinho, remessa para exportação, transferência, etc)
-  if (!destCNPJ || destCNPJ === destIE || destCNPJ === emitIE || destCNPJ.length === 12) {
-    if (emitCNPJRaw && emitCNPJRaw.length === 14) {
+  // Se o destinatário for o próprio emitente/remetente (ex: transferência entre filiais ou o campo compartilhado sem outro cliente)
+  const isSameEntityOrMissing =
+    !hasDistinctDest &&
+    (!destCNPJ ||
+     destCNPJ === destIE ||
+     destCNPJ === emitIE ||
+     destCNPJ.length === 12 ||
+     isCarrierCnpj(destCNPJ) ||
+     destCNPJ === retiradaCNPJ ||
+     destCNPJ === entregaCNPJ ||
+     (destCNPJ && emitCNPJRaw && (destCNPJ === emitCNPJRaw || destCNPJ.slice(0, 8) === emitCNPJRaw.slice(0, 8))));
+
+  if (isSameEntityOrMissing && emitNome) {
+    if (!destNome || destNome === 'Não informado' || destNome === 'DESTINATÁRIO NÃO IDENTIFICADO') {
+      destNome = emitNome.toUpperCase();
+    }
+    if (!destCNPJ || isCarrierCnpj(destCNPJ) || destCNPJ === retiradaCNPJ || destCNPJ === entregaCNPJ) {
       destCNPJ = emitCNPJRaw;
     }
   }
@@ -493,8 +651,12 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     destIE = emitIE;
   }
 
-  // Se não foi encontrado nome de destinatário ou ficou genérico/sujo
-  destNome = sanitizeDestinatarioNome(destNome, destCNPJ, text);
+  // Sanitização final com fallback do emitente garantido apenas quando não há destinatário
+  destNome = sanitizeDestinatarioNome(destNome, destCNPJ, textFiscal, emitNome, emitCNPJRaw);
+
+  if ((!destNome || destNome === 'Não informado') && emitNome) {
+    destNome = emitNome.toUpperCase();
+  }
 
   // Format CNPJs
   const emitCNPJFormatted = formatCNPJStr(emitCNPJRaw);
@@ -766,15 +928,34 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
 
   // Transportador
   let transpNome = '';
-  let transpCNPJ = '';
+  let transpCNPJ = transpBlockCNPJ || '';
   let transpPlaca = '';
 
-  if (textUpper.includes('COPERSUCAR')) {
-    transpNome = 'COPERSUCAR S.A.';
-    transpCNPJ = '10265949004164';
-  } else if (textUpper.includes('GUARDIA') || textUpper.includes('GAMA LOGISTICA')) {
-    transpNome = 'TRANSPORTADORA GUARDIA - GAMA LOGISTICA LTDA';
-    transpCNPJ = '49964752000161';
+  const transCarrierMatch = textFiscal.match(/([A-ZÀ-Ú0-9\s\.\-]{3,60}?(?:TRANSPORTES?|LOGISTICA|CARGAS?|LTDA|EIRELI|S\/A|S\.A\.))[\s\S]{0,40}?(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\b\d{14})/i);
+  if (transCarrierMatch) {
+    const rawName = transCarrierMatch[1].trim();
+    const cleanLines = rawName.split(/[\r\n]+/).map(l => l.trim()).filter(l => l.length > 3);
+    const lastLine = cleanLines[cleanLines.length - 1] || rawName;
+    if (!lastLine.includes(destNome) && !lastLine.includes(emitNome)) {
+      transpNome = lastLine;
+      const c = transCarrierMatch[2].replace(/\D/g, '');
+      if (c !== emitCNPJRaw && c !== destCNPJ) {
+        transpCNPJ = c;
+      }
+    }
+  }
+
+  if (!transpNome) {
+    if (textUpper.includes('GUARDIA') || textUpper.includes('GAMA LOGISTICA')) {
+      transpNome = 'TRANSPORTADORA GUARDIA - GAMA LOGISTICA LTDA';
+      transpCNPJ = transpCNPJ || '49964752000161';
+    } else if (textUpper.includes('TRANSMAION')) {
+      transpNome = 'TRANSMAION TRANSPORTES DE CARGAS LTDA';
+      transpCNPJ = transpCNPJ || '06948119000177';
+    } else if (textUpper.includes('COPERSUCAR') && !destNome.includes('COPERSUCAR')) {
+      transpNome = 'COPERSUCAR S.A.';
+      transpCNPJ = transpCNPJ || '10265949004164';
+    }
   }
 
   const placaMatch = text.match(/(?:PLACA DO VEÍCULO|PLACA DO VEICULO|PLACA)[^\w]{1,10}([A-Z]{3}[0-9][A-Z0-9][0-9]{2}|[A-Z]{3}[0-9]{4})/i);
