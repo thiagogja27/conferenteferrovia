@@ -89,6 +89,16 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
     criadoEm: 1700000000000,
   },
   {
+    id: 'sys-dest-lins',
+    nome: 'LINS AGROINDUSTRIAL S.A.',
+    cnpjPrincipal: '35.637.796/0001-72',
+    cnpjsAdicionais: ['35637796'],
+    aliases: ['LINS AGROINDUSTRIAL', 'LINS', 'USINA LINS'],
+    isSistema: true,
+    ativo: true,
+    criadoEm: 1700000000000,
+  },
+  {
     id: 'sys-dest-tiete',
     nome: 'TIETE AGROINDUSTRIAL S.A.',
     cnpjPrincipal: '51.843.514/0001-86',

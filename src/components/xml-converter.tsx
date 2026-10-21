@@ -27,6 +27,7 @@ import { MDFExcelComparator } from '@/components/mdf-excel-comparator'
 import { DocumentationPanel } from '@/components/documentation-panel'
 import { RealtimeMonitor } from '@/components/realtime-monitor'
 import { RumoConverterTab } from '@/components/rumo-converter-tab'
+import { VliConverterTab } from '@/components/vli-converter-tab'
 import { UserProfileHeader } from '@/components/user-profile-header'
 import { LoginScreen } from '@/components/login-screen'
 import { useAuth } from '@/context/auth-context'
@@ -39,7 +40,11 @@ import {
 import {
   buildConferenceDashboardSnapshot,
   publishConferenceDashboard,
+  resetActiveConferenceSnapshotId,
+  deleteLiveConferenceDashboard,
+  clearConferenceDashboardHistory,
 } from '@/lib/conference-dashboard-sync'
+import { purgeInputFiles } from '@/lib/database-optimization-service'
 import {
   FileText,
   Upload,
@@ -221,7 +226,7 @@ export function XMLConverter() {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<string>('list')
   const [converterMode, setConverterMode] = useState<
-    'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'mrs-guided' | 'conversor-resumo-rumo' | 'documentation' | 'realtime-monitor'
+    'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'mrs-guided' | 'conversor-resumo-rumo' | 'conversor-resumo-vli' | 'documentation' | 'realtime-monitor'
   >('xml-to-pdf')
   const [mrsGuidedStep, setMrsGuidedStep] = useState<1 | 2 | 3>(1)
   const [mrsGuidedExcelFile, setMrsGuidedExcelFile] = useState<File | null>(null)
@@ -258,6 +263,7 @@ export function XMLConverter() {
       const emit = (n?.emitente?.cnpj || f.parsedData?.emitCNPJ || '').replace(/\D/g, '')
       let dest = (n?.destinatario?.cpfCnpj || f.parsedData?.destCNPJ || '').replace(/\D/g, '')
       if (isCarrierCnpj(dest)) dest = ''
+      if (!dest && emit) dest = emit
       if (!chave || chave.length !== 44 || !dest) return false
       return verifyChaveCNPJ(chave, emit, dest).confrontoChaveXDest === 'DIVERGENTES'
     }).length
@@ -631,11 +637,15 @@ export function XMLConverter() {
       window.speechSynthesis.cancel()
     }
 
-    // 4. Limpa a lista de arquivos da interface
+    // 4. Limpa a lista de arquivos da interface e remove os espelhos e arquivos correspondentes do banco
     if (clearResults) {
       setFiles([])
       setOtherZipFiles([])
       setExpandedIndex(null)
+      resetActiveConferenceSnapshotId()
+      deleteLiveConferenceDashboard().catch(() => {})
+      clearConferenceDashboardHistory().catch(() => {})
+      purgeInputFiles(0).catch(() => {})
     }
   }, [])
 
@@ -718,6 +728,7 @@ export function XMLConverter() {
     const isAborted = () => isCancelledRef.current || activeProcessSessionRef.current !== currentSession
 
     const typeFilter = overrideFileType || processFileType
+    resetActiveConferenceSnapshotId()
     setIsProcessing(true)
     setFiles([])
     setOtherZipFiles([])
@@ -898,7 +909,7 @@ export function XMLConverter() {
       })
       logInputedFiles(filesToRecord)
 
-      // Transmite espelho do dashboard da conferência para o Monitor Realtime
+      // Transmite espelho do dashboard da conferência para o Monitor Realtime (uma única publicação na nuvem)
       try {
         const snap = buildConferenceDashboardSnapshot(
           results,
@@ -906,7 +917,7 @@ export function XMLConverter() {
           undefined,
           user?.email || undefined
         )
-        publishConferenceDashboard(snap)
+        publishConferenceDashboard(snap, true)
       } catch (err) {
         console.warn('Erro ao transmitir snapshot do dashboard para realtime:', err)
       }
@@ -1327,8 +1338,16 @@ export function XMLConverter() {
     }
   };
 
-  const handleClear = () => {
+  const handleClear = async () => {
     cancelAndClearProcessing(true)
+    resetActiveConferenceSnapshotId()
+    try {
+      await deleteLiveConferenceDashboard()
+      await clearConferenceDashboardHistory()
+      await purgeInputFiles(0)
+    } catch (err) {
+      console.warn('Erro ao limpar espelhos e arquivos do banco:', err)
+    }
   }
 
   const formatCurrency = (value: number) => {
@@ -1472,6 +1491,28 @@ export function XMLConverter() {
               </div>
               <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
                 PDF p/ Excel & Desmembres
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setConverterMode('conversor-resumo-vli')
+                updatePresence('Desmembre Resumo VLI')
+              }}
+              className={`flex flex-col items-start p-3 rounded-xl transition-all text-left cursor-pointer border ${
+                converterMode === 'conversor-resumo-vli'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-sky-400 dark:border-sky-500 shadow-xs ring-1 ring-sky-400/30'
+                  : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1 w-full">
+                <div className={`p-1.5 rounded-lg ${converterMode === 'conversor-resumo-vli' ? 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
+                  <FileSpreadsheet className="h-4 w-4" />
+                </div>
+                <span className="text-xs font-bold truncate">Resumo VLI</span>
+              </div>
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+                Desmembre CNPJ Dest.
               </span>
             </button>
 
@@ -2789,6 +2830,11 @@ export function XMLConverter() {
         {/* Módulo Conversor Resumo Rumo Preservado em Memória */}
         <div className={converterMode === 'conversor-resumo-rumo' ? 'block' : 'hidden'}>
           <RumoConverterTab />
+        </div>
+
+        {/* Módulo Conversor Resumo VLI Preservado em Memória */}
+        <div className={converterMode === 'conversor-resumo-vli' ? 'block' : 'hidden'}>
+          <VliConverterTab />
         </div>
 
         {/* Módulo MDF-e x EXCEL (Vagões) Preservado */}

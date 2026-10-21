@@ -135,6 +135,19 @@ export const DEFAULT_FIREBASE_RTDB_URL = 'https://conferente2-d10d9-default-rtdb
 
 // Resgata configurações salvas ou de variáveis de ambiente
 export function getFirebaseConfig(): FirebaseRealtimeConfig {
+  const nextEnvDbUrl = (import.meta.env as any).NEXT_PUBLIC_FIREBASE_DATABASE_URL || (import.meta.env as any).NEXT_PUBLIC_DATABASE_URL
+  if (nextEnvDbUrl && nextEnvDbUrl.includes('conferente2-d10d9')) {
+    return {
+      databaseURL: nextEnvDbUrl,
+      apiKey: (import.meta.env as any).NEXT_PUBLIC_FIREBASE_API_KEY || (import.meta.env as any).NEXT_PUBLIC_API_KEY || 'AIzaSyCa9wWr2FiRUdkNkOC-45cNujJ-WH0yMYg',
+      projectId: (import.meta.env as any).NEXT_PUBLIC_FIREBASE_PROJECT_ID || (import.meta.env as any).NEXT_PUBLIC_PROJECT_ID || 'conferente2-d10d9',
+      authDomain: (import.meta.env as any).NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || (import.meta.env as any).NEXT_PUBLIC_AUTH_DOMAIN || 'conferente2-d10d9.firebaseapp.com',
+      storageBucket: (import.meta.env as any).NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || (import.meta.env as any).NEXT_PUBLIC_STORAGE_BUCKET || 'conferente2-d10d9.firebasestorage.app',
+      messagingSenderId: (import.meta.env as any).NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || (import.meta.env as any).NEXT_PUBLIC_MESSAGING_SENDER_ID || '474054071613',
+      appId: (import.meta.env as any).NEXT_PUBLIC_FIREBASE_APP_ID || (import.meta.env as any).NEXT_PUBLIC_APP_ID || '1:474054071613:web:65ae1639f332a0e02d6154',
+    }
+  }
+
   const envDbUrl = import.meta.env.VITE_FIREBASE_DATABASE_URL
   if (envDbUrl) {
     return {
@@ -145,19 +158,6 @@ export function getFirebaseConfig(): FirebaseRealtimeConfig {
       storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
       messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
       appId: import.meta.env.VITE_FIREBASE_APP_ID,
-    }
-  }
-
-  const nextEnvDbUrl = import.meta.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL
-  if (nextEnvDbUrl) {
-    return {
-      databaseURL: nextEnvDbUrl,
-      apiKey: import.meta.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-      projectId: import.meta.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      authDomain: import.meta.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-      storageBucket: import.meta.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: import.meta.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-      appId: import.meta.env.NEXT_PUBLIC_FIREBASE_APP_ID,
     }
   }
 
@@ -204,6 +204,7 @@ let connectionListeners: ((connected: boolean) => void)[] = []
 
 // Carrega histórico local salvo (apenas registros reais)
 function loadSavedLocalActivities(): RealtimeActivity[] {
+  if (typeof window === 'undefined') return []
   try {
     const raw = localStorage.getItem(STORAGE_KEY_ACTIVITIES)
     if (raw) {
@@ -224,6 +225,7 @@ function loadSavedLocalActivities(): RealtimeActivity[] {
 }
 
 function loadSavedLocalInputFiles(): InputedFileRecord[] {
+  if (typeof window === 'undefined') return []
   try {
     const raw = localStorage.getItem(STORAGE_KEY_INPUT_FILES)
     if (raw) {

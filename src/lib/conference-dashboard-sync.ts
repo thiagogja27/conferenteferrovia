@@ -241,20 +241,31 @@ export function buildConferenceDashboardSnapshot(
     }
     const emitCNPJ = nfe?.emitente?.cnpj || parsed?.emitCNPJ || ''
 
-    const rawDestNome =
+    let rawDestNome =
       nfe?.destinatario?.nome && nfe.destinatario.nome !== 'DESTINATÁRIO NÃO IDENTIFICADO'
         ? nfe.destinatario.nome
         : parsed?.destNome && parsed.destNome !== 'DESTINATÁRIO NÃO IDENTIFICADO'
         ? parsed.destNome
         : ''
-    const rawDestCnpj = nfe?.destinatario?.cpfCnpj || parsed?.destCNPJ || ''
+    let rawDestCnpj = nfe?.destinatario?.cpfCnpj || parsed?.destCNPJ || ''
     const infCpl = nfe?.informacoesComplementares || parsed?.infCpl || rawXml || f.rawSnippet || ''
 
     let destNome = sanitizeDestinatarioNome(
       rawDestNome,
       rawDestCnpj,
-      `${infCpl} ${rawXml} ${f.rawSnippet || ''}`
+      `${infCpl} ${rawXml} ${f.rawSnippet || ''}`,
+      emitNome,
+      emitCNPJ
     )
+
+    // Se o destinatário não foi informado separadamente ou é a própria usina/remetente (ex: transferência/filial)
+    if ((!destNome || destNome === 'Não informado' || destNome === 'DESTINATÁRIO NÃO IDENTIFICADO') && emitNome) {
+      destNome = emitNome.toUpperCase()
+    }
+
+    if (!rawDestCnpj && emitCNPJ && (destNome === emitNome.toUpperCase() || destNome === emitNome)) {
+      rawDestCnpj = emitCNPJ
+    }
     const destCNPJ = rawDestCnpj ? formatCNPJ(rawDestCnpj) : ''
 
     let produto = 'Outros'
@@ -833,12 +844,24 @@ if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
 let latestListeners: ((snap: ConferenceDashboardSnapshot | null) => void)[] = []
 let historyListeners: ((history: ConferenceDashboardSnapshot[]) => void)[] = []
 
+let activeConferenceSnapshotId: string | null = null
+
+export function resetActiveConferenceSnapshotId(): void {
+  activeConferenceSnapshotId = null
+}
+
+export function getActiveConferenceSnapshotId(): string | null {
+  return activeConferenceSnapshotId
+}
+
 /**
  * Publica um novo snapshot gerado no Painel de Conferência para ser espelhado em tempo real
  */
 export async function publishConferenceDashboard(
-  _snapshot: ConferenceDashboardSnapshot
+  _snapshot: ConferenceDashboardSnapshot,
+  _isManualSync?: boolean
 ): Promise<void> {
+  activeConferenceSnapshotId = _snapshot.id || null
   latestListeners.forEach((cb) => cb(null))
   historyListeners.forEach((cb) => cb([]))
   if (broadcastChannel) {
