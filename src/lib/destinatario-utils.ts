@@ -34,12 +34,14 @@ export function isCarrierCnpj(cnpj?: string, contextTranspCnpj?: string): boolea
 export function sanitizeDestinatarioNome(
   rawNome?: string,
   rawCnpj?: string,
-  _fullText?: string
+  _fullText?: string,
+  fallbackEmitNome?: string,
+  fallbackEmitCnpj?: string
 ): string {
-  const nome = (rawNome || '')
+  let nome = (rawNome || '')
     .trim()
     .replace(
-      /^(?:NOME\s*\/\s*RAZÃO\s*SOCIAL|NOME\s*RAZAO\s*SOCIAL|RAZÃO\s*SOCIAL|RAZAO\s*SOCIAL|CNPJ\s*\/\s*CPF|CNPJ|CPF|DATA\s*D[AE]\s*EMISS[ÃA]O|DATA\s*EMISS[ÃA]O|DATA\s*D[AE]\s*SA[IÍ]DA|DATA\s*SA[IÍ]DA|DESTINATÁRIO\s*\/\s*REMETENTE|DESTINATARIO\s*\/\s*REMETENTE|DESTINATÁRIO|DESTINATARIO|ENDEREÇO|ENDEREC|BAIRRO|MUNICÍPIO|MUNICIPIO|UF|CEP|FONE|TELEFONE|INSCRIÇÃO\s*ESTADUAL|INSCRICAO\s*ESTADUAL|I\.E\.|IE|001|002|[\s\n\r\-\:\/\|\.\,])+/gi,
+      /^(?:NOME\s*\/\s*RAZÃO\s*SOCIAL|NOME\s*RAZAO\s*SOCIAL|RAZÃO\s*SOCIAL|RAZAO\s*SOCIAL|CNPJ\s*\/\s*CPF|CNPJ|CPF|DATA\s*D[AE]\s*EMISS[ÃA]O|DATA\s*EMISS[ÃA]O|DATA\s*D[AE]\s*SA[IÍ]DA|DATA\s*SA[IÍ]DA|DESTINATÁRIO\s*\/\s*REMETENTE|DESTINATARIO\s*\/\s*REMETENTE|REMETENTE\s*\/\s*DESTINATÁRIO|REMETENTE\s*\/\s*DESTINATARIO|DESTINATÁRIO|DESTINATARIO|REMETENTE|ENDEREÇO|ENDEREC|BAIRRO|MUNICÍPIO|MUNICIPIO|UF|CEP|FONE|TELEFONE|INSCRIÇÃO\s*ESTADUAL|INSCRICAO\s*ESTADUAL|I\.E\.|IE|001|002|[\s\n\r\-\:\/\|\.\,])+/gi,
       ''
     )
     .replace(
@@ -52,12 +54,40 @@ export function sanitizeDestinatarioNome(
   const catalogMatch = matchDestinatarioFromTextOrCnpj(nome, rawCnpj)
   if (catalogMatch) return catalogMatch
 
+  const cnpjClean = (rawCnpj || '').replace(/\D/g, '')
+  const emitCnpjClean = (fallbackEmitCnpj || '').replace(/\D/g, '')
+
+  // Se o destinatário não foi identificado no campo OU é o mesmo do remetente
+  // (ex: notas onde o cabeçalho é REMETENTE/DESTINATÁRIO ou DESTINATÁRIO/REMETENTE, ou remessas/transferências entre filiais)
+  const isSameCompanyOrEmpty =
+    !nome ||
+    nome.length < 3 ||
+    nome === 'DESTINATARIO NAO IDENTIFICADO' ||
+    /QUANTIDADE|ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO|VOLUMES|TRANSPORTADOR|FRETE|C[AÁ]LCULO|BASE|VALOR|-?ENTRADA|-?SA[IÍ]DA|DOCUMENTOAUXILIAR/i.test(nome) ||
+    (cnpjClean && emitCnpjClean && (cnpjClean === emitCnpjClean || cnpjClean.slice(0, 8) === emitCnpjClean.slice(0, 8)))
+
+  if (isSameCompanyOrEmpty) {
+    if (emitCnpjClean.startsWith('60498706')) {
+      return 'CARGILL AGRICOLA SA'
+    }
+    if (fallbackEmitNome) {
+      const cleanEmit = fallbackEmitNome
+        .trim()
+        .replace(/[:=\-.,;/]+$/, '')
+        .trim()
+      if (cleanEmit.length >= 3 && !/QUANTIDADE|ESP[EÉ]CIE|VOLUMES|-?ENTRADA|-?SA[IÍ]DA|DOCUMENTOAUXILIAR|S[EÉ]RIE/i.test(cleanEmit)) {
+        return cleanEmit.toUpperCase()
+      }
+    }
+  }
+
   if (
     !nome ||
-    /QUANTIDADE|ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO|VOLUMES|TRANSPORTADOR|FRETE|C[AÁ]LCULO|BASE|VALOR/i.test(nome)
+    nome.length < 3 ||
+    /QUANTIDADE|ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO|VOLUMES|TRANSPORTADOR|FRETE|C[AÁ]LCULO|BASE|VALOR|-?ENTRADA|-?SA[IÍ]DA|DOCUMENTOAUXILIAR/i.test(nome)
   ) {
     return 'Não informado'
   }
 
-  return 'Não informado'
+  return nome.toUpperCase()
 }
