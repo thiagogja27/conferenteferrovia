@@ -85,6 +85,7 @@ export interface DashboardFileItem {
   xmlContent?: string
   xmlGerado?: string
   rawSnippet?: string
+  pdfTextoOriginal?: string
   nfeData: NFEData | null
   parsedData?: ParsedNFeData | null
 }
@@ -879,8 +880,9 @@ export function Dashboard({ files }: DashboardProps) {
           produto: details.produto,
           retirada: details.retirada,
           infCpl: details.infCpl,
-          rawSnippet: f.rawSnippet || details.infCpl,
-          xmlContent: f.xmlContent || f.xmlGerado,
+  rawSnippet: f.rawSnippet || details.infCpl,
+  pdfTextoOriginal: f.pdfTextoOriginal || f.parsedData?.rawSnippet || '',
+  xmlContent: f.xmlContent || f.xmlGerado,
         })
       }
     })

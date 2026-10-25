@@ -95,6 +95,8 @@ app.post("/api/pdf-to-xml", async (req, res, next) => {
       fileName: fileName ? fileName.replace(/\.pdf$/i, ".xml") : "convertido.xml",
       parsedData: data,
       items: items,
+      // Mantém o texto integral do DANFE para a auditoria, sem limitar a análise ao XML gerado.
+      pdfTextoOriginal: text,
     });
     return res.status(200).json(responseData);
   } catch (err: any) {

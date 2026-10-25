@@ -15,6 +15,7 @@ export interface LogisticsAuditInputItem {
   retirada?: string
   infCpl?: string
   rawSnippet?: string
+  pdfTextoOriginal?: string
   xmlContent?: string
   pdfTextoOriginal?: string
 }

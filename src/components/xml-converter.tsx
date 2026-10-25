@@ -526,6 +526,7 @@ export function XMLConverter() {
           isPdf: true,
           parsedData: resolved.parsedData,
           rawSnippet: resolved.parsedData?.rawSnippet || '',
+          pdfTextoOriginal: data.pdfTextoOriginal || '',
         }]
       }
     }
@@ -574,6 +575,7 @@ export function XMLConverter() {
         isPdf: true,
         parsedData: resolved.parsedData,
         rawSnippet: resolved.parsedData?.rawSnippet || '',
+        pdfTextoOriginal: clientResult.pdfTextoOriginal || '',
       }]
     } catch (clientErr: any) {
       return [{

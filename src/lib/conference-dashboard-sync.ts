@@ -390,8 +390,8 @@ export function buildConferenceDashboardSnapshot(
       text: `${f.fileName || ''} ${f.rawSnippet || ''}`,
       xmlContent: f.xmlContent || f.xmlGerado,
       rawSnippet: f.rawSnippet,
-      pdfTextoOriginal: parsed?.rawSnippet || f.rawSnippet || '',
-    }))
+      pdfTextoOriginal: f.pdfTextoOriginal || parsed?.rawSnippet || f.rawSnippet || '',
+    })
       .sort((a, b) => b.value - a.value)
       .slice(0, 12)
 
@@ -488,6 +488,7 @@ export function buildConferenceDashboardSnapshot(
     vagoesPorTransbordo,
     notes: notesList,
   }
+  })
 }
 
 // -------------------------------------------------------------
