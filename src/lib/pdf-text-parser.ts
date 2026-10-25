@@ -1,7 +1,6 @@
-// Utilitário de análise de texto de DANFE para conversão em XML (Processamento Local e Sem IA)
-
 import { sanitizeDestinatarioNome, isCarrierCnpj } from './destinatario-utils';
-import { getExplicitGuarujaTerminalCode } from './terminal-utils';
+import { getExplicitGuarujaTerminalCode, isUltrafertil, extractTerminalFromDeliveryRule } from './terminal-utils';
+import { resolveDestinatarioCadastro } from './cadastros-logisticos-service';
 
 const DANFE_HEADER_REGEX = /\bDANFE\b|DOCUMENTO AUXILIAR\s+(?:DA|DE)\s+(?:NOTA(?:\s+FISCAL)?|NF-?E)/i;
 
@@ -374,6 +373,8 @@ export function parseMultiDanfePdf(
 }
 
 export function parseDanfeText(text: string, defaultFileName: string = '', forcedKey?: string): { xml: string; data: ParsedNFeData } {
+  // Separar números/valores que ficaram grudados em sequências de 14 dígitos (como no layout Copersucar em PDF)
+  text = text.replace(/(\d+,\d{2})(\d{14})/g, '$1 $2');
   const cleanText = text.replace(/\s+/g, ' ');
 
   // 1. Chave de acesso: 44 dígitos
@@ -579,7 +580,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       }
     }
 
-    // 2. Buscar CNPJs formatados no bloco delimitado
+    // 2. Buscar CNPJs formatados ou contínuos no bloco delimitado
     if (!destCNPJ) {
       const formattedCnpjs = block.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g) || [];
       const formattedCpfs = block.match(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g) || [];
@@ -596,6 +597,19 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
         const explicitCpf = block.match(/\bCPF\b[^\d]{0,40}(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})/i);
         if (explicitCpf) destCNPJ = explicitCpf[1].replace(/\D/g, '');
       }
+
+      // Buscar qualquer sequência de 14 dígitos contínuos no bloco delimitado de destinatário
+      if (!destCNPJ) {
+        const allBlock14 = block.match(/(?:^|\D)(\d{14})(?:\D|$)/g) || [];
+        for (const m of allBlock14) {
+          const candidate = m.replace(/\D/g, '');
+          if (candidate.length === 14 && candidate !== emitCNPJRaw && candidate !== emitIE && candidate !== destIE &&
+              !isCarrierCnpj(candidate) && candidate !== transpBlockCNPJ && candidate !== retiradaCNPJ && candidate !== entregaCNPJ) {
+            destCNPJ = candidate;
+            break;
+          }
+        }
+      }
     }
 
     // Limpar e sanitizar nome inicial capturado
@@ -606,13 +620,21 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   if (!destCNPJ) {
     const destPos = textFiscal.search(/DESTINAT[AÁ]RIO|REMETENTE/i);
     const searchScope = destPos > 0 ? textFiscal.substring(destPos) : textFiscal;
-    const dateAdjacentMatch = searchScope.match(/(\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b|\b\d{14}\b)\s+\d{2}\/\d{2}\/\d{2,4}/);
+    const dateAdjacentMatch = searchScope.match(/(?:^|\D)(\d{14}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\s+\d{2}\/\d{2}\/\d{2,4}/);
     if (dateAdjacentMatch) {
       const candidate = dateAdjacentMatch[1].replace(/\D/g, '');
-      if (candidate.length === 14 && candidate !== destIE && candidate !== emitIE &&
+      if (candidate.length === 14 && candidate !== emitCNPJRaw && candidate !== destIE && candidate !== emitIE &&
           !isCarrierCnpj(candidate) && candidate !== transpBlockCNPJ && candidate !== retiradaCNPJ && candidate !== entregaCNPJ) {
         destCNPJ = candidate;
       }
+    }
+  }
+
+  // 3.5. Fallback para Cadastros Logísticos caso o destinatário esteja cadastrado no sistema
+  if (!destCNPJ && destNome) {
+    const resolved = resolveDestinatarioCadastro(destNome);
+    if (resolved && resolved.cnpj) {
+      destCNPJ = resolved.cnpj;
     }
   }
 
@@ -1318,17 +1340,28 @@ export function extractDataFromXML(xml: string, fileName: string): ParsedNFeData
 
 function extractTerminalEntrega(text: string): string {
   if (!text) return '';
-  const uppercase = text.toUpperCase();
-  const explicitTerminalCode = getExplicitGuarujaTerminalCode(text)
-  if (explicitTerminalCode === 'TEAG') return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+
+  // 1. Prioridade Máxima: Extração direta da Seção de Entrega (ALFANDEGADO: / ENTREGA: / LOCAL DE ENTREGA:)
+  const fromDeliveryRule = extractTerminalFromDeliveryRule(text);
+  if (fromDeliveryRule) {
+    return fromDeliveryRule;
+  }
+
+  // 2. ULTRAFERTIL (Prioridade Máxima se presente no documento)
+  if (isUltrafertil(text)) {
+    return 'ULTRAFERTIL';
+  }
+
+  // 3. Verificação por códigos explícitos de terminais (TEAG e TEG sem atalhos indiretos)
+  const explicitTerminalCode = getExplicitGuarujaTerminalCode(text);
+  if (explicitTerminalCode === 'TEAG') return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA';
   if (explicitTerminalCode === 'TEG') return 'TEG - TERMINAL EXPORTADOR DO GUARUJA';
 
-  // 1. Verificação por códigos/locais conhecidos em notas de exportação/agronegócio
-  if (/\bTEAG\b/i.test(text) || uppercase.includes('TERMINAL DE ACUCAR DO GUARUJA') || uppercase.includes('TERMINAL EXPORTACAO DE ACUCAR') || uppercase.includes('TEAG')) {
-    return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA';
-  }
-  if (/\bTEG\b/i.test(text) || uppercase.includes('TERMINAL EXPORTADOR DO GUARUJA') || uppercase.includes('TERM EXP GUARUJA') || uppercase.includes('GUARUJA LTDA GUARUJA')) {
-    return 'TEG - TERMINAL EXPORTADOR DO GUARUJA';
+  const uppercase = text.toUpperCase();
+
+  // 4. Verificação por nomes ou CNPJs explícitos de outros terminais conhecidos
+  if (/\bTES\b/i.test(text) || uppercase.includes('TERMINAL EXPORTADOR DE SANTOS') || uppercase.includes('TES TERMINAL') || uppercase.includes('18.845.076/0001-83') || text.includes('18845076000183')) {
+    return 'TES - TERMINAL EXPORTADOR DE SANTOS';
   }
   if (/\bTGG\b/i.test(text) || uppercase.includes('TERMINAL DE GRAIS DO GUARUJA') || uppercase.includes('TERMINAL DE GRAOS DO GUARUJA')) {
     return 'TGG - TERMINAL DE GRAIS DO GUARUJA';
@@ -1344,33 +1377,6 @@ function extractTerminalEntrega(text: string): string {
   if (uppercase.includes('ECOPORTO')) return 'ECOPORTO SANTOS';
   if (uppercase.includes('BTP') || uppercase.includes('BRASIL TERMINAL PORTUARIO')) return 'BTP - BRASIL TERMINAL PORTUARIO';
   if (uppercase.includes('TIPLAM')) return 'TIPLAM - TERMINAL INTEGRADO';
-
-  // 2. Trazer até 15 primeiras palavras depois de ALFANDEGADO, ALFADEGADO, RECINTO ou ENTREGA
-  const regex = /(?:RECINTO\s+ALFANDEGADO|RECINTO\s+ALFADEGADO|ALFANDEGADO|ALFADEGADO|TERMINAL\s+DE\s+ENTREGA|TERMINAL\s+ENTREGA|LOCAL\s+DE\s+ENTREGA|LOCAL\s+DE\s+DESCARGA|DESCARGA\s+NO\s+RECINTO|TERMINAL\s+EXPORTADOR|ENTREGA\s+EM|TERMINAL|ENTREGA)\s*[:=-]?\s*([\s\S]{1,500})/i;
-  const match = text.match(regex);
-  if (match && match[1]) {
-    let chunk = match[1].trim();
-    chunk = chunk.replace(/^(?:EM|DE|NO|NA|SERA|SERÁ|RECINTO|ALFANDEGADO|ALFADEGADO)\s*[:=-]?\s*/i, '');
-    const stopKeywords = [
-      "TRANSBORDO", "RETIRADA", "PLACA", "MOTORISTA", "CONTRATO",
-      "DESTINO", "CNPJ", "CPF", "OBS", "VALOR", "PESO", "QTD", "QUANTIDADE",
-      "TICKET", "NAVIO", "SAFRA", "PEDIDO", "NOTA FISCAL", "CHAVE", "DATA", "CEP", "IE"
-    ];
-    for (const kw of stopKeywords) {
-      const idx = chunk.toUpperCase().indexOf(kw);
-      if (idx > 0) {
-        chunk = chunk.substring(0, idx).trim();
-      }
-    }
-    const words = chunk.split(/\s+/).filter(Boolean).slice(0, 15);
-    let val = words.join(' ').replace(/[:=\-.,;]+$/, '').trim();
-    if (val.length > 2 && !/^\d+$/.test(val)) {
-      return val;
-    }
-  }
-
-  if (uppercase.includes('GUARUJA') || uppercase.includes('GUARUJÁ')) return 'TEG - TERMINAL EXPORTADOR DO GUARUJA';
-  if (uppercase.includes('SANTOS')) return 'TERMINAL SANTOS';
 
   return '';
 }

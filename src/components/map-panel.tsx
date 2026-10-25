@@ -67,6 +67,9 @@ const KNOWN_LOCATIONS: Record<string, { lat: number; lng: number; name: string }
   "TEAG": { lat: -23.9782, lng: -46.2921, name: "TEAG - Terminal de Açúcar do Guarujá - SP" },
   "TERMINAL DE ACUCAR DO GUARUJA": { lat: -23.9782, lng: -46.2921, name: "TEAG - Terminal de Açúcar do Guarujá - SP" },
   "TEG": { lat: -23.9774, lng: -46.2935, name: "TEG - Terminal Exportador do Guarujá - SP" },
+  "ULTRAFERTIL": { lat: -23.9488, lng: -46.3382, name: "Ultrafertil S.A. - Santos - SP" },
+  "ULTRAFERTIL S A": { lat: -23.9488, lng: -46.3382, name: "Ultrafertil S.A. - Santos - SP" },
+  "ULTRAFÉRTIL": { lat: -23.9488, lng: -46.3382, name: "Ultrafertil S.A. - Santos - SP" },
 }
 
 export function MapPanel({ files }: MapPanelProps) {

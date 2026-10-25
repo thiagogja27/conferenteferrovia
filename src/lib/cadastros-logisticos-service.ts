@@ -394,16 +394,7 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
     ativo: true,
     criadoEm: 1700000000000,
   },
-  {
-    id: 'sys-dest-copersucar',
-    nome: 'COPERSUCAR S.A.',
-    cnpjPrincipal: '60.643.236/0001-08',
-    cnpjsAdicionais: ['60643236'],
-    aliases: ['COPERSUCAR', 'COPERSUCAR SA', 'COPERSUCAR S/A'],
-    isSistema: true,
-    ativo: true,
-    criadoEm: 1700000000000,
-  },
+  
   {
     id: 'sys-dest-raizen',
     nome: 'RAIZEN ENERGIA S.A.',
@@ -1345,7 +1336,7 @@ export function resolveDestinatarioCadastro(
   const matches = allDest.flatMap((dest) => {
     const candidates = [dest.nome, ...(dest.aliases || [])]
       .map(normalizeSearch)
-      .filter((candidate) => candidate.length >= 6 && targetName.includes(candidate))
+      .filter((candidate) => candidate.length >= 3 && (targetName.includes(candidate) || candidate.includes(targetName)))
     const longestMatch = candidates.sort((a, b) => b.length - a.length)[0]
     return longestMatch ? [{ dest, matchLength: longestMatch.length }] : []
   }).sort((a, b) => b.matchLength - a.matchLength)
@@ -1355,7 +1346,7 @@ export function resolveDestinatarioCadastro(
 
   return {
     nome: match.dest.nome,
-    cnpj: '',
+    cnpj: cleanDigits(match.dest.cnpjPrincipal) || '',
   }
 }
 

@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useMemo, useEffect } from "react"
+import React, { useState, useMemo, useEffect, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -27,7 +27,7 @@ import {
   matchTransbordoFromText,
   subscribeCadastrosChanges,
 } from "@/lib/cadastros-logisticos-service"
-import { getExplicitGuarujaTerminalCode } from "@/lib/terminal-utils"
+import { getExplicitGuarujaTerminalCode, isUltrafertil } from "@/lib/terminal-utils"
 
 import {
   BarChart,
@@ -147,17 +147,28 @@ export function getNoteDetails(
   let destNome = sanitizeDestinatarioNome(
     rawDestNome,
     rawDestCnpj,
-    `${infCpl} ${rawXml} ${f.rawSnippet || ""}`
+    `${infCpl} ${rawXml} ${f.rawSnippet || ""}`,
+    emitNome,
+    emitCNPJ
   )
+
+  // Se o destinatário não foi informado separadamente ou é a própria usina/remetente (ex: transferência/filial)
+  if ((!destNome || destNome === "Não informado" || destNome === "DESTINATÁRIO NÃO IDENTIFICADO") && emitNome && emitNome !== "Não informado") {
+    destNome = emitNome.toUpperCase()
+  }
+
   let destCNPJ = rawDestCnpj ? formatCNPJ(rawDestCnpj) : ""
-  // Se o CNPJ capturado pertence a uma transportadora (ex: Liderança 10.991.380 ou Rumo 02.387.241), NÃO é o CNPJ do destinatário!
+  // Se o CNPJ capturado pertence a uma transportadora, NÃO é o CNPJ do destinatário!
   if (isCarrierCnpj(rawDestCnpj)) {
-    // Se o destinatário for a própria usina emitente (ex: Usina São Martinho em remessa)
-    if (destNome && /SAO\s*MARTINHO/i.test(destNome) && (nfe?.emitente?.cnpj || parsed?.emitCNPJ)) {
-      destCNPJ = formatCNPJ(nfe?.emitente?.cnpj || parsed?.emitCNPJ || "")
+    if (emitCNPJ) {
+      destCNPJ = formatCNPJ(emitCNPJ)
     } else {
       destCNPJ = ""
     }
+  }
+
+  if (!destCNPJ && emitCNPJ && (destNome === emitNome.toUpperCase() || destNome === emitNome)) {
+    destCNPJ = formatCNPJ(emitCNPJ)
   }
 
   // Limpeza de segurança extra contra cabeçalhos de tabela do DANFE / volumes
@@ -169,10 +180,10 @@ export function getNoteDetails(
       destNome
     )
   ) {
-    destNome = "Não informado"
+    destNome = emitNome && emitNome !== "Não informado" ? emitNome.toUpperCase() : "Não informado"
   }
   if (isCarrierCnpj(destCNPJ)) {
-    destCNPJ = ""
+    destCNPJ = emitCNPJ ? formatCNPJ(emitCNPJ) : ""
   }
 
   // Verificação oficial de CNPJ Chave de Acesso x Destinatário
@@ -195,11 +206,17 @@ export function getNoteDetails(
   let terminal = nfe?.terminalEntrega || parsed?.terminalEntrega || "Não Informado"
   let transbordo = nfe?.transbordo || parsed?.transbordo || "Não Informado"
   let retirada = parsed?.retirada || ""
-  const explicitTerminalCode = getExplicitGuarujaTerminalCode(`${infCpl} ${rawXml} ${f.rawSnippet || ""}`)
-  if (explicitTerminalCode === 'TEAG') {
-    terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
-  } else if (explicitTerminalCode === 'TEG') {
-    terminal = "TEG - TERMINAL DE EXPORTAÇÃO DO GUARUJÁ"
+
+  const fullDocText = `${infCpl} ${rawXml} ${f.rawSnippet || ""}`
+  if (isUltrafertil(fullDocText) || isUltrafertil(terminal)) {
+    terminal = "ULTRAFERTIL"
+  } else {
+    const explicitTerminalCode = getExplicitGuarujaTerminalCode(fullDocText)
+    if (explicitTerminalCode === 'TEAG') {
+      terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
+    } else if (explicitTerminalCode === 'TEG') {
+      terminal = "TEG - TERMINAL DE EXPORTAÇÃO DO GUARUJÁ"
+    }
   }
 
   // Se o terminal foi indevidamente extraído como UBERABA / TIUB, corrigir para transbordo
@@ -215,10 +232,10 @@ export function getNoteDetails(
     terminal = "Não Informado"
   }
 
-  // Transbordo NUNCA pode ser terminal portuário (TEAG, TEG, TES, CLI, Santos, Guarujá)
+  // Transbordo NUNCA pode ser terminal portuário (TEAG, TEG, TES, CLI, ULTRAFERTIL, Santos, Guarujá)
   const isPortTerminalName = (val: string): boolean => {
     const u = (val || "").toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    return /\bTEAG\b|\bTEG\b|\bTES\b|\bTGG\b|\bCLI\b|\bTIPLAM\b|\bDP WORLD\b|\bECOPORTO\b|\bBTP\b|\bTERMINAL 124\b|\bT-124\b|\bT124\b|TERMINAL.*EXPORTA[CÇ]|GUARUJ[AÁ]|SANTOS/i.test(u)
+    return /\bTEAG\b|\bTEG\b|\bTES\b|\bTGG\b|\bCLI\b|\bTIPLAM\b|\bDP WORLD\b|\bECOPORTO\b|\bBTP\b|\bTERMINAL 124\b|\bT-124\b|\bT124\b|\bULTRAFERTIL\b|\bULTRAF[EÉ]RTIL\b|TERMINAL.*EXPORTA[CÇ]|GUARUJ[AÁ]|SANTOS/i.test(u)
   }
 
   if (isPortTerminalName(transbordo)) {
@@ -228,9 +245,9 @@ export function getNoteDetails(
     transbordo = "Não Informado"
   }
 
-  // Se o terminal foi rotulado como TEG mas a nota é de açúcar, corrigir para TEAG
-  if (!explicitTerminalCode && terminal.includes('TEG') && !terminal.includes('TEAG')) {
-    if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(infCpl)) {
+  // Se o terminal foi rotulado como TEG mas a nota tem dados explícitos de TEAG
+  if (terminal.includes('TEG') && !terminal.includes('TEAG') && !isUltrafertil(fullDocText)) {
+    if (/04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(infCpl)) {
       terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
     }
   }
@@ -261,9 +278,10 @@ export function getNoteDetails(
   }
 
   if (terminal === "Não Informado" || !terminal) {
-    if (
-      /TEAG|TERM.*EXPORTACAO.*ACUCAR|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO/i.test(infCpl) ||
-      ((/GUARUJA|GUARUJÁ/i.test(infCpl)) && (/ACUCAR|AÇÚCAR/i.test(infCpl)))
+    if (isUltrafertil(fullDocText)) {
+      terminal = "ULTRAFERTIL"
+    } else if (
+      /\bTEAG\b|TERM.*EXPORTACAO.*ACUCAR|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO/i.test(infCpl)
     ) {
       terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
     } else if (/TES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(infCpl)) {
@@ -454,10 +472,32 @@ export function Dashboard({ files }: DashboardProps) {
     }).length
   }, [files, logisticsOverrides])
 
-  // Transmite espelho automaticamente em tempo real para o Monitor Realtime
+  // Transmite espelho para o Monitor Realtime com proteção contra duplicatas
   const [lastMirrorSyncTime, setLastMirrorSyncTime] = useState<string | null>(null)
+  const isInitialMountRef = useRef(true)
+  const lastSyncHashRef = useRef<string>('')
+
   useEffect(() => {
-    if (files && files.length > 0) {
+    if (!files || files.length === 0) return
+
+    const overridesCount = Object.keys(logisticsOverrides).length
+    const currentHash = `${files.length}_${overridesCount}`
+
+    // Na inicialização, o processador de arquivos já realizou a publicação final do espelho.
+    // Evita disparar uma segunda ou terceira publicação simultânea.
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false
+      lastSyncHashRef.current = currentHash
+      return
+    }
+
+    if (lastSyncHashRef.current === currentHash) {
+      return
+    }
+    lastSyncHashRef.current = currentHash
+
+    // Debounce para alterações subsequentes de IA ou ajustes manuais
+    const timer = setTimeout(() => {
       try {
         const snap = buildConferenceDashboardSnapshot(files, undefined, logisticsOverrides, undefined)
         publishConferenceDashboard(snap)
@@ -465,7 +505,9 @@ export function Dashboard({ files }: DashboardProps) {
       } catch (e) {
         console.warn('Erro ao sincronizar espelho do dashboard:', e)
       }
-    }
+    }, 800)
+
+    return () => clearTimeout(timer)
   }, [files, logisticsOverrides])
 
   const stats = useMemo(() => {
@@ -1171,7 +1213,7 @@ export function Dashboard({ files }: DashboardProps) {
           onClick={() => {
             if (files && files.length > 0) {
               const snap = buildConferenceDashboardSnapshot(files, undefined, logisticsOverrides, undefined)
-              publishConferenceDashboard(snap)
+              publishConferenceDashboard(snap, true)
               setLastMirrorSyncTime(snap.timeFormatted)
             }
           }}

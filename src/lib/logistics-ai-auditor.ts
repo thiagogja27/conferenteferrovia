@@ -1,5 +1,5 @@
 import { sanitizeDestinatarioNome } from './destinatario-utils'
-import { getExplicitGuarujaTerminalCode } from './terminal-utils'
+import { getExplicitGuarujaTerminalCode, isUltrafertil } from './terminal-utils'
 
 export interface LogisticsAuditInputItem {
   id: string
@@ -91,12 +91,17 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
   let destinatarioCorrigido = item.destNome
   let retiradaCorrigida = item.retirada
   let produtoCorrigido = item.produto
-  const explicitTerminalCode = getExplicitGuarujaTerminalCode(fullText)
-  if (explicitTerminalCode) {
-    terminalCorrigido = explicitTerminalCode === 'TEAG'
-      ? 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-      : 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
+  if (isUltrafertil(fullText) || isUltrafertil(item.terminal || '')) {
+    terminalCorrigido = 'ULTRAFERTIL'
     if (terminalCorrigido !== item.terminal) camposAjustados.push('terminal')
+  } else {
+    const explicitTerminalCode = getExplicitGuarujaTerminalCode(fullText)
+    if (explicitTerminalCode) {
+      terminalCorrigido = explicitTerminalCode === 'TEAG'
+        ? 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+        : 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
+      if (terminalCorrigido !== item.terminal) camposAjustados.push('terminal')
+    }
   }
 
   // Se o terminal foi indevidamente gravado como um transbordo (ex: UBERABA, TIUB, ATT ARMAZENAGEM, FERNANDOPOLIS):
@@ -114,8 +119,8 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
     terminalCorrigido = 'Não Informado'
   }
 
-  // Se o transbordo foi indevidamente rotulado como terminal portuário (ex: TEAG, TEG, TES, CLI, TGG, SANTOS, GUARUJÁ):
-  if (/^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|SANTOS|GUARUJ[AÁ]/i.test(item.transbordo || '')) {
+  // Se o transbordo foi indevidamente rotulado como terminal portuário (ex: TEAG, TEG, TES, CLI, ULTRAFERTIL, TGG, SANTOS, GUARUJÁ):
+  if (/^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|\bULTRAFERTIL\b|\bULTRAF[EÉ]RTIL\b|SANTOS|GUARUJ[AÁ]/i.test(item.transbordo || '')) {
     if (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal)) {
       terminalCorrigido = item.transbordo
       camposAjustados.push('terminal')
@@ -123,19 +128,21 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
     transbordoCorrigido = undefined
   }
 
-  // Se o terminal foi rotulado como TEG mas a nota é de açúcar ou possui dados do TEAG, corrigir para TEAG
-  if (!explicitTerminalCode && item.terminal && item.terminal.includes('TEG') && !item.terminal.includes('TEAG')) {
-    if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(fullText)) {
+  // Se o terminal foi rotulado como TEG mas a nota tem dados explícitos do TEAG
+  if (item.terminal && item.terminal.includes('TEG') && !item.terminal.includes('TEAG') && !isUltrafertil(fullText)) {
+    if (/04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(fullText)) {
       terminalCorrigido = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
       camposAjustados.push('terminal')
     }
   }
 
   // 1. Auditoria e Identificação de Terminal de Entrega
-  if (!explicitTerminalCode && (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal))) {
-    if (
-      /\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|ACUCAR.*GUARUJ[AÁ]|TEAG|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO\s*DA\s*COSTA/i.test(fullText) ||
-      ((/GUARUJ[AÁ]/i.test(fullText)) && (/ACUCAR|AÇÚCAR/i.test(fullText)))
+  if (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal)) {
+    if (isUltrafertil(fullText)) {
+      terminalCorrigido = 'ULTRAFERTIL'
+      camposAjustados.push('terminal')
+    } else if (
+      /\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO\s*DA\s*COSTA/i.test(fullText)
     ) {
       terminalCorrigido = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
       camposAjustados.push('terminal')

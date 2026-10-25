@@ -1,7 +1,103 @@
 export type GuarujaTerminalCode = 'TEAG' | 'TEG'
 
-export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCode | null {
-  if (/\bTEAG\b/i.test(text)) return 'TEAG'
-  if (/\bTEG\b/i.test(text)) return 'TEG'
+export function isUltrafertil(text: string): boolean {
+  if (!text) return false
+  const upper = text.toUpperCase()
+  return (
+    /ULTRAFERTIL|ULTRAF[EÉ]RTIL/i.test(upper) ||
+    upper.includes('02.476.026/0008-02') ||
+    upper.includes('02476026000802') ||
+    upper.includes('633174875112') ||
+    upper.includes('633.174.875.112')
+  )
+}
+
+/**
+ * Extrai o terminal de entrega a partir das seções explícitas de entrega da DANFE/NF-e:
+ * - INFORMAÇÕES DO LOCAL DE ENTREGA
+ * - RECINTO ALFANDEGADO / ALFANDEGADO / MERC. ENTR. ARM. ALFANDEGADO
+ * - LOCAL DE ENTREGA / DESCARGA NO RECINTO / TERMINAL DE ENTREGA / ENTREGA:
+ * 
+ * Regra: Trazer até as 15 primeiras palavras após a palavra ENTREGA, ALFANDEGADO, RECINTO, etc.
+ * Sem qualquer atalho forçado para TEG ou TEAG!
+ */
+export function extractTerminalFromDeliveryRule(text: string): string | null {
+  if (!text) return null
+
+  // 1. Seção estruturada de local de entrega
+  const regex = /(?:INFORMA[ÇC][ÕO]ES\s+DO\s+LOCAL\s+DE\s+ENTREGA|LOCAL\s+DE\s+ENTREGA|RECINTO\s+ALFANDEGADO|RECINTO\s+ALFADEGADO|\bALFANDEGADO\b|\bALFADEGADO\b|MERC\.?\s*ENTR\.?\s*ARM\.?\s*ALFANDEGADO|DESCARGA\s+NO\s+RECINTO|TERMINAL\s+DE\s+ENTREGA|TERMINAL\s+ENTREGA|\bENTREGA\s+EM\b|\bENTREGA\s*[:=-])\s*[:=-]?\s*([\s\S]{1,500})/i
+
+  const match = text.match(regex)
+  if (!match || !match[1]) return null
+
+  let chunk = match[1].trim()
+  chunk = chunk.replace(/^(?:\b(?:EM|DE|NO|NA|SERA|SERÁ|RECINTO|ALFANDEGADO|ALFADEGADO|EMPRESA)\b\s*[:=-]?\s*)+/i, '')
+  chunk = chunk.replace(/^(?:NOME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|ME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|RAZ[ÃA]O\s*SOCIAL|NOME|EMPRESA)\s*[:=-]?\s*/i, '').trim()
+
+  if (isUltrafertil(chunk)) {
+    return 'ULTRAFERTIL'
+  }
+
+  const stopKeywords = [
+    'TRANSBORDO', 'RETIRADA', 'PLACA', 'MOTORISTA', 'CONTRATO',
+    'DESTINO', 'CNPJ', 'CPF', 'OBS', 'VALOR', 'PESO', 'QTD', 'QUANTIDADE',
+    'TICKET', 'NAVIO', 'SAFRA', 'PEDIDO', 'NOTA FISCAL', 'CHAVE', 'DATA', 'CEP', 'IE'
+  ]
+
+  for (const kw of stopKeywords) {
+    const idx = chunk.toUpperCase().indexOf(kw)
+    if (idx > 0) {
+      chunk = chunk.substring(0, idx).trim()
+    }
+  }
+
+  const words = chunk.split(/\s+/).filter(Boolean).slice(0, 15)
+  let val = words.join(' ').replace(/[:=\-.,;]+$/, '').trim()
+  val = val.replace(/^(?:NOME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|ME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|RAZ[ÃA]O\s*SOCIAL|NOME|EMPRESA)\s*[:=-]?\s*/i, '').trim()
+
+  if (isUltrafertil(val)) {
+    return 'ULTRAFERTIL'
+  }
+
+  // Identificação de terminais específicos se presentes no texto extraído da seção de entrega
+  if (/\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO/i.test(val)) {
+    return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+  }
+  if (/\bTEG\b|TERMINAL.*EXPORTADOR.*GUARUJ[AÁ]|TERM.*EXP.*GUARUJA/i.test(val)) {
+    return 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
+  }
+  if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS/i.test(val)) {
+    return 'TES - TERMINAL EXPORTADOR DE SANTOS'
+  }
+  if (/\bTGG\b|TERMINAL.*GR[AÃ]OS.*GUARUJ[AÁ]/i.test(val)) {
+    return 'TGG - TERMINAL DE GRAOS DO GUARUJA'
+  }
+  if (/\bCLI\b|CORREDOR.*LOG[IÍ]STIC/i.test(val)) {
+    return 'CLI - CORREDOR LOGÍSTICA INTEGRADA'
+  }
+
+  // Se o valor capturado for um transbordo conhecido, não é o terminal de entrega
+  const valUpper = val.toUpperCase()
+  const isTransbordoHub = /UBERABA|TIUB|FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|RONDONOPOLIS|RIO VERDE|ARAGUARI|ITURAMA|PRADOPOLIS|PEDERNEIRAS|SAO SIMAO|UBERLANDIA|INOCENCIA|GUARA|PAULINIA/i.test(valUpper)
+  if (!isTransbordoHub && val.length > 2 && !/^\d+$/.test(val)) {
+    return val
+  }
+
   return null
 }
+
+/**
+ * Retorna o código do terminal de Guarujá APENAS se explicitamente citado.
+ * NUNCA utiliza atalhos por cidade 'Guarujá' ou tipo de carga!
+ */
+export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCode | null {
+  if (isUltrafertil(text)) return null
+  if (/\bTEAG\b|TERMINAL.*DE\s*A[CÇ][UÚ]CAR.*GUARUJ[AÁ]|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO\s*DA\s*COSTA/i.test(text)) {
+    return 'TEAG'
+  }
+  if (/\bTEG\b|TERMINAL\s+EXPORTADOR\s+(?:DO\s+)?GUARUJ[AÁ]|TERM\.?\s*EXP\.?\s*GUARUJ[AÁ]|02\.?836\.?436\/?0001-?20/i.test(text)) {
+    return 'TEG'
+  }
+  return null
+}
+

@@ -23,7 +23,7 @@ import {
   formatTimeBR,
 } from '@/lib/firebase-realtime'
 import { matchTransbordoFromText } from '@/lib/cadastros-logisticos-service'
-import { getExplicitGuarujaTerminalCode } from '@/lib/terminal-utils'
+import { getExplicitGuarujaTerminalCode, isUltrafertil } from '@/lib/terminal-utils'
 import { ref, push, onValue, off, query, limitToLast, remove, get } from 'firebase/database'
 
 export interface ConferenceNoteSummary {
@@ -278,11 +278,17 @@ export function buildConferenceDashboardSnapshot(
     let terminal = nfe?.terminalEntrega || parsed?.terminalEntrega || 'Não Informado'
     let transbordo = nfe?.transbordo || parsed?.transbordo || 'Não Informado'
     const retirada = parsed?.retirada || ''
-    const explicitTerminalCode = getExplicitGuarujaTerminalCode(`${infCpl} ${rawXml} ${f.rawSnippet || ''}`)
-    if (explicitTerminalCode === 'TEAG') {
-      terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-    } else if (explicitTerminalCode === 'TEG') {
-      terminal = 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
+    const fullDocText = `${infCpl} ${rawXml} ${f.rawSnippet || ''}`
+
+    if (isUltrafertil(fullDocText) || isUltrafertil(terminal)) {
+      terminal = 'ULTRAFERTIL'
+    } else {
+      const explicitTerminalCode = getExplicitGuarujaTerminalCode(fullDocText)
+      if (explicitTerminalCode === 'TEAG') {
+        terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+      } else if (explicitTerminalCode === 'TEG') {
+        terminal = 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
+      }
     }
 
     // Se o terminal capturado foi UBERABA / TIUB, corrigir para transbordo
@@ -298,30 +304,32 @@ export function buildConferenceDashboardSnapshot(
       terminal = 'Não Informado'
     }
 
-    // CRÍTICO: Não existe transbordo TEG ou TEAG! TEAG, TEG, TES, CLI, TGG são terminais portuários.
-    // Se o transbordo foi indevidamente gravado como terminal portuário, mover para terminal e resetar transbordo!
-    if (/^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|SANTOS|GUARUJ[AÁ]/i.test(transbordo)) {
+    // Transbordo NUNCA pode ser terminal portuário (TEAG, TEG, TES, CLI, ULTRAFERTIL, TGG, Santos, Guarujá)
+    if (/^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|\bULTRAFERTIL\b|\bULTRAF[EÉ]RTIL\b|SANTOS|GUARUJ[AÁ]/i.test(transbordo)) {
       if (terminal === 'Não Informado' || !terminal) {
         terminal = transbordo
       }
       transbordo = 'Não Informado'
     }
 
-    // Se o terminal foi rotulado como TEG mas a nota é de açúcar, corrigir para TEAG
-    if (!explicitTerminalCode && terminal.includes('TEG') && !terminal.includes('TEAG')) {
-      if (/ACUCAR|AÇÚCAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(`${infCpl} ${rawXml}`)) {
+    // Se o terminal foi rotulado como TEG mas a nota tem dados explícitos de TEAG
+    if (terminal.includes('TEG') && !terminal.includes('TEAG') && !isUltrafertil(fullDocText)) {
+      if (/04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(`${infCpl} ${rawXml}`)) {
         terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
       }
     }
 
     // Detecção prioritária de TEAG
-    if (!explicitTerminalCode && (
-      /\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|ACUCAR.*GUARUJ[AÁ]|TEAG|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO/i.test(`${infCpl} ${rawXml}`) ||
-      ((/GUARUJ[AÁ]/i.test(`${infCpl} ${rawXml}`)) && (/ACUCAR|AÇÚCAR/i.test(`${infCpl} ${rawXml}`)))
-    )) {
-      terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-    } else if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(`${infCpl} ${rawXml}`)) {
-      terminal = 'TES - TERMINAL EXPORTADOR DE SANTOS'
+    if (terminal === 'Não Informado' || !terminal) {
+      if (isUltrafertil(fullDocText)) {
+        terminal = 'ULTRAFERTIL'
+      } else if (
+        /\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO/i.test(`${infCpl} ${rawXml}`)
+      ) {
+        terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
+      } else if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(`${infCpl} ${rawXml}`)) {
+        terminal = 'TES - TERMINAL EXPORTADOR DE SANTOS'
+      }
     }
 
     // Validação prioritária de transbordos cadastrados (Pradópolis, Pederneiras, Fernandópolis, etc.)

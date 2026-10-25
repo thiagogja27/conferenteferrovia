@@ -603,7 +603,9 @@ export function XMLConverter() {
       const hasTes = termUpper.includes('TES')
       const hasTeg = termUpper.includes('TEG')
       const hasTeag = termUpper.includes('TEAG')
+      const hasUltrafertil = termUpper.includes('ULTRAFERTIL')
       const identifiedTerms = []
+      if (hasUltrafertil) identifiedTerms.push('ULTRAFERTIL')
       if (hasTes) identifiedTerms.push('TES')
       if (hasTeag) identifiedTerms.push('TEAG')
       else if (hasTeg) identifiedTerms.push('TEG')
@@ -849,7 +851,9 @@ export function XMLConverter() {
       const hasTes = results.some(r => r.nfeData?.terminalEntrega?.toUpperCase().includes('TES'))
       const hasTeg = results.some(r => r.nfeData?.terminalEntrega?.toUpperCase().includes('TEG'))
       const hasTeag = results.some(r => r.nfeData?.terminalEntrega?.toUpperCase().includes('TEAG'))
+      const hasUltrafertil = results.some(r => r.nfeData?.terminalEntrega?.toUpperCase().includes('ULTRAFERTIL'))
       const identifiedTerms = []
+      if (hasUltrafertil) identifiedTerms.push('ULTRAFERTIL')
       if (hasTes) identifiedTerms.push('TES')
       if (hasTeag) identifiedTerms.push('TEAG')
       else if (hasTeg) identifiedTerms.push('TEG')
