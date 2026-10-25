@@ -548,19 +548,22 @@ app.post("/api/gemini/audit-logistics", async (req, res) => {
         serie: it.serie,
         chave: it.chave,
         emitenteAtual: it.emitNome || 'Não informado',
+        destinatarioAtual: it.destNome || 'Não informado',
+        destinatarioCNPJAtual: it.destCNPJ || 'Não informado',
         terminalAtual: it.terminal || 'Não informado',
         transbordoAtual: it.transbordo || 'Não informado',
         produtoAtual: it.produto || 'Não informado',
         retiradaAtual: it.retirada || 'Não informado',
-        informacoesComplementares: (it.infCpl || '').substring(0, 1500),
-        trechoDocumentoOriginal: (it.rawSnippet || '').substring(0, 2000),
+        informacoesComplementares: (it.infCpl || '').substring(0, 2000),
+        trechoDocumentoOriginal: (it.rawSnippet || '').substring(0, 2500),
+        xmlDocumentoOriginal: (it.xmlContent || '').substring(0, 5000),
       }));
 
       try {
         const response = await ai.models.generateContent({
           model: "gemini-3.7-flash",
           contents: `Você é um Auditor Sênior Especialista em Logística Portuária, Ferroviária e Fiscal de DANFE/NF-e (Exportação de Açúcar, Grãos, Soja, Milho, Farelo e Cargas Industriais).
-Sua missão fundamental é analisar as notas fiscais onde TERMINAL DE ENTREGA ou TRANSBORDO estão "Não Informado" e ENCONTRAR OS VALORES REAIS declarados no texto da DANFE/Informações Complementares para ajustar o Dashboard.
+Sua missão fundamental é conferir cada nota diretamente contra o texto/XML original enviado. Valide TERMINAL DE ENTREGA, TRANSBORDO/PÁTIO e DESTINATÁRIO; corrija somente quando o valor estiver explicitamente declarado no documento. Nunca invente, deduza pelo emitente ou use conhecimento externo.
 
 =======================================================
 REGRAS E PADRÕES DE MAPEAMENTO LOGÍSTICO:
@@ -591,12 +594,12 @@ REGRAS E PADRÕES DE MAPEAMENTO LOGÍSTICO:
    - "GUARA" (se mencionar Guará, Guara)
    - "UBERLANDIA", "SAO SIMAO", "CHAPADAO DO SUL", "INOCENCIA", "ITIQUIRA", "RIO PRETO"
 
-Analise cada nota com atenção aos campos infCpl e trechoDocumentoOriginal. Se encontrar dados novos para preencher ou corrigir, informe os valores.
+Analise cada nota com atenção aos campos informacoesComplementares, trechoDocumentoOriginal e xmlDocumentoOriginal. Para o destinatário, use exclusivamente o destinatário identificado no XML/DANFE e só retorne um nome se houver evidência no documento. Se o valor atual estiver correto, mantenha-o e informe isso no veredito. Se não houver evidência, retorne o valor atual e não marque o campo como ajustado.
 
 Dados a auditar:
 ${JSON.stringify(promptPayload, null, 2)}`,
           config: {
-            systemInstruction: "Você é um auditor logístico e fiscal analítico. Localize terminais e transbordos declarados no texto do documento. Não sugira destinatários. Retorne estritamente um array JSON com todos os itens analisados.",
+            systemInstruction: "Você é um auditor logístico e fiscal analítico. Compare os campos atuais com o XML/DANFE original. Localize terminal, transbordo e destinatário somente quando estiverem declarados no documento; não invente nem complete por inferência. Retorne estritamente um array JSON com todos os itens analisados.",
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.ARRAY,
@@ -604,8 +607,9 @@ ${JSON.stringify(promptPayload, null, 2)}`,
                 type: Type.OBJECT,
                 properties: {
                   id: { type: Type.STRING },
-                  terminalCorrigido: { type: Type.STRING, description: "Nome normalizado do Terminal de Entrega identificado no documento, ou vazio se não houver" },
-                  transbordoCorrigido: { type: Type.STRING, description: "Nome do Transbordo/Pátio identificado no documento, ou vazio se não houver" },
+                  terminalCorrigido: { type: Type.STRING, description: "Nome normalizado do Terminal de Entrega identificado no documento, ou o valor atual se estiver correto" },
+                  transbordoCorrigido: { type: Type.STRING, description: "Nome do Transbordo/Pátio identificado no documento, ou o valor atual se estiver correto" },
+                  destinatarioCorrigido: { type: Type.STRING, description: "Destinatário identificado explicitamente no XML/DANFE, ou o valor atual se estiver correto; nunca invente" },
                   produtoCorrigido: { type: Type.STRING, description: "Nome do Produto identificado no documento, ou vazio se não houver" },
                   retiradaCorrigida: { type: Type.STRING, description: "Local de Retirada identificado no documento, ou vazio se não houver" },
                   status: {
@@ -648,6 +652,9 @@ ${JSON.stringify(promptPayload, null, 2)}`,
         if (aiResult.transbordoCorrigido && (!it.transbordo || /N[AÃ]O\s*INFORMADO/i.test(it.transbordo))) {
           camposAjustados.push('transbordo');
         }
+        if (aiResult.destinatarioCorrigido && aiResult.destinatarioCorrigido !== it.destNome && (!it.destNome || /N[AÃ]O\s*INFORMAD|N[AÃ]O\s*IDENTIFICAD/i.test(it.destNome))) {
+          camposAjustados.push('destinatario');
+        }
         if (aiResult.produtoCorrigido && (!it.produto || /OUTRO|N[AÃ]O\s*INFORMADO/i.test(it.produto))) {
           camposAjustados.push('produto');
         }
@@ -658,7 +665,7 @@ ${JSON.stringify(promptPayload, null, 2)}`,
           numero: it.numero,
           terminalCorrigido: aiResult.terminalCorrigido || it.terminal,
           transbordoCorrigido: aiResult.transbordoCorrigido || it.transbordo,
-          destinatarioCorrigido: it.destNome,
+          destinatarioCorrigido: aiResult.destinatarioCorrigido || it.destNome,
           retiradaCorrigida: aiResult.retiradaCorrigida || it.retirada,
           produtoCorrigido: aiResult.produtoCorrigido || it.produto,
           status: isAjustado ? (aiResult.status || 'AJUSTADO_IA') : 'NAO_CONSTA_NO_DOC',
