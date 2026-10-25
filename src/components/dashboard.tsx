@@ -208,7 +208,10 @@ export function getNoteDetails(
   let transbordo = nfe?.transbordo || parsed?.transbordo || "Não Informado"
   let retirada = parsed?.retirada || ""
 
-  const fullDocText = `${infCpl} ${rawXml} ${f.rawSnippet || ""}`
+  // A auditoria deve considerar também o texto extraído do PDF/DANFE.
+  // Em muitos documentos o TEAG aparece apenas em "Informações Complementares" do PDF.
+  const pdfText = f.pdfTextoOriginal || f.parsedData?.rawSnippet || ""
+  const fullDocText = `${infCpl} ${pdfText} ${rawXml} ${f.rawSnippet || ""}`
   if (isUltrafertil(fullDocText) || isUltrafertil(terminal)) {
     terminal = "ULTRAFERTIL"
   } else {

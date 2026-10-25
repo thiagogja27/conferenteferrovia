@@ -91,13 +91,38 @@ export function extractTerminalFromDeliveryRule(text: string): string | null {
  * NUNCA utiliza atalhos por cidade 'Guarujá' ou tipo de carga!
  */
 export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCode | null {
-  if (isUltrafertil(text)) return null
-  if (/\bTEAG\b|TERMINAL.*DE\s*A[CÇ][UÚ]CAR.*GUARUJ[AÁ]|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO\s*DA\s*COSTA/i.test(text)) {
+  if (!text || isUltrafertil(text)) return null
+
+  // PDFs/DANFEs podem quebrar palavras, inserir hífens ou remover acentos.
+  // Normalizamos antes de procurar o código para que "TEAG-TERMINAL" e
+  // "TEAG - TERMINAL DE EXPORT DE ACUCAR" sejam reconhecidos.
+  const normalized = text
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u2010-\u2015]/g, '-')
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (
+    /\bTEAG\b/.test(normalized) ||
+    /TERMINAL\s+(?:DE\s+)?(?:EXPORT(?:ACAO)?|EXP)\s+DE?\s*ACUCAR/.test(normalized) ||
+    /TERMINAL\s+DE\s+ACUCAR\s+DO\s+GUARUJA/.test(normalized) ||
+    /04721589000178|BENTO\s+PEDRO\s+DA\s+COSTA/.test(normalized)
+  ) {
     return 'TEAG'
   }
-  if (/\bTEG\b|TERMINAL\s+EXPORTADOR\s+(?:DO\s+)?GUARUJ[AÁ]|TERM\.?\s*EXP\.?\s*GUARUJ[AÁ]|02\.?836\.?436\/?0001-?20/i.test(text)) {
+
+  if (
+    /\bTEG\b/.test(normalized) ||
+    /TERMINAL\s+EXPORTADOR\s+(?:DO\s+)?GUARUJA/.test(normalized) ||
+    /TERM\s+EXP\s+GUARUJA/.test(normalized) ||
+    /02836436000120/.test(normalized)
+  ) {
     return 'TEG'
   }
+
   return null
 }
 

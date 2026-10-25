@@ -17,7 +17,6 @@ export interface LogisticsAuditInputItem {
   rawSnippet?: string
   pdfTextoOriginal?: string
   xmlContent?: string
-  pdfTextoOriginal?: string
 }
 
 export type LogisticsStatusTipo =
