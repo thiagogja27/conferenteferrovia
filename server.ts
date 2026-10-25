@@ -555,8 +555,9 @@ app.post("/api/gemini/audit-logistics", async (req, res) => {
         produtoAtual: it.produto || 'Não informado',
         retiradaAtual: it.retirada || 'Não informado',
         informacoesComplementares: (it.infCpl || '').substring(0, 2000),
-        trechoDocumentoOriginal: (it.rawSnippet || '').substring(0, 2500),
-        xmlDocumentoOriginal: (it.xmlContent || '').substring(0, 5000),
+  trechoDocumentoOriginal: (it.rawSnippet || '').substring(0, 2500),
+  pdfDocumentoOriginal: (it.pdfTextoOriginal || '').substring(0, 12000),
+  xmlDocumentoOriginal: (it.xmlContent || '').substring(0, 5000),
       }));
 
       try {

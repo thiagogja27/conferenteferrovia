@@ -16,6 +16,7 @@ export interface LogisticsAuditInputItem {
   infCpl?: string
   rawSnippet?: string
   xmlContent?: string
+  pdfTextoOriginal?: string
 }
 
 export type LogisticsStatusTipo =
@@ -83,7 +84,7 @@ function isNaoInformado(val?: string | null): boolean {
 }
 
 export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): LogisticsAuditResultItem {
-  const fullText = `${item.infCpl || ''} ${item.rawSnippet || ''} ${item.xmlContent || ''} ${item.emitNome || ''} ${item.destNome || ''}`.toUpperCase()
+  const fullText = `${item.infCpl || ''} ${item.pdfTextoOriginal || ''} ${item.rawSnippet || ''} ${item.xmlContent || ''} ${item.emitNome || ''} ${item.destNome || ''}`.toUpperCase()
   const camposAjustados: Array<'terminal' | 'transbordo' | 'destinatario' | 'retirada' | 'produto'> = []
   
   let terminalCorrigido = item.terminal
