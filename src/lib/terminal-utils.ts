@@ -93,10 +93,21 @@ export function extractTerminalFromDeliveryRule(text: string): string | null {
 export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCode | null {
   if (!text || isUltrafertil(text)) return null
 
+  // O terminal só pode ser concluído quando aparece no contexto do local de
+  // entrega. Não basta encontrar TEAG/TEG, cidade, CNPJ ou razão social em
+  // qualquer ponto da nota, pois esses dados também aparecem no emitente,
+  // destinatário e no transbordo.
+  const deliveryMarker = /(?:INFORMA[ÇC][ÕO]ES\s+DO\s+LOCAL\s+DE\s+ENTREGA|LOCAL\s+DE\s+ENTREGA|RECINTO\s+ALFANDEGADO|RECINTO\s+ALFADEGADO|\bALFANDEGADO\b|\bALFADEGADO\b|MERC\.?\s*ENTR\.?\s*ARM\.?\s*ALFANDEGADO|DESCARGA\s+NO\s+RECINTO|TERMINAL\s+DE\s+ENTREGA|TERMINAL\s+ENTREGA|\bENTREGA\s+EM\b|\bENTREGA\s*[:=-])/gi
+  const contexts: string[] = []
+  let marker: RegExpExecArray | null
+  while ((marker = deliveryMarker.exec(text)) !== null) {
+    contexts.push(text.slice(marker.index, marker.index + 700))
+  }
+
+  if (contexts.length === 0) return null
+
   // PDFs/DANFEs podem quebrar palavras, inserir hífens ou remover acentos.
-  // Normalizamos antes de procurar o código para que "TEAG-TERMINAL" e
-  // "TEAG - TERMINAL DE EXPORT DE ACUCAR" sejam reconhecidos.
-  const normalized = text
+  const normalized = contexts.join(' ')
     .toUpperCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -110,18 +121,14 @@ export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCod
     /TERMINAL\s+(?:DE\s+)?(?:EXPORT(?:ACAO)?|EXP)\s+DE?\s*ACUCAR/.test(normalized) ||
     /TERMINAL\s+DE\s+ACUCAR\s+DO\s+GUARUJA/.test(normalized) ||
     /04721589000178|BENTO\s+PEDRO\s+DA\s+COSTA/.test(normalized)
-  ) {
-    return 'TEAG'
-  }
+  ) return 'TEAG'
 
   if (
     /\bTEG\b/.test(normalized) ||
     /TERMINAL\s+EXPORTADOR\s+(?:DO\s+)?GUARUJA/.test(normalized) ||
     /TERM\s+EXP\s+GUARUJA/.test(normalized) ||
     /02836436000120/.test(normalized)
-  ) {
-    return 'TEG'
-  }
+  ) return 'TEG'
 
   return null
 }
