@@ -101,7 +101,13 @@ export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCod
   const contexts: string[] = []
   let marker: RegExpExecArray | null
   while ((marker = deliveryMarker.exec(text)) !== null) {
-    contexts.push(text.slice(marker.index, marker.index + 700))
+    // Limita a leitura ao campo de entrega; uma janela longa pode capturar
+    // TEAG/TEG em observações, destinatário ou transbordo e gerar falso positivo.
+    const remainder = text.slice(marker.index, marker.index + 360)
+    const nextSection = remainder.search(
+      /(?:DESTINAT[AÁ]RIO|REMETENTE|TRANSPORTADOR|DADOS ADICIONAIS|OBSERVA[CÇ][OÕ]ES|TRANSBORDO|VOLUME|CARGA|FRETE)\s*[:=-]?/i,
+    )
+    contexts.push(nextSection > 0 ? remainder.slice(0, nextSection) : remainder)
   }
 
   if (contexts.length === 0) return null
