@@ -36,10 +36,6 @@ export function extractTerminalFromDeliveryRule(text: string): string | null {
   chunk = chunk.replace(/^(?:\b(?:EM|DE|NO|NA|SERA|SERÁ|RECINTO|ALFANDEGADO|ALFADEGADO|EMPRESA)\b\s*[:=-]?\s*)+/i, '')
   chunk = chunk.replace(/^(?:NOME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|ME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|RAZ[ÃA]O\s*SOCIAL|NOME|EMPRESA)\s*[:=-]?\s*/i, '').trim()
 
-  if (isUltrafertil(chunk)) {
-    return 'ULTRAFERTIL'
-  }
-
   const stopKeywords = [
     'TRANSBORDO', 'RETIRADA', 'PLACA', 'MOTORISTA', 'CONTRATO',
     'DESTINO', 'CNPJ', 'CPF', 'OBS', 'VALOR', 'PESO', 'QTD', 'QUANTIDADE',
@@ -57,34 +53,8 @@ export function extractTerminalFromDeliveryRule(text: string): string | null {
   let val = words.join(' ').replace(/[:=\-.,;]+$/, '').trim()
   val = val.replace(/^(?:NOME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|ME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|RAZ[ÃA]O\s*SOCIAL|NOME|EMPRESA)\s*[:=-]?\s*/i, '').trim()
 
-  if (isUltrafertil(val)) {
-    return 'ULTRAFERTIL'
-  }
-
-  // O terminal só pode ser identificado pelo texto descritivo capturado após o marcador.
+  // O terminal é o texto mecânico capturado após o marcador.
   // Não usar siglas, CNPJ ou conciliação externa como atalho.
-  const normalizedVal = val
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (/TERMINAL.*(?:EXPORTACAO|EXP).*ACUCAR|TERMINAL DE ACUCAR DO GUARUJA/i.test(normalizedVal)) {
-    return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-  }
-  if (/TERMINAL.*EXPORTADOR.*GUARUJA|TERMINAL EXPORTADOR DO GUARUJA/i.test(normalizedVal)) {
-    return 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
-  }
-  if (/TERMINAL.*EXPORTADOR.*SANTOS/i.test(normalizedVal)) {
-    return 'TES - TERMINAL EXPORTADOR DE SANTOS'
-  }
-  if (/TERMINAL.*GRAOS.*GUARUJA/i.test(normalizedVal)) {
-    return 'TGG - TERMINAL DE GRAOS DO GUARUJA'
-  }
-  if (/CORREDOR.*LOGIST/i.test(normalizedVal)) {
-    return 'CLI - CORREDOR LOGÍSTICA INTEGRADA'
-  }
-
   // Se o valor capturado for um transbordo conhecido, não é o terminal de entrega
   const valUpper = val.toUpperCase()
   const isTransbordoHub = /UBERABA|TIUB|FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|RONDONOPOLIS|RIO VERDE|ARAGUARI|ITURAMA|PRADOPOLIS|PEDERNEIRAS|SAO SIMAO|UBERLANDIA|INOCENCIA|GUARA|PAULINIA/i.test(valUpper)
@@ -99,8 +69,12 @@ export function extractTerminalFromDeliveryRule(text: string): string | null {
  * Retorna o código do terminal de Guarujá APENAS se explicitamente citado.
  * NUNCA utiliza atalhos por cidade 'Guarujá' ou tipo de carga!
  */
-export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCode | null {
-  if (!text || isUltrafertil(text)) return null
+export function getExplicitGuarujaTerminalCode(_text: string): GuarujaTerminalCode | null {
+  // Intencionalmente não classifica por sigla, CNPJ, cidade ou razão social.
+  // O terminal deve vir somente das 15 palavras após o marcador de entrega.
+  return null
+
+  /*
 
   // O terminal só pode ser concluído quando aparece no contexto do local de
   // entrega. Não basta encontrar TEAG/TEG, cidade, CNPJ ou razão social em
@@ -147,5 +121,6 @@ export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCod
   ) return 'TEG'
 
   return null
+  */
 }
 
