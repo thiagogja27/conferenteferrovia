@@ -442,6 +442,8 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       emitNome = 'COOPERATIVA PROD DE CANA-DE-ACUCAR (USINA SAO JOSE)';
     } else if (emitCNPJRaw.startsWith('60498706') || /CARGILL/i.test(cleanText.substring(0, 800))) {
       emitNome = 'CARGILL AGRICOLA SA';
+    } else if (emitCNPJRaw.startsWith('47067525') || /LOUIS\s*DREYFUS|LDC\b/i.test(cleanText.substring(0, 800))) {
+      emitNome = 'LOUIS DREYFUS COMPANY BRASIL S.A.';
     } else if (emitCNPJRaw.startsWith('51843514')) {
       emitNome = 'TIETE AGROINDUSTRIAL S.A.';
     } else if (emitCNPJRaw.startsWith('43545284')) {
@@ -601,13 +603,27 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       // Buscar qualquer sequência de 14 dígitos contínuos no bloco delimitado de destinatário
       if (!destCNPJ) {
         const allBlock14 = block.match(/(?:^|\D)(\d{14})(?:\D|$)/g) || [];
+        const validCandidates: string[] = [];
         for (const m of allBlock14) {
           const candidate = m.replace(/\D/g, '');
-          if (candidate.length === 14 && candidate !== emitCNPJRaw && candidate !== emitIE && candidate !== destIE &&
-              !isCarrierCnpj(candidate) && candidate !== transpBlockCNPJ && candidate !== retiradaCNPJ && candidate !== entregaCNPJ) {
-            destCNPJ = candidate;
-            break;
+          if (
+            candidate.length === 14 &&
+            candidate !== emitIE &&
+            candidate !== destIE &&
+            !isCarrierCnpj(candidate) &&
+            candidate !== transpBlockCNPJ &&
+            candidate !== retiradaCNPJ &&
+            candidate !== entregaCNPJ
+          ) {
+            validCandidates.push(candidate);
           }
+        }
+        // Se houver candidato diferente do emitente, priorizá-lo; se não houver ou se emitente=destinatário (ex: remessa/transferência/formação de lote), aceitar o candidato encontrado no bloco de destinatário
+        const distinct = validCandidates.find((c) => c !== emitCNPJRaw);
+        if (distinct) {
+          destCNPJ = distinct;
+        } else if (validCandidates.length > 0) {
+          destCNPJ = validCandidates[0];
         }
       }
     }
@@ -616,25 +632,43 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     destNome = sanitizeDestinatarioNome(destNome, destCNPJ, textFiscal, emitNome, emitCNPJRaw);
   }
 
-  // 3. Buscar CNPJ imediatamente adjacente à Data de Emissão/Saída no cabeçalho fiscal (como no layout Copersucar)
+  // 3. Buscar CNPJ imediatamente adjacente à Data de Emissão/Saída no cabeçalho fiscal (como no layout Copersucar e LDC)
   if (!destCNPJ) {
     const destPos = textFiscal.search(/DESTINAT[AÁ]RIO|REMETENTE/i);
     const searchScope = destPos > 0 ? textFiscal.substring(destPos) : textFiscal;
     const dateAdjacentMatch = searchScope.match(/(?:^|\D)(\d{14}|\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\s+\d{2}\/\d{2}\/\d{2,4}/);
     if (dateAdjacentMatch) {
       const candidate = dateAdjacentMatch[1].replace(/\D/g, '');
-      if (candidate.length === 14 && candidate !== emitCNPJRaw && candidate !== destIE && candidate !== emitIE &&
-          !isCarrierCnpj(candidate) && candidate !== transpBlockCNPJ && candidate !== retiradaCNPJ && candidate !== entregaCNPJ) {
+      if (
+        candidate.length === 14 &&
+        candidate !== destIE &&
+        candidate !== emitIE &&
+        !isCarrierCnpj(candidate) &&
+        candidate !== transpBlockCNPJ &&
+        candidate !== retiradaCNPJ &&
+        candidate !== entregaCNPJ
+      ) {
         destCNPJ = candidate;
       }
     }
   }
 
-  // 3.5. Fallback para Cadastros Logísticos caso o destinatário esteja cadastrado no sistema
+  // 3.5. Fallback para Cadastros Logísticos APENAS se o destinatário NÃO for a mesma empresa do emitente
+  // Se for a mesma empresa/grupo (ex: filial/transferência/formação de lote), o CNPJ deve ser emitCNPJRaw, NUNCA inventar outra filial aleatória de cadastros!
   if (!destCNPJ && destNome) {
-    const resolved = resolveDestinatarioCadastro(destNome);
-    if (resolved && resolved.cnpj) {
-      destCNPJ = resolved.cnpj;
+    const isSameEntityName = emitNome && (
+      destNome.toUpperCase().includes(emitNome.toUpperCase()) ||
+      emitNome.toUpperCase().includes(destNome.toUpperCase()) ||
+      (/LOUIS\s*DREYFUS|LDC\b/i.test(destNome) && /LOUIS\s*DREYFUS|LDC\b/i.test(emitNome)) ||
+      (/CARGILL/i.test(destNome) && /CARGILL/i.test(emitNome))
+    );
+    if (isSameEntityName && emitCNPJRaw) {
+      destCNPJ = emitCNPJRaw;
+    } else {
+      const resolved = resolveDestinatarioCadastro(destNome);
+      if (resolved && resolved.cnpj) {
+        destCNPJ = resolved.cnpj;
+      }
     }
   }
 
@@ -1341,45 +1375,11 @@ export function extractDataFromXML(xml: string, fileName: string): ParsedNFeData
 function extractTerminalEntrega(text: string): string {
   if (!text) return '';
 
-  // 1. Prioridade Máxima: Extração direta da Seção de Entrega (ALFANDEGADO: / ENTREGA: / LOCAL DE ENTREGA:)
+  // Extração 100% mecânica pelas até 15 palavras imediatamente após "alfandegado", "afadegado", "entrega:" e marcadores
   const fromDeliveryRule = extractTerminalFromDeliveryRule(text);
   if (fromDeliveryRule) {
     return fromDeliveryRule;
   }
-
-  // Sem marcador de entrega, não classificar por sigla, CNPJ, cidade ou IA.
-  return '';
-
-  // 2. ULTRAFERTIL (Prioridade Máxima se presente no documento)
-  if (isUltrafertil(text)) {
-    return 'ULTRAFERTIL';
-  }
-
-  // 3. Verificação por códigos explícitos de terminais (TEAG e TEG sem atalhos indiretos)
-  const explicitTerminalCode = getExplicitGuarujaTerminalCode(text);
-  if (explicitTerminalCode === 'TEAG') return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA';
-  if (explicitTerminalCode === 'TEG') return 'TEG - TERMINAL EXPORTADOR DO GUARUJA';
-
-  const uppercase = text.toUpperCase();
-
-  // 4. Verificação por nomes ou CNPJs explícitos de outros terminais conhecidos
-  if (/\bTES\b/i.test(text) || uppercase.includes('TERMINAL EXPORTADOR DE SANTOS') || uppercase.includes('TES TERMINAL') || uppercase.includes('18.845.076/0001-83') || text.includes('18845076000183')) {
-    return 'TES - TERMINAL EXPORTADOR DE SANTOS';
-  }
-  if (/\bTGG\b/i.test(text) || uppercase.includes('TERMINAL DE GRAIS DO GUARUJA') || uppercase.includes('TERMINAL DE GRAOS DO GUARUJA')) {
-    return 'TGG - TERMINAL DE GRAIS DO GUARUJA';
-  }
-  if (/\bTAC\b/i.test(text) || uppercase.includes('TERMINAL DE ARMAZENS')) {
-    return 'TAC - TERMINAL DE ARMAZENS';
-  }
-  if (/\bCLI\b/i.test(text) || uppercase.includes('CORREDOR LOGISTICO INTEGRADO')) {
-    return 'CLI - CORREDOR LOGISTICO INTEGRADO';
-  }
-  if (uppercase.includes('SANTOS BRASIL')) return 'SANTOS BRASIL';
-  if (uppercase.includes('DP WORLD')) return 'DP WORLD SANTOS';
-  if (uppercase.includes('ECOPORTO')) return 'ECOPORTO SANTOS';
-  if (uppercase.includes('BTP') || uppercase.includes('BRASIL TERMINAL PORTUARIO')) return 'BTP - BRASIL TERMINAL PORTUARIO';
-  if (uppercase.includes('TIPLAM')) return 'TIPLAM - TERMINAL INTEGRADO';
 
   return '';
 }

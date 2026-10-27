@@ -759,185 +759,26 @@ export function verifyChaveCNPJ(
 
 // Funções para extrair informações das informações complementares
 function extractTerminalEntrega(infComplementares: string, doc?: Document): string {
-  // 0. Se houver tag XML <entrega>
+  // 1. Extração mecânica das observações / infComplementares pelas até 15 palavras após o marcador
+  if (infComplementares) {
+    const fromDeliveryRule = extractTerminalFromDeliveryRule(infComplementares)
+    if (fromDeliveryRule) {
+      return fromDeliveryRule
+    }
+  }
+
+  // 2. Se houver tag XML <entrega>, extrair mecanicamente o nome do local
   if (doc) {
     const entregaEl = doc.getElementsByTagName("entrega")[0]
     if (entregaEl) {
       const entregaNome = getTextContent(doc, "xNome", entregaEl)
-      const entregaCNPJ = getTextContent(doc, "CNPJ", entregaEl)
-      if (isUltrafertil(`${entregaNome} ${entregaCNPJ}`)) {
-        return 'ULTRAFERTIL'
-      }
-      if (/\bTEAG\b/i.test(entregaNome)) return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-      if (/\bTEG\b/i.test(entregaNome)) return 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
-      if (/\bTES\b/i.test(entregaNome)) return 'TES - TERMINAL EXPORTADOR DE SANTOS'
-      if (entregaNome.trim()) return entregaNome.trim()
-    }
-  }
-
-  if (!infComplementares) return ""
-
-  // Regra única: terminal = as 15 palavras após o marcador de entrega.
-  const terminalPorRegra = extractTerminalFromDeliveryRule(infComplementares)
-  return terminalPorRegra || ""
-
-  // 1. ULTRAFERTIL (Prioridade Máxima se presente nas observações/infCpl)
-  if (isUltrafertil(infComplementares)) {
-    return 'ULTRAFERTIL'
-  }
-
-  const uppercase = infComplementares.toUpperCase()
-  const explicitTerminalCode = getExplicitGuarujaTerminalCode(infComplementares)
-  if (explicitTerminalCode === 'TEAG') return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-  if (explicitTerminalCode === 'TEG') return 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
-
-  // 2. Verificação por códigos/locais conhecidos em notas de exportação/agronegócio
-  // TEAG - TERMINAL DE ACUCAR DO GUARUJA
-  if (
-    /\bTEAG\b/i.test(infComplementares) ||
-    uppercase.includes('04.721.589/0001-78') ||
-    infComplementares.includes('04721589000178') ||
-    infComplementares.includes('335127598119') ||
-    infComplementares.includes('335.127.598.119') ||
-    /TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(infComplementares) ||
-    /TER.*EXP.*ACU[CÇ].*GUARUJ[AÁ]/i.test(infComplementares) ||
-    /EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR.*GUARUJ[AÁ]/i.test(infComplementares) ||
-    /BENTO\s*PEDRO\s*DA\s*COSTA/i.test(infComplementares) ||
-    /BENTOPEDRO\s*DA\s*COSTA/i.test(infComplementares)
-  ) {
-    return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-  }
-
-  // TES - TERMINAL EXPORTADOR DE SANTOS
-  if (
-    /\bTES\b/i.test(infComplementares) ||
-    uppercase.includes('TERMINAL EXPORTADOR DE SANTOS') ||
-    uppercase.includes('TES TERMINAL') ||
-    uppercase.includes('18.845.076/0001-83') ||
-    infComplementares.includes('18845076000183')
-  ) {
-    return 'TES - TERMINAL EXPORTADOR DE SANTOS'
-  }
-
-  // Extração direta do bloco "INFORMAÇÕES DO LOCAL DE ENTREGA" da DANFE ou tag <entrega>
-  const entregaSectionMatch = infComplementares.match(/(?:INFORMA[ÇC][ÕO]ES\s+DO\s+LOCAL\s+DE\s+ENTREGA|LOCAL\s+DE\s+ENTREGA|<entrega>)([\s\S]{1,600}?)(?:C[ÁA]LCULO\s+DO\s+IMPOSTO|DADOS\s+DOS\s+PRODUTOS|TRANSPORTADOR|<\/entrega>|$)/i)
-  if (entregaSectionMatch && entregaSectionMatch[1]) {
-    const sec = entregaSectionMatch[1]
-    const secUpper = sec.toUpperCase()
-
-    if (isUltrafertil(sec)) {
-      return 'ULTRAFERTIL'
-    }
-
-    if (
-      /\bTEAG\b/i.test(sec) ||
-      secUpper.includes('04.721.589/0001-78') ||
-      sec.includes('04721589000178') ||
-      sec.includes('335127598119') ||
-      sec.includes('335.127.598.119') ||
-      /TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(sec) ||
-      /BENTO\s*PEDRO/i.test(sec)
-    ) {
-      return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-    }
-    if (/\bTES\b/i.test(sec) || secUpper.includes('TERMINAL EXPORTADOR DE SANTOS') || secUpper.includes('TES TERMINAL') || sec.includes('18.845.076/0001-83') || sec.includes('18845076000183')) {
-      return 'TES - TERMINAL EXPORTADOR DE SANTOS'
-    }
-    if (/\bTEG\b/i.test(sec) || secUpper.includes('TERMINAL EXPORTADOR DO GUARUJA') || secUpper.includes('TEG')) {
-      return 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
-    }
-    if (/\bTGG\b/i.test(sec) || secUpper.includes('TERMINAL DE GRA') || secUpper.includes('TGG')) {
-      return 'TGG - TERMINAL DE GRAIS DO GUARUJA'
-    }
-    if (/\bCLI\b/i.test(sec) || secUpper.includes('CORREDOR LOGISTICO')) {
-      return 'CLI - CORREDOR LOGISTICO INTEGRADO'
-    }
-  }
-
-  // Extração explícita de "ENTREGA: ..." das Informações Complementares
-  const entregaInfCplMatches = infComplementares.match(/(?:LOCAL\s+DE\s+ENTREGA|ENTREGA)\s*[:=-]\s*([^\n\r,;]{3,120})/gi)
-  if (entregaInfCplMatches) {
-    for (const matchStr of entregaInfCplMatches) {
-      const rawEntrega = matchStr.toUpperCase()
-      if (isUltrafertil(rawEntrega)) {
-        return 'ULTRAFERTIL'
-      }
-      if (/\bTEAG\b|TERMINAL.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO/i.test(rawEntrega)) {
-        return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-      }
-      if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS/i.test(rawEntrega)) {
-        return 'TES - TERMINAL EXPORTADOR DE SANTOS'
+      if (entregaNome && entregaNome.trim()) {
+        const words = entregaNome.trim().split(/\s+/).filter(Boolean).slice(0, 15)
+        if (words.length > 0) return words.join(' ')
       }
     }
   }
 
-  if (/\bTEG\b/i.test(infComplementares) || uppercase.includes('TERMINAL EXPORTADOR DO GUARUJA') || uppercase.includes('TERM EXP GUARUJA') || uppercase.includes('GUARUJA LTDA GUARUJA')) {
-    return 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
-  }
-  if (/\bTGG\b/i.test(infComplementares) || uppercase.includes('TERMINAL DE GRAIS DO GUARUJA') || uppercase.includes('TERMINAL DE GRAOS DO GUARUJA')) {
-    return 'TGG - TERMINAL DE GRAIS DO GUARUJA'
-  }
-  if (/\bTAC\b/i.test(infComplementares) || uppercase.includes('TERMINAL DE ARMAZENS')) {
-    return 'TAC - TERMINAL DE ARMAZENS'
-  }
-  if (/\bCLI\b/i.test(infComplementares) || uppercase.includes('CORREDOR LOGISTICO INTEGRADO')) {
-    return 'CLI - CORREDOR LOGISTICO INTEGRADO'
-  }
-  if (uppercase.includes('SANTOS BRASIL')) return 'SANTOS BRASIL'
-  if (uppercase.includes('DP WORLD')) return 'DP WORLD SANTOS'
-  if (uppercase.includes('ECOPORTO')) return 'ECOPORTO SANTOS'
-  if (uppercase.includes('BTP') || uppercase.includes('BRASIL TERMINAL PORTUARIO')) return 'BTP - BRASIL TERMINAL PORTUARIO'
-  if (uppercase.includes('TIPLAM')) return 'TIPLAM - TERMINAL INTEGRADO'
-
-  // 3. Trazer até 15 primeiras palavras depois de ALFANDEGADO, ALFADEGADO, RECINTO ou ENTREGA
-  const regex = /(?:RECINTO\s+ALFANDEGADO|RECINTO\s+ALFADEGADO|ALFANDEGADO|ALFADEGADO|TERMINAL\s+DE\s+ENTREGA|TERMINAL\s+ENTREGA|LOCAL\s+DE\s+ENTREGA|LOCAL\s+DE\s+DESCARGA|DESCARGA\s+NO\s+RECINTO|TERMINAL\s+EXPORTADOR|ENTREGA\s+EM|ENTREGA)\s*[:=-]?\s*([\s\S]{1,500})/i
-
-  const match = infComplementares.match(regex)
-  if (match && match[1]) {
-    let chunk = match[1].trim()
-    chunk = chunk.replace(/^(?:\b(?:EM|DE|NO|NA|SERA|SERÁ|RECINTO|ALFANDEGADO|ALFADEGADO)\b\s*[:=-]?\s*)+/i, "")
-    chunk = chunk.replace(/^(?:NOME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|ME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|RAZ[ÃA]O\s*SOCIAL|NOME|EMPRESA)\s*[:=-]?\s*/i, '').trim()
-
-    if (isUltrafertil(chunk)) {
-      return 'ULTRAFERTIL'
-    }
-
-    const stopKeywords = [
-      "TRANSBORDO", "RETIRADA", "PLACA", "MOTORISTA", "CONTRATO",
-      "DESTINO", "CNPJ", "CPF", "OBS", "VALOR", "PESO", "QTD", "QUANTIDADE",
-      "TICKET", "NAVIO", "SAFRA", "PEDIDO", "NOTA FISCAL", "CHAVE", "DATA", "CEP", "IE"
-    ]
-    for (const kw of stopKeywords) {
-      const idx = chunk.toUpperCase().indexOf(kw)
-      if (idx > 0) {
-        chunk = chunk.substring(0, idx).trim()
-      }
-    }
-    const words = chunk.split(/\s+/).filter(Boolean).slice(0, 15)
-    let val = words.join(' ').replace(/[:=\-.,;]+$/, '').trim()
-    val = val.replace(/^(?:NOME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|ME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|RAZ[ÃA]O\s*SOCIAL|NOME|EMPRESA)\s*[:=-]?\s*/i, '').trim()
-
-    if (isUltrafertil(val)) {
-      return 'ULTRAFERTIL'
-    }
-
-    // Se tiver relação com TEAG explícito
-    if (/\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO/i.test(val)) {
-      return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-    }
-
-    // Se o valor capturado for um transbordo conhecido, NÃO é o terminal de entrega!
-    const valUpper = val.toUpperCase()
-    const isTransbordoHub = /UBERABA|TIUB|FERNANDOPOLIS|FERNANDÓPOLIS|ATT\s*ARMAZENAGEM|RONDONOPOLIS|RIO VERDE|ARAGUARI|ITURAMA|PRADOPOLIS|PEDERNEIRAS|SAO SIMAO|UBERLANDIA|INOCENCIA|GUARA/i.test(valUpper)
-    if (!isTransbordoHub && val.length > 2 && !/^\d+$/.test(val)) {
-      return val
-    }
-  }
-
-  if (/\bTEG\b/i.test(uppercase) || (uppercase.includes('GUARUJA') && uppercase.includes('TERMINAL EXPORTADOR'))) {
-    return 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
-  }
-  if (uppercase.includes('SANTOS') && uppercase.includes('TERMINAL')) return 'TERMINAL SANTOS'
   return ""
 }
 

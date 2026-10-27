@@ -27,7 +27,7 @@ import {
   matchTransbordoFromText,
   subscribeCadastrosChanges,
 } from "@/lib/cadastros-logisticos-service"
-import { extractTerminalFromDeliveryRule, isUltrafertil } from "@/lib/terminal-utils"
+import { extractTerminalFromDeliveryRule } from "@/lib/terminal-utils"
 
 import {
   BarChart,
@@ -85,7 +85,6 @@ export interface DashboardFileItem {
   xmlContent?: string
   xmlGerado?: string
   rawSnippet?: string
-  pdfTextoOriginal?: string
   nfeData: NFEData | null
   parsedData?: ParsedNFeData | null
 }
@@ -208,14 +207,13 @@ export function getNoteDetails(
   let transbordo = nfe?.transbordo || parsed?.transbordo || "Não Informado"
   let retirada = parsed?.retirada || ""
 
-  // A auditoria deve considerar também o texto extraído do PDF/DANFE.
-  // Em muitos documentos o TEAG aparece apenas em "Informações Complementares" do PDF.
-  const pdfText = f.pdfTextoOriginal || f.parsedData?.rawSnippet || ""
-  const fullDocText = `${infCpl} ${pdfText} ${rawXml} ${f.rawSnippet || ""}`
-  const terminalPorRegra = extractTerminalFromDeliveryRule(fullDocText)
-  if (terminalPorRegra) {
-    // Regra determinística: o terminal é exclusivamente as 15 palavras após o marcador.
-    terminal = terminalPorRegra
+  const fullDocText = `${infCpl} ${rawXml} ${f.rawSnippet || ""}`
+  // Extração 100% mecânica pelas até 15 palavras imediatamente após "alfandegado", "afadegado", "entrega:" e marcadores
+  if (terminal === "Não Informado" || !terminal) {
+    const mechTerminal = extractTerminalFromDeliveryRule(fullDocText)
+    if (mechTerminal) {
+      terminal = mechTerminal
+    }
   }
 
   // Se o terminal foi indevidamente extraído como UBERABA / TIUB, corrigir para transbordo
@@ -231,7 +229,7 @@ export function getNoteDetails(
     terminal = "Não Informado"
   }
 
-  // Transbordo NUNCA pode ser terminal portuário (TEAG, TEG, TES, CLI, ULTRAFERTIL, Santos, Guarujá)
+  // Se o transbordo for inválido e o terminal estiver vazio, buscar terminal mecanicamente
   const isPortTerminalName = (val: string): boolean => {
     const u = (val || "").toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     return /\bTEAG\b|\bTEG\b|\bTES\b|\bTGG\b|\bCLI\b|\bTIPLAM\b|\bDP WORLD\b|\bECOPORTO\b|\bBTP\b|\bTERMINAL 124\b|\bT-124\b|\bT124\b|\bULTRAFERTIL\b|\bULTRAF[EÉ]RTIL\b|TERMINAL.*EXPORTA[CÇ]|GUARUJ[AÁ]|SANTOS/i.test(u)
@@ -239,7 +237,10 @@ export function getNoteDetails(
 
   if (isPortTerminalName(transbordo)) {
     if (terminal === "Não Informado" || !terminal) {
-      terminal = transbordo
+      const mechTerminal = extractTerminalFromDeliveryRule(fullDocText)
+      if (mechTerminal) {
+        terminal = mechTerminal
+      }
     }
     transbordo = "Não Informado"
   }
@@ -269,7 +270,6 @@ export function getNoteDetails(
     else if (/COMPANHIA\s*AUXILIAR|CIA\s*AUXILIAR/i.test(fullContext)) transbordo = "COMPANHIA AUXILIAR DE ARMAZENS GERAIS"
   }
 
-
   // Identificador da nota para vincular com overrides da IA
   const noteKey = chave && chave !== "Sem Chave" ? chave : (f.fileName || `${numero}_${serie}`)
   const override = overrides
@@ -280,11 +280,7 @@ export function getNoteDetails(
   const aiCamposAjustados: string[] = []
 
   if (override) {
-    if (override.terminal && override.terminal !== terminal) {
-      terminal = override.terminal
-      isAIAjustado = true
-      aiCamposAjustados.push("Terminal")
-    }
+    // A busca por terminal é 100% mecânica: a IA NÃO sobrescreve o terminal
     if (override.transbordo && override.transbordo !== transbordo) {
       transbordo = override.transbordo
       isAIAjustado = true
@@ -850,9 +846,8 @@ export function Dashboard({ files }: DashboardProps) {
           produto: details.produto,
           retirada: details.retirada,
           infCpl: details.infCpl,
-  rawSnippet: f.rawSnippet || details.infCpl,
-  pdfTextoOriginal: f.pdfTextoOriginal || f.parsedData?.rawSnippet || '',
-  xmlContent: f.xmlContent || f.xmlGerado,
+          rawSnippet: f.rawSnippet || details.infCpl,
+          xmlContent: f.xmlContent || f.xmlGerado,
         })
       }
     })
@@ -878,7 +873,6 @@ export function Dashboard({ files }: DashboardProps) {
         if (res.camposAjustados && res.camposAjustados.length > 0) {
           adjustedCount++
           newOverrides[res.id] = {
-            terminal: res.terminalCorrigido,
             transbordo: res.transbordoCorrigido,
             destNome: res.destinatarioCorrigido,
             retirada: res.retiradaCorrigida,

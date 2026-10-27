@@ -23,7 +23,7 @@ import {
   formatTimeBR,
 } from '@/lib/firebase-realtime'
 import { matchTransbordoFromText } from '@/lib/cadastros-logisticos-service'
-import { extractTerminalFromDeliveryRule, isUltrafertil } from '@/lib/terminal-utils'
+import { getExplicitGuarujaTerminalCode, isUltrafertil, extractTerminalFromDeliveryRule } from '@/lib/terminal-utils'
 import { ref, push, onValue, off, query, limitToLast, remove, get } from 'firebase/database'
 
 export interface ConferenceNoteSummary {
@@ -280,9 +280,11 @@ export function buildConferenceDashboardSnapshot(
     const retirada = parsed?.retirada || ''
     const fullDocText = `${infCpl} ${rawXml} ${f.rawSnippet || ''}`
 
-    const terminalPorRegra = extractTerminalFromDeliveryRule(fullDocText)
-    if (terminalPorRegra) {
-      terminal = terminalPorRegra
+    if (terminal === 'Não Informado' || !terminal) {
+      const deliveryRuleTerminal = extractTerminalFromDeliveryRule(fullDocText)
+      if (deliveryRuleTerminal) {
+        terminal = deliveryRuleTerminal
+      }
     }
 
     // Se o terminal capturado foi UBERABA / TIUB, corrigir para transbordo
@@ -298,32 +300,15 @@ export function buildConferenceDashboardSnapshot(
       terminal = 'Não Informado'
     }
 
-    // Transbordo NUNCA pode ser terminal portuário (TEAG, TEG, TES, CLI, ULTRAFERTIL, TGG, Santos, Guarujá)
+    // Se o transbordo for inválido e o terminal estiver vazio, buscar mecanicamente
     if (/^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|\bULTRAFERTIL\b|\bULTRAF[EÉ]RTIL\b|SANTOS|GUARUJ[AÁ]/i.test(transbordo)) {
       if (terminal === 'Não Informado' || !terminal) {
-        terminal = transbordo
+        const deliveryRuleTerminal = extractTerminalFromDeliveryRule(fullDocText)
+        if (deliveryRuleTerminal) {
+          terminal = deliveryRuleTerminal
+        }
       }
       transbordo = 'Não Informado'
-    }
-
-    // Se o terminal foi rotulado como TEG mas a nota tem dados explícitos de TEAG
-    if (terminal.includes('TEG') && !terminal.includes('TEAG') && !isUltrafertil(fullDocText)) {
-      if (/04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(`${infCpl} ${rawXml}`)) {
-        terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-      }
-    }
-
-    // Detecção prioritária de TEAG
-    if (terminal === 'Não Informado' || !terminal) {
-      if (isUltrafertil(fullDocText)) {
-        terminal = 'ULTRAFERTIL'
-      } else if (
-        /\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO/i.test(`${infCpl} ${rawXml}`)
-      ) {
-        terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-      } else if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(`${infCpl} ${rawXml}`)) {
-        terminal = 'TES - TERMINAL EXPORTADOR DE SANTOS'
-      }
     }
 
     // Validação prioritária de transbordos cadastrados (Pradópolis, Pederneiras, Fernandópolis, etc.)
@@ -352,7 +337,7 @@ export function buildConferenceDashboardSnapshot(
 
     if (logisticsOverridesInput && chave && logisticsOverridesInput[chave]) {
       const ov = logisticsOverridesInput[chave]
-      if (ov.terminal) terminal = ov.terminal
+      // Terminal é 100% mecânico e não é sobrescrito pela IA
       if (ov.transbordo) transbordo = ov.transbordo
       if (ov.destinatario) destNome = ov.destinatario
     }
@@ -383,9 +368,230 @@ export function buildConferenceDashboardSnapshot(
     let vagoes: ExtractedVagao[] = extractVagoesFromDocument({
       text: `${f.fileName || ''} ${f.rawSnippet || ''}`,
       xmlContent: f.xmlContent || f.xmlGerado,
+      placa,
       rawSnippet: f.rawSnippet,
-      pdfTextoOriginal: f.pdfTextoOriginal || parsed?.rawSnippet || f.rawSnippet || '',
+      infCpl,
     })
+
+    const folderName = extractFolderName(f)
+    if (vagoes.length === 0 && folderName) {
+      const vagoesFromFolder = extractVagoesFromDocument({ text: folderName })
+      if (vagoesFromFolder.length > 0) {
+        vagoes = vagoesFromFolder
+      } else {
+        vagoes = [
+          {
+            identificador: folderName,
+            serie: 'PASTA',
+            numero: folderName,
+            origemDoc: 'PASTA_INPUT',
+          },
+        ]
+      }
+    }
+
+    const primaryVagao = vagoes.length > 0 ? vagoes[0].identificador : ''
+    const allVagoesStr = vagoes.map((v) => v.identificador).join(', ')
+
+    // Validação Chave x CNPJ Destinatário
+    let isDivergentCNPJ = false
+    let confrontoChaveXDest: 'IGUAIS' | 'DIVERGENTES' | 'NÃO INFORMADO' = 'NÃO INFORMADO'
+    if (chave && emitCNPJ && rawDestCnpj) {
+      const vCNPJ = verifyChaveCNPJ(chave, emitCNPJ, rawDestCnpj)
+      confrontoChaveXDest = vCNPJ.confrontoChaveXDest
+      if (confrontoChaveXDest === 'DIVERGENTES') {
+        isDivergentCNPJ = true
+        totalDivergenciasCNPJ++
+      }
+    }
+
+    const hasMissingLogistics =
+      terminal === 'Não Informado' ||
+      transbordo === 'Não Informado' ||
+      destNome === 'Não informado' ||
+      destNome === 'DESTINATÁRIO NÃO IDENTIFICADO' ||
+      destNome.startsWith('DESTINATÁRIO (')
+
+    if (terminal === 'Não Informado') missingTerminalCount++
+    if (transbordo === 'Não Informado') missingTransbordoCount++
+    if (
+      destNome === 'Não informado' ||
+      destNome === 'DESTINATÁRIO NÃO IDENTIFICADO' ||
+      destNome.startsWith('DESTINATÁRIO (')
+    ) {
+      missingDestinatarioCount++
+    }
+    if (hasMissingLogistics) {
+      totalNotesWithMissingData++
+    }
+
+    // Vagões por Transbordo
+    const transKey = transbordo
+    if (vagoes && vagoes.length > 0) {
+      if (!transbordoVagoesMap.has(transKey)) {
+        transbordoVagoesMap.set(transKey, new Map())
+      }
+      const vagoesMapForTransbordo = transbordoVagoesMap.get(transKey)!
+      const processedVagKeysInNote = new Set<string>()
+
+      vagoes.forEach((vag) => {
+        if (vag.origemDoc === 'PASTA_INPUT') {
+          hasFolderDerivedWagons = true
+        } else {
+          hasDocExtractedWagons = true
+        }
+
+        const numKey = getVagaoNumeralKey(vag.numero || vag.identificador)
+        if (!numKey || processedVagKeysInNote.has(numKey)) return
+        processedVagKeysInNote.add(numKey)
+        allUniqueVagoesGlobal.add(numKey)
+
+        if (!vagoesMapForTransbordo.has(numKey)) {
+          vagoesMapForTransbordo.set(numKey, {
+            identificador: vag.identificador,
+            serie: vag.serie,
+            numero: vag.numero,
+            origemDoc: vag.origemDoc,
+            totalNotas: 0,
+            pesoTotal: 0,
+            valorTotal: 0,
+            notas: [],
+          })
+        }
+        const entry = vagoesMapForTransbordo.get(numKey)!
+        if (vag.serie && vag.serie !== 'PASTA' && (!entry.serie || entry.serie.length < vag.serie.length)) {
+          entry.identificador = vag.identificador
+          entry.serie = vag.serie
+          entry.origemDoc = vag.origemDoc
+        }
+        entry.totalNotas += 1
+        entry.pesoTotal += pesoNum
+        entry.valorTotal += valorNum
+        if (numero && numero !== 'S/N' && !entry.notas.includes(numero)) {
+          entry.notas.push(numero)
+        }
+      })
+    }
+
+    // Destinatário
+    const destGroupKey = destCNPJ ? `${destNome}###${destCNPJ}` : destNome
+    destinatarioGroupCounts[destGroupKey] = (destinatarioGroupCounts[destGroupKey] || 0) + 1
+    destinatarioGroupMeta[destGroupKey] = { destNome, destCNPJ }
+    if (!destNomeToCnpjsMap.has(destNome)) {
+      destNomeToCnpjsMap.set(destNome, new Set())
+    }
+    if (destCNPJ) {
+      destNomeToCnpjsMap.get(destNome)!.add(destCNPJ)
+    }
+
+    // Terminal
+    terminalCount[terminal] = (terminalCount[terminal] || 0) + 1
+
+    // Produto
+    produtoCount[produto] = (produtoCount[produto] || 0) + 1
+
+    // Transbordo
+    transbordoCount[transKey] = (transbordoCount[transKey] || 0) + 1
+
+    notesList.push({
+      fileName: f.fileName || 'Nota Fiscal',
+      numero,
+      serie,
+      chave,
+      dataEmissao,
+      emitNome,
+      emitCNPJ,
+      destNome,
+      destCNPJ,
+      produto,
+      terminal,
+      transbordo,
+      retirada,
+      valorNum,
+      valorFormatted:
+        valorNum > 0
+          ? `R$ ${valorNum.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : '-',
+      pesoNum,
+      pesoFormatted: pesoNum > 0 ? `${pesoNum.toLocaleString('pt-BR')} kg` : '-',
+      vagoes: vagoes.map((v) => ({
+        identificador: v.identificador,
+        serie: v.serie,
+        numero: v.numero,
+        origemDoc: v.origemDoc,
+      })),
+      primaryVagao,
+      allVagoesStr,
+      placa,
+      infCpl: infCpl.substring(0, 300),
+      confrontoChaveXDest,
+      isDivergentCNPJ,
+      hasMissingLogistics,
+    })
+  })
+
+  // Monta dados dos gráficos
+  const destCnpjColorIndexMap = new Map<string, number>()
+  destNomeToCnpjsMap.forEach((cnpjs, nome) => {
+    Array.from(cnpjs).forEach((cnpj, idx) => {
+      destCnpjColorIndexMap.set(`${nome}###${cnpj}`, idx)
+    })
+  })
+
+  const destinatariosChartData: ChartCategoryItem[] = Object.entries(destinatarioGroupCounts)
+    .map(([groupKey, value]) => {
+      const meta = destinatarioGroupMeta[groupKey] || { destNome: groupKey, destCNPJ: '' }
+      const { destNome, destCNPJ } = meta
+      const cnpjsForThisNome = destNomeToCnpjsMap.get(destNome)
+      const hasMultipleBranches = !!(cnpjsForThisNome && cnpjsForThisNome.size > 1)
+      const isMissing =
+        destNome === 'Não Informado' ||
+        destNome === 'Não informado' ||
+        destNome === 'DESTINATÁRIO NÃO IDENTIFICADO' ||
+        destNome.startsWith('DESTINATÁRIO (')
+
+      let displayName = destNome
+      if (hasMultipleBranches && destCNPJ) {
+        const filialShort = extractCNPJFilial(destCNPJ)
+        const baseTrunc = destNome.length > 20 ? destNome.substring(0, 18) + '...' : destNome
+        displayName = `${baseTrunc} (${filialShort})`
+      } else if (destNome.length > 30) {
+        displayName = destNome.substring(0, 28) + '...'
+      }
+
+      let barColor = '#2563eb'
+      if (isMissing) {
+        barColor = '#f59e0b'
+      } else if (hasMultipleBranches && destCNPJ) {
+        const colorIdx = destCnpjColorIndexMap.get(groupKey) ?? 0
+        barColor = DEST_BRANCH_COLORS[colorIdx % DEST_BRANCH_COLORS.length]
+      }
+
+      return {
+        name: displayName,
+        fullName: destCNPJ ? `${destNome} (CNPJ: ${destCNPJ})` : destNome,
+        destNome,
+        destCNPJ,
+        value,
+        color: barColor,
+        hasMultipleBranches,
+        isMissing,
+      }
+    })
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 12)
+
+  const toChartData = (counts: Record<string, number>): ChartCategoryItem[] =>
+    Object.entries(counts)
+      .map(([name, value]) => ({
+        name: name.length > 30 ? name.substring(0, 28) + '...' : name,
+        fullName: name,
+        value,
+        isMissing:
+          name === 'Não Informado' ||
+          name === 'Não informado' ||
+          name === 'TRANSBORDO NÃO INFORMADO',
+      }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 12)
 
@@ -482,7 +688,6 @@ export function buildConferenceDashboardSnapshot(
     vagoesPorTransbordo,
     notes: notesList,
   }
-  })
 }
 
 // -------------------------------------------------------------

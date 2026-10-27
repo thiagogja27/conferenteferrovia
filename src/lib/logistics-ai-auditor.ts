@@ -1,5 +1,4 @@
 import { sanitizeDestinatarioNome } from './destinatario-utils'
-import { extractTerminalFromDeliveryRule, isUltrafertil } from './terminal-utils'
 
 export interface LogisticsAuditInputItem {
   id: string
@@ -15,7 +14,6 @@ export interface LogisticsAuditInputItem {
   retirada?: string
   infCpl?: string
   rawSnippet?: string
-  pdfTextoOriginal?: string
   xmlContent?: string
 }
 
@@ -84,96 +82,15 @@ function isNaoInformado(val?: string | null): boolean {
 }
 
 export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): LogisticsAuditResultItem {
-  const fullText = `${item.infCpl || ''} ${item.pdfTextoOriginal || ''} ${item.rawSnippet || ''} ${item.xmlContent || ''} ${item.emitNome || ''} ${item.destNome || ''}`.toUpperCase()
+  const fullText = `${item.infCpl || ''} ${item.rawSnippet || ''} ${item.xmlContent || ''} ${item.emitNome || ''} ${item.destNome || ''}`.toUpperCase()
   const camposAjustados: Array<'terminal' | 'transbordo' | 'destinatario' | 'retirada' | 'produto'> = []
   
-  let terminalCorrigido = item.terminal
+  // Terminal é 100% mecânico e não deve ser alterado pela auditoria heurística ou IA
+  const terminalCorrigido = item.terminal
   let transbordoCorrigido = item.transbordo
   let destinatarioCorrigido = item.destNome
   let retiradaCorrigida = item.retirada
   let produtoCorrigido = item.produto
-  const terminalPorRegra = extractTerminalFromDeliveryRule(
-    `${item.infCpl || ''} ${item.pdfTextoOriginal || ''} ${item.rawSnippet || ''}`,
-  )
-  if (terminalPorRegra) {
-    terminalCorrigido = terminalPorRegra
-    if (terminalCorrigido !== item.terminal) camposAjustados.push('terminal')
-  }
-
-  // Se o terminal foi indevidamente gravado como um transbordo (ex: UBERABA, TIUB, ATT ARMAZENAGEM, FERNANDOPOLIS):
-  if (/UBERABA|TIUB/i.test(item.terminal || '')) {
-    if (isNaoInformado(item.transbordo) || item.transbordo === item.terminal) {
-      transbordoCorrigido = 'UBERABA'
-      camposAjustados.push('transbordo')
-    }
-    terminalCorrigido = 'Não Informado'
-  } else if (/ATT\s*ARMAZENAGEM|FERNAND[OÓ]POLIS/i.test(item.terminal || '')) {
-    if (isNaoInformado(item.transbordo) || item.transbordo === item.terminal) {
-      transbordoCorrigido = 'FERNANDOPOLIS'
-      camposAjustados.push('transbordo')
-    }
-    terminalCorrigido = 'Não Informado'
-  }
-
-  // Se o transbordo foi indevidamente rotulado como terminal portuário (ex: TEAG, TEG, TES, CLI, ULTRAFERTIL, TGG, SANTOS, GUARUJÁ):
-  if (/^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|\bULTRAFERTIL\b|\bULTRAF[EÉ]RTIL\b|SANTOS|GUARUJ[AÁ]/i.test(item.transbordo || '')) {
-  if (!terminalPorRegra && (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal))) {
-      terminalCorrigido = item.transbordo
-      camposAjustados.push('terminal')
-    }
-    transbordoCorrigido = undefined
-  }
-
-  // 1. Auditoria e Identificação de Terminal de Entrega
-  if (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal)) {
-    if (isUltrafertil(fullText)) {
-      terminalCorrigido = 'ULTRAFERTIL'
-      camposAjustados.push('terminal')
-    } else if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(fullText)) {
-      terminalCorrigido = 'TES - TERMINAL EXPORTADOR DE SANTOS'
-      camposAjustados.push('terminal')
-    } else if (/\bTEG\b|TERMINAL.*EXPORTADOR.*GUARUJ[AÁ]|TERM.*EXP.*GUARUJA/i.test(fullText)) {
-      terminalCorrigido = 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
-      camposAjustados.push('terminal')
-    } else if (/\bCLI\b|CORREDOR.*LOG[IÍ]STIC.*INTEGRAD/i.test(fullText)) {
-      terminalCorrigido = 'CLI - CORREDOR LOGÍSTICA INTEGRADA'
-      camposAjustados.push('terminal')
-    } else if (/\bTGG\b|TERMINAL.*GR[AÃ]OS.*GUARUJ[AÁ]/i.test(fullText)) {
-      terminalCorrigido = 'TGG - TERMINAL DE GRAOS DO GUARUJA'
-      camposAjustados.push('terminal')
-    } else if (/\bT-124\b|\bT124\b|TERMINAL.*124/i.test(fullText)) {
-      terminalCorrigido = 'TERMINAL 124'
-      camposAjustados.push('terminal')
-    } else if (/SANTOS BRASIL/i.test(fullText)) {
-      terminalCorrigido = 'SANTOS BRASIL'
-      camposAjustados.push('terminal')
-    } else if (/DP WORLD/i.test(fullText)) {
-      terminalCorrigido = 'DP WORLD SANTOS'
-      camposAjustados.push('terminal')
-    } else if (/ECOPORTO/i.test(fullText)) {
-      terminalCorrigido = 'ECOPORTO SANTOS'
-      camposAjustados.push('terminal')
-    } else if (/BTP|BRASIL TERMINAL PORTU/i.test(fullText)) {
-      terminalCorrigido = 'BTP - BRASIL TERMINAL PORTUARIO'
-      camposAjustados.push('terminal')
-    } else if (/TIPLAM/i.test(fullText)) {
-      terminalCorrigido = 'TIPLAM - TERMINAL INTEGRADO'
-      camposAjustados.push('terminal')
-    } else if (/TERMINAL RUMO|RUMO MALHA/i.test(fullText)) {
-      terminalCorrigido = 'TERMINAL RUMO'
-      camposAjustados.push('terminal')
-    } else if (/TERMINAL VLI|VLI/i.test(fullText)) {
-      terminalCorrigido = 'TERMINAL VLI'
-      camposAjustados.push('terminal')
-    } else if (/GUARUJ[AÁ]/i.test(fullText)) {
-      if (/ACUCAR|AÇÚCAR/i.test(fullText)) {
-        terminalCorrigido = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-      } else {
-        terminalCorrigido = 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
-      }
-      camposAjustados.push('terminal')
-    }
-  }
 
   // 2. Auditoria e Identificação de Transbordo (Validação prioritária de Pradópolis, Pederneiras e outros cadastrados)
   const isTransbordoInvalidoOuVazio =

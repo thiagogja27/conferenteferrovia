@@ -41,16 +41,24 @@ export async function prioritizeSavedRecipient<T extends {
       parsedData.rawSnippet
     ))
 
+  const hasExtractedCnpj = Boolean(
+    parsedData.destCNPJ && parsedData.destCNPJ.replace(/\D/g, '').length === 14
+  )
+
   const updatedData = recipient
     ? {
         ...parsedData,
-        destNome: recipient.nome,
-        destCNPJ: recipient.cnpj ? formatCNPJStr(recipient.cnpj) : '',
+        destNome: recipient.nome || parsedData.destNome,
+        destCNPJ: hasExtractedCnpj
+          ? formatCNPJStr(parsedData.destCNPJ)
+          : recipient.cnpj
+          ? formatCNPJStr(recipient.cnpj)
+          : '',
       }
     : {
         ...parsedData,
-        destNome: 'Não informado',
-        destCNPJ: '',
+        destNome: parsedData.destNome || 'Não informado',
+        destCNPJ: parsedData.destCNPJ || '',
       }
 
   return {
