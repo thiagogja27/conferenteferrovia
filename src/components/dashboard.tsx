@@ -249,13 +249,6 @@ export function getNoteDetails(
     transbordo = "Não Informado"
   }
 
-  // Se o terminal foi rotulado como TEG mas a nota tem dados explícitos de TEAG
-  if (terminal.includes('TEG') && !terminal.includes('TEAG') && !isUltrafertil(fullDocText)) {
-    if (/04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(infCpl)) {
-      terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
-    }
-  }
-
   if (transbordo === "Não Informado" || !transbordo || isPortTerminalName(transbordo)) {
     const fullContext = `${infCpl} ${rawXml} ${f.rawSnippet || ""} ${nfe?.emitente?.cidade || ""} ${nfe?.emitente?.nome || ""} ${parsed?.emitNome || ""}`.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     const catalogTransMatch = matchTransbordoFromText(fullContext)
@@ -284,13 +277,11 @@ export function getNoteDetails(
   if (terminal === "Não Informado" || !terminal) {
     if (isUltrafertil(fullDocText)) {
       terminal = "ULTRAFERTIL"
-    } else if (
-      /\bTEAG\b|TERM.*EXPORTACAO.*ACUCAR|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO/i.test(infCpl)
-    ) {
+    } else if (getExplicitGuarujaTerminalCode(fullDocText) === 'TEAG') {
       terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
     } else if (/TES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(infCpl)) {
       terminal = "TES - TERMINAL EXPORTADOR DE SANTOS"
-    } else if (/TEG\b|TERMINAL.*EXPORTADORES.*GRANDE/i.test(infCpl)) {
+    } else if (getExplicitGuarujaTerminalCode(fullDocText) === 'TEG') {
       terminal = "TEG - TERMINAL DE EXPORTAÇÃO DO GUARUJÁ"
     } else if (/CLI|TERMARES/i.test(infCpl)) {
       terminal = "CLI - CORREDOR LOGÍSTICA INTEGRADA"

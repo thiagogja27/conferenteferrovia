@@ -129,22 +129,12 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
     transbordoCorrigido = undefined
   }
 
-  // Se o terminal foi rotulado como TEG mas a nota tem dados explícitos do TEAG
-  if (item.terminal && item.terminal.includes('TEG') && !item.terminal.includes('TEAG') && !isUltrafertil(fullText)) {
-    if (/04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO|335\.?127\.?598\.?119|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR/i.test(fullText)) {
-      terminalCorrigido = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-      camposAjustados.push('terminal')
-    }
-  }
-
   // 1. Auditoria e Identificação de Terminal de Entrega
   if (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal)) {
     if (isUltrafertil(fullText)) {
       terminalCorrigido = 'ULTRAFERTIL'
       camposAjustados.push('terminal')
-    } else if (
-      /\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|335\.?127\.?598\.?119|BENTO\s*PEDRO\s*DA\s*COSTA/i.test(fullText)
-    ) {
+    } else if (getExplicitGuarujaTerminalCode(fullText) === 'TEAG') {
       terminalCorrigido = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
       camposAjustados.push('terminal')
     } else if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(fullText)) {

@@ -69,7 +69,7 @@ export function extractTerminalFromDeliveryRule(text: string): string | null {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-  if (/TERMINAL.*(?:EXPORTACAO|EXP).*ACUCAR|TERMINAL DE ACUCAR DO GUARUJA|BENTO PEDRO/i.test(normalizedVal)) {
+  if (/TERMINAL.*(?:EXPORTACAO|EXP).*ACUCAR|TERMINAL DE ACUCAR DO GUARUJA/i.test(normalizedVal)) {
     return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
   }
   if (/TERMINAL.*EXPORTADOR.*GUARUJA|TERMINAL EXPORTADOR DO GUARUJA/i.test(normalizedVal)) {
