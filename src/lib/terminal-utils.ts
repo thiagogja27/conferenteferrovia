@@ -30,6 +30,8 @@ export function extractTerminalFromDeliveryRule(text: string): string | null {
   const match = text.match(regex)
   if (!match || !match[1]) return null
 
+  // O marcador é apenas o ponto de partida. A identificação usa somente as
+  // 15 palavras imediatamente posteriores, sem procurar siglas ou CNPJ.
   let chunk = match[1].trim()
   chunk = chunk.replace(/^(?:\b(?:EM|DE|NO|NA|SERA|SERÁ|RECINTO|ALFANDEGADO|ALFADEGADO|EMPRESA)\b\s*[:=-]?\s*)+/i, '')
   chunk = chunk.replace(/^(?:NOME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|ME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|RAZ[ÃA]O\s*SOCIAL|NOME|EMPRESA)\s*[:=-]?\s*/i, '').trim()
@@ -110,7 +112,7 @@ export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCod
   while ((marker = deliveryMarker.exec(text)) !== null) {
     // Limita a leitura ao campo de entrega; uma janela longa pode capturar
     // TEAG/TEG em observações, destinatário ou transbordo e gerar falso positivo.
-    const remainder = text.slice(marker.index, marker.index + 360)
+    const remainder = text.slice(marker.index + marker[0].length, marker.index + marker[0].length + 360)
     const nextSection = remainder.search(
       /(?:DESTINAT[AÁ]RIO|REMETENTE|TRANSPORTADOR|DADOS ADICIONAIS|OBSERVA[CÇ][OÕ]ES|TRANSBORDO|VOLUME|CARGA|FRETE)\s*[:=-]?/i,
     )
@@ -131,18 +133,17 @@ export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCod
     .replace(/\s+/g, ' ')
     .trim()
 
+  // A decisão vem exclusivamente do nome descritivo capturado após o
+  // marcador de entrega. Siglas isoladas, CNPJ e conciliação externa não
+  // podem definir o terminal.
   if (
-    /\bTEAG\b/.test(normalized) ||
     /TERMINAL\s+(?:DE\s+)?(?:EXPORT(?:ACAO)?|EXP)\s+DE?\s*ACUCAR/.test(normalized) ||
-    /TERMINAL\s+DE\s+ACUCAR\s+DO\s+GUARUJA/.test(normalized) ||
-    /04721589000178|BENTO\s+PEDRO\s+DA\s+COSTA/.test(normalized)
+    /TERMINAL\s+DE\s+ACUCAR\s+DO\s+GUARUJA/.test(normalized)
   ) return 'TEAG'
 
   if (
-    /\bTEG\b/.test(normalized) ||
     /TERMINAL\s+EXPORTADOR\s+(?:DO\s+)?GUARUJA/.test(normalized) ||
-    /TERM\s+EXP\s+GUARUJA/.test(normalized) ||
-    /02836436000120/.test(normalized)
+    /TERM\s+EXP\s+GUARUJA/.test(normalized)
   ) return 'TEG'
 
   return null
