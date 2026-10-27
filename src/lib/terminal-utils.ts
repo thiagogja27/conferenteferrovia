@@ -59,20 +59,27 @@ export function extractTerminalFromDeliveryRule(text: string): string | null {
     return 'ULTRAFERTIL'
   }
 
-  // Identificação de terminais específicos se presentes no texto extraído da seção de entrega
-  if (/\bTEAG\b|TERMINAL.*EXPORTA[CÇ][AÃ]O.*A[CÇ][UÚ]CAR|04\.?721\.?589\/?0001-?78|BENTO\s*PEDRO/i.test(val)) {
+  // O terminal só pode ser identificado pelo texto descritivo capturado após o marcador.
+  // Não usar siglas, CNPJ ou conciliação externa como atalho.
+  const normalizedVal = val
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (/TERMINAL.*(?:EXPORTACAO|EXP).*ACUCAR|TERMINAL DE ACUCAR DO GUARUJA|BENTO PEDRO/i.test(normalizedVal)) {
     return 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
   }
-  if (/\bTEG\b|TERMINAL.*EXPORTADOR.*GUARUJ[AÁ]|TERM.*EXP.*GUARUJA/i.test(val)) {
+  if (/TERMINAL.*EXPORTADOR.*GUARUJA|TERMINAL EXPORTADOR DO GUARUJA/i.test(normalizedVal)) {
     return 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
   }
-  if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS/i.test(val)) {
+  if (/TERMINAL.*EXPORTADOR.*SANTOS/i.test(normalizedVal)) {
     return 'TES - TERMINAL EXPORTADOR DE SANTOS'
   }
-  if (/\bTGG\b|TERMINAL.*GR[AÃ]OS.*GUARUJ[AÁ]/i.test(val)) {
+  if (/TERMINAL.*GRAOS.*GUARUJA/i.test(normalizedVal)) {
     return 'TGG - TERMINAL DE GRAOS DO GUARUJA'
   }
-  if (/\bCLI\b|CORREDOR.*LOG[IÍ]STIC/i.test(val)) {
+  if (/CORREDOR.*LOGIST/i.test(normalizedVal)) {
     return 'CLI - CORREDOR LOGÍSTICA INTEGRADA'
   }
 
@@ -107,7 +114,9 @@ export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCod
     const nextSection = remainder.search(
       /(?:DESTINAT[AÁ]RIO|REMETENTE|TRANSPORTADOR|DADOS ADICIONAIS|OBSERVA[CÇ][OÕ]ES|TRANSBORDO|VOLUME|CARGA|FRETE)\s*[:=-]?/i,
     )
-    contexts.push(nextSection > 0 ? remainder.slice(0, nextSection) : remainder)
+    const deliveryText = nextSection > 0 ? remainder.slice(0, nextSection) : remainder
+    // A decisão considera exclusivamente as 15 palavras posteriores ao marcador.
+    contexts.push(deliveryText.split(/\s+/).filter(Boolean).slice(0, 15).join(' '))
   }
 
   if (contexts.length === 0) return null
