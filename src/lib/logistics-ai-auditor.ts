@@ -1,5 +1,5 @@
 import { sanitizeDestinatarioNome } from './destinatario-utils'
-import { getExplicitGuarujaTerminalCode, isUltrafertil } from './terminal-utils'
+import { extractTerminalFromDeliveryRule, isUltrafertil } from './terminal-utils'
 
 export interface LogisticsAuditInputItem {
   id: string
@@ -92,7 +92,13 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
   let destinatarioCorrigido = item.destNome
   let retiradaCorrigida = item.retirada
   let produtoCorrigido = item.produto
-  if (isUltrafertil(fullText) || isUltrafertil(item.terminal || '')) {
+  const terminalPorRegra = extractTerminalFromDeliveryRule(
+    `${item.infCpl || ''} ${item.pdfTextoOriginal || ''} ${item.rawSnippet || ''}`,
+  )
+  if (terminalPorRegra) {
+    terminalCorrigido = terminalPorRegra
+    if (terminalCorrigido !== item.terminal) camposAjustados.push('terminal')
+  } else if (isUltrafertil(fullText) || isUltrafertil(item.terminal || '')) {
     terminalCorrigido = 'ULTRAFERTIL'
     if (terminalCorrigido !== item.terminal) camposAjustados.push('terminal')
   } else {
@@ -122,7 +128,7 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
 
   // Se o transbordo foi indevidamente rotulado como terminal portuário (ex: TEAG, TEG, TES, CLI, ULTRAFERTIL, TGG, SANTOS, GUARUJÁ):
   if (/^TEAG\b|^TEG\b|^TES\b|^CLI\b|^TGG\b|^TIPLAM\b|^BTP\b|\bULTRAFERTIL\b|\bULTRAF[EÉ]RTIL\b|SANTOS|GUARUJ[AÁ]/i.test(item.transbordo || '')) {
-    if (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal)) {
+  if (!terminalPorRegra && (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal))) {
       terminalCorrigido = item.transbordo
       camposAjustados.push('terminal')
     }

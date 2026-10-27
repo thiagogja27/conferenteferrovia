@@ -7,6 +7,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { parseDanfeText, parseMultiDanfePdf } from "./src/lib/pdf-text-parser";
 import { auditarHeuristicaLocal } from "./src/lib/weight-ai-auditor";
 import { auditarLogisticaHeuristicaLocal } from "./src/lib/logistics-ai-auditor";
+import { extractTerminalFromDeliveryRule } from "./src/lib/terminal-utils";
 import * as XLSX from "xlsx";
 import { processRumoExtractedText, generateRumoWorkbook } from "./src/lib/rumo-pdf-parser";
 
@@ -649,7 +650,12 @@ ${JSON.stringify(promptPayload, null, 2)}`,
       const aiResult = allAiParsedResults.find((r: any) => r.id === it.id);
       if (aiResult) {
         const camposAjustados: Array<'terminal' | 'transbordo' | 'destinatario' | 'retirada' | 'produto'> = [];
-        if (aiResult.terminalCorrigido && (!it.terminal || /N[AÃ]O\s*INFORMADO/i.test(it.terminal))) {
+        // O terminal de entrega nunca é decidido pela IA. A única fonte aceita
+        // é a janela mecânica das 15 palavras após o marcador de entrega.
+        const terminalPorRegra = extractTerminalFromDeliveryRule(
+          `${it.infCpl || ''} ${it.pdfTextoOriginal || ''} ${it.rawSnippet || ''}`,
+        );
+        if (terminalPorRegra && terminalPorRegra !== it.terminal) {
           camposAjustados.push('terminal');
         }
         if (aiResult.transbordoCorrigido && (!it.transbordo || /N[AÃ]O\s*INFORMADO/i.test(it.transbordo))) {
@@ -666,7 +672,8 @@ ${JSON.stringify(promptPayload, null, 2)}`,
         return {
           id: it.id,
           numero: it.numero,
-          terminalCorrigido: aiResult.terminalCorrigido || it.terminal,
+          // Ignora completamente o terminal retornado pela IA.
+          terminalCorrigido: terminalPorRegra || it.terminal,
           transbordoCorrigido: aiResult.transbordoCorrigido || it.transbordo,
           destinatarioCorrigido: aiResult.destinatarioCorrigido || it.destNome,
           retiradaCorrigida: aiResult.retiradaCorrigida || it.retirada,
