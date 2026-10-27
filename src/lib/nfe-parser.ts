@@ -1,5 +1,5 @@
 import { matchTransbordoFromText } from './cadastros-logisticos-service'
-import { getExplicitGuarujaTerminalCode, isUltrafertil } from './terminal-utils'
+import { getExplicitGuarujaTerminalCode, isUltrafertil, extractTerminalFromDeliveryRule } from './terminal-utils'
 
 export interface CNPJVerificationResult {
   chaveCnpj: string
@@ -776,6 +776,10 @@ function extractTerminalEntrega(infComplementares: string, doc?: Document): stri
   }
 
   if (!infComplementares) return ""
+
+  // Regra única: terminal = as 15 palavras após o marcador de entrega.
+  const terminalPorRegra = extractTerminalFromDeliveryRule(infComplementares)
+  return terminalPorRegra || ""
 
   // 1. ULTRAFERTIL (Prioridade Máxima se presente nas observações/infCpl)
   if (isUltrafertil(infComplementares)) {

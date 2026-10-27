@@ -1347,6 +1347,9 @@ function extractTerminalEntrega(text: string): string {
     return fromDeliveryRule;
   }
 
+  // Sem marcador de entrega, não classificar por sigla, CNPJ, cidade ou IA.
+  return '';
+
   // 2. ULTRAFERTIL (Prioridade Máxima se presente no documento)
   if (isUltrafertil(text)) {
     return 'ULTRAFERTIL';

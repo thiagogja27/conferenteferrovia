@@ -27,7 +27,7 @@ import {
   matchTransbordoFromText,
   subscribeCadastrosChanges,
 } from "@/lib/cadastros-logisticos-service"
-import { getExplicitGuarujaTerminalCode, isUltrafertil } from "@/lib/terminal-utils"
+import { extractTerminalFromDeliveryRule, isUltrafertil } from "@/lib/terminal-utils"
 
 import {
   BarChart,
@@ -212,15 +212,10 @@ export function getNoteDetails(
   // Em muitos documentos o TEAG aparece apenas em "Informações Complementares" do PDF.
   const pdfText = f.pdfTextoOriginal || f.parsedData?.rawSnippet || ""
   const fullDocText = `${infCpl} ${pdfText} ${rawXml} ${f.rawSnippet || ""}`
-  if (isUltrafertil(fullDocText) || isUltrafertil(terminal)) {
-    terminal = "ULTRAFERTIL"
-  } else {
-    const explicitTerminalCode = getExplicitGuarujaTerminalCode(fullDocText)
-    if (explicitTerminalCode === 'TEAG') {
-      terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
-    } else if (explicitTerminalCode === 'TEG') {
-      terminal = "TEG - TERMINAL DE EXPORTAÇÃO DO GUARUJÁ"
-    }
+  const terminalPorRegra = extractTerminalFromDeliveryRule(fullDocText)
+  if (terminalPorRegra) {
+    // Regra determinística: o terminal é exclusivamente as 15 palavras após o marcador.
+    terminal = terminalPorRegra
   }
 
   // Se o terminal foi indevidamente extraído como UBERABA / TIUB, corrigir para transbordo
@@ -274,25 +269,6 @@ export function getNoteDetails(
     else if (/COMPANHIA\s*AUXILIAR|CIA\s*AUXILIAR/i.test(fullContext)) transbordo = "COMPANHIA AUXILIAR DE ARMAZENS GERAIS"
   }
 
-  if (terminal === "Não Informado" || !terminal) {
-    if (isUltrafertil(fullDocText)) {
-      terminal = "ULTRAFERTIL"
-    } else if (getExplicitGuarujaTerminalCode(fullDocText) === 'TEAG') {
-      terminal = "TEAG - TERMINAL DE ACUCAR DO GUARUJA"
-    } else if (/TES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(infCpl)) {
-      terminal = "TES - TERMINAL EXPORTADOR DE SANTOS"
-    } else if (getExplicitGuarujaTerminalCode(fullDocText) === 'TEG') {
-      terminal = "TEG - TERMINAL DE EXPORTAÇÃO DO GUARUJÁ"
-    } else if (/CLI|TERMARES/i.test(infCpl)) {
-      terminal = "CLI - CORREDOR LOGÍSTICA INTEGRADA"
-    } else if (/T-124|T124/i.test(infCpl)) {
-      terminal = "TERMINAL 124"
-    } else if (/RUMO/i.test(infCpl)) {
-      terminal = "TERMINAL RUMO"
-    } else if (/VLI/i.test(infCpl)) {
-      terminal = "TERMINAL VLI"
-    }
-  }
 
   // Identificador da nota para vincular com overrides da IA
   const noteKey = chave && chave !== "Sem Chave" ? chave : (f.fileName || `${numero}_${serie}`)

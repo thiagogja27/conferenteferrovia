@@ -98,17 +98,6 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
   if (terminalPorRegra) {
     terminalCorrigido = terminalPorRegra
     if (terminalCorrigido !== item.terminal) camposAjustados.push('terminal')
-  } else if (isUltrafertil(fullText) || isUltrafertil(item.terminal || '')) {
-    terminalCorrigido = 'ULTRAFERTIL'
-    if (terminalCorrigido !== item.terminal) camposAjustados.push('terminal')
-  } else {
-    const explicitTerminalCode = getExplicitGuarujaTerminalCode(fullText)
-    if (explicitTerminalCode) {
-      terminalCorrigido = explicitTerminalCode === 'TEAG'
-        ? 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-        : 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
-      if (terminalCorrigido !== item.terminal) camposAjustados.push('terminal')
-    }
   }
 
   // Se o terminal foi indevidamente gravado como um transbordo (ex: UBERABA, TIUB, ATT ARMAZENAGEM, FERNANDOPOLIS):
@@ -139,9 +128,6 @@ export function auditarLogisticaHeuristicaLocal(item: LogisticsAuditInputItem): 
   if (isNaoInformado(terminalCorrigido) || isNaoInformado(item.terminal)) {
     if (isUltrafertil(fullText)) {
       terminalCorrigido = 'ULTRAFERTIL'
-      camposAjustados.push('terminal')
-    } else if (getExplicitGuarujaTerminalCode(fullText) === 'TEAG') {
-      terminalCorrigido = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
       camposAjustados.push('terminal')
     } else if (/\bTES\b|TERMINAL.*EXPORTADOR.*SANTOS|TES\s*TERMINAL|18\.?845\.?076\/?0001-?83/i.test(fullText)) {
       terminalCorrigido = 'TES - TERMINAL EXPORTADOR DE SANTOS'

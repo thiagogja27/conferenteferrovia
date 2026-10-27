@@ -23,7 +23,7 @@ import {
   formatTimeBR,
 } from '@/lib/firebase-realtime'
 import { matchTransbordoFromText } from '@/lib/cadastros-logisticos-service'
-import { getExplicitGuarujaTerminalCode, isUltrafertil } from '@/lib/terminal-utils'
+import { extractTerminalFromDeliveryRule, isUltrafertil } from '@/lib/terminal-utils'
 import { ref, push, onValue, off, query, limitToLast, remove, get } from 'firebase/database'
 
 export interface ConferenceNoteSummary {
@@ -280,15 +280,9 @@ export function buildConferenceDashboardSnapshot(
     const retirada = parsed?.retirada || ''
     const fullDocText = `${infCpl} ${rawXml} ${f.rawSnippet || ''}`
 
-    if (isUltrafertil(fullDocText) || isUltrafertil(terminal)) {
-      terminal = 'ULTRAFERTIL'
-    } else {
-      const explicitTerminalCode = getExplicitGuarujaTerminalCode(fullDocText)
-      if (explicitTerminalCode === 'TEAG') {
-        terminal = 'TEAG - TERMINAL DE ACUCAR DO GUARUJA'
-      } else if (explicitTerminalCode === 'TEG') {
-        terminal = 'TEG - TERMINAL EXPORTADOR DO GUARUJA'
-      }
+    const terminalPorRegra = extractTerminalFromDeliveryRule(fullDocText)
+    if (terminalPorRegra) {
+      terminal = terminalPorRegra
     }
 
     // Se o terminal capturado foi UBERABA / TIUB, corrigir para transbordo
