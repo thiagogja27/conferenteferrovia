@@ -523,13 +523,27 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     entregaCNPJ = entMatch[1].replace(/\D/g, '');
   }
 
+  // Se houver canhoto de recibo no início do texto ("RECEBEMOS DE ..."), evitar que a palavra "DESTINATÁRIO:" no canhoto seja confundida com a seção oficial
+  let searchScopeForDest = textFiscal;
+  if (/RECEBEMOS\s+DE/i.test(textFiscal)) {
+    const afterCanhotoIdx = textFiscal.search(/(?:IDENTIFICA[ÇC][ÃA]O\s+E\s+ASSINATURA\s+DO\s+RECEBEDOR|\bDANFE\b|DOCUMENTO\s+AUXILIAR)/i);
+    if (afterCanhotoIdx > 0) {
+      searchScopeForDest = textFiscal.substring(afterCanhotoIdx);
+    }
+  }
+
   // Em alguns DANFEs o título DESTINATÁRIO/REMETENTE é impresso na vertical.
   // O extrator pode devolver uma letra por linha, então normalizamos apenas esse rótulo antes de procurar o bloco.
-  const recipientTextForMatching = textFiscal
+  const recipientTextForMatching = searchScopeForDest
     .replace(/D\s*E\s*S\s*T\s*I\s*N\s*A\s*T\s*[ÁA]\s*R\s*I\s*O\s*[\/-]?\s*R\s*E\s*M\s*E\s*T\s*E\s*N\s*T\s*E/gi, 'DESTINATÁRIO/REMETENTE')
     .replace(/R\s*E\s*M\s*E\s*T\s*E\s*N\s*T\s*E\s*[\/-]?\s*D\s*E\s*S\s*T\s*I\s*N\s*A\s*T\s*[ÁA]\s*R\s*I\s*O/gi, 'REMETENTE/DESTINATÁRIO');
 
-  const destBlockMatch = recipientTextForMatching.match(/(?:DESTINAT[AÁ]RIO\s*[\/\-]\s*REMETENTE|REMETENTE\s*[\/\-]\s*DESTINAT[AÁ]RIO|DADOS\s+DO\s+DESTINAT[AÁ]RIO|DADOS\s+DO\s+REMETENTE|DESTINAT[AÁ]RIO|DESTINATARIO)([\s\S]+)/i);
+  // Buscar primeiro os blocos compostos padrão de DANFE (evitando capturar "DESTINATÁRIO:" isolado fora do quadro)
+  let destBlockMatch = recipientTextForMatching.match(/(?:DESTINAT[AÁ]RIO\s*[\/\-]\s*REMETENTE|REMETENTE\s*[\/\-]\s*DESTINAT[AÁ]RIO|DADOS\s+DO\s+DESTINAT[AÁ]RIO\s*[\/\-]\s*REMETENTE)([\s\S]+)/i);
+  if (!destBlockMatch) {
+    destBlockMatch = recipientTextForMatching.match(/(?:DADOS\s+DO\s+DESTINAT[AÁ]RIO|DADOS\s+DO\s+REMETENTE|DESTINAT[AÁ]RIO|DESTINATARIO)([\s\S]+)/i);
+  }
+
   if (destBlockMatch) {
     const rawBlock = destBlockMatch[1];
     // Delimitar com rigor o bloco do destinatário antes de qualquer outra seção da DANFE
@@ -543,22 +557,32 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     }
 
     // Extrair Nome / Razão Social do Destinatário
-    const nameMatch = block.match(/(?:NOME\s*\/\s*RAZÃO\s*SOCIAL|NOME\s*RAZAO\s*SOCIAL|RAZÃO\s*SOCIAL|RAZAO\s*SOCIAL|NOME)?[\s\n\r:-]*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80})/i);
-    if (nameMatch) {
-      let raw = nameMatch[1].trim();
-      const stopIdx = raw.search(/(?:AVENIDA|AV\.|RUA|ROD|RODOVIA|ALAMEDA|ESTRADA|PRACA|PRAÇA|ENDEREÇO|ENDEREC|BAIRRO|CNPJ|CPF|CEP|MUNICÍPIO|MUNICIPIO|UF|FONE|TELEFONE|INSCRIÇÃO|INSCRICAO|DATA|ENTRADA|SAIDA|SAÍDA|INSC|FASE|CÓDIGO|CODIGO)/i);
-      if (stopIdx > 0) {
-        raw = raw.substring(0, stopIdx).trim();
+    // 1. Layout tabular onde rótulos aparecem agrupados antes dos valores:
+    // Ex: "NOME / RAZÃO SOCIAL CNPJ / CPF DATA DA EMISSÃO BTG PACTUAL COMMODITIES SERTRADING S.A. 04.626.426/0034-74"
+    const tabularMatch = block.match(/(?:NOME\s*[\/\s]*RAZ[ÃA]O\s*SOCIAL\s*(?:CNPJ\s*[\/\s]*CPF\s*)?(?:DATA\s*(?:DA)?\s*EMISS[ÃA]O\s*)?)[:\s-]*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)(?=\s*(?:CNPJ|CPF|\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{14}|ENDERE[ÇC]O))/i);
+    if (tabularMatch && tabularMatch[1].trim().length > 2 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL|DESTINAT|REMETENT)/i.test(tabularMatch[1].trim())) {
+      destNome = tabularMatch[1].trim().replace(/[:=\-.,;]+$/, '').trim();
+    }
+
+    // 2. Rótulo direto: NOME / RAZÃO SOCIAL: <Nome>
+    if (!destNome) {
+      const directMatch = block.match(/(?:NOME\s*[\/\s]*RAZ[ÃA]O\s*SOCIAL|RAZ[ÃA]O\s*SOCIAL)[\s:-]+([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80})/i);
+      if (directMatch) {
+        let raw = directMatch[1].trim();
+        const stopIdx = raw.search(/(?:AVENIDA|AV\.|RUA|ROD|RODOVIA|ALAMEDA|ESTRADA|PRACA|PRAÇA|ENDEREÇO|ENDEREC|BAIRRO|CNPJ|CPF|CEP|MUNICÍPIO|MUNICIPIO|UF|FONE|TELEFONE|INSCRIÇÃO|INSCRICAO|DATA|ENTRADA|SAIDA|SAÍDA|INSC|FASE|CÓDIGO|CODIGO)/i);
+        if (stopIdx > 0) raw = raw.substring(0, stopIdx).trim();
+        const cand = raw.replace(/[:=\-.,;]+$/, '').trim();
+        if (cand.length > 2 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL)/i.test(cand)) {
+          destNome = cand;
+        }
       }
-      const candidate = raw.replace(/[:=\-.,;]+$/, '').trim();
-      if (candidate && candidate.length > 2 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL|DESTINAT[AÁ]RIO|REMETENTE)/i.test(candidate)) {
-        destNome = candidate;
-      }
-    } else {
-      // Fallback: pegar as primeiras linhas não vazias do bloco de destinatário que não sejam rótulos
+    }
+
+    // 3. Fallback: primeiras linhas não vazias do bloco de destinatário que não sejam rótulos
+    if (!destNome) {
       const blockLines = block.split(/[\r\n]+/).map(l => l.trim()).filter(l => l.length > 3);
       for (const line of blockLines) {
-        if (!/^(?:DESTINAT|REMETENT|ENDERE|BAIRRO|MUNIC|CNPJ|CPF|CEP|INSC|UF|TELEFONE|FONE|DATA|CÁLCULO|CALCULO|VALOR)/i.test(line)) {
+        if (!/^(?:DESTINAT|REMETENT|ENDERE|BAIRRO|MUNIC|CNPJ|CPF|CEP|INSC|UF|TELEFONE|FONE|DATA|CÁLCULO|CALCULO|VALOR|NOME|RAZ[ÃA]O)/i.test(line)) {
           const stopIdx = line.search(/(?:ROD|RODOVIA|RUA|AV|AVENIDA|ALAMEDA|CNPJ|CPF|CEP)/i);
           const candidateLine = (stopIdx > 0 ? line.substring(0, stopIdx) : line).trim();
           if (candidateLine.length > 3 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL)/i.test(candidateLine)) {
@@ -569,9 +593,17 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       }
     }
 
+    // 4. Fallback sem quebras de linha: pegar texto antes de endereço ou CNPJ no início do bloco
+    if (!destNome) {
+      const rawFirstMatch = block.match(/^\s*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)(?=\s+(?:ROD|RODOVIA|RUA|AV|AVENIDA|ALAMEDA|ENDEREÇO|CNPJ|\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{14}))/i);
+      if (rawFirstMatch && rawFirstMatch[1].trim().length > 3 && !/^(?:NOME|RAZ[ÃA]O|DESTINAT)/i.test(rawFirstMatch[1].trim())) {
+        destNome = rawFirstMatch[1].trim();
+      }
+    }
+
     // 1. Buscar CNPJ/CPF explicitamente rotulado no bloco delimitado (NUNCA busca além de block!)
-    const labelledCnpj = block.match(/\bCNPJ(?:\s*\/\s*CPF)?[^\d]{0,20}(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}\-?\d{2}|\d{14})/i);
-    const labelledCpf = block.match(/\bCPF\b[^\d]{0,20}(\d{3}\.?\d{3}\.?\d{3}\-?\d{2}|\d{11})/i);
+    const labelledCnpj = block.match(/\bCNPJ(?:\s*\/\s*CPF)?[^\d]{0,80}(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}\-?\d{2}|\d{14})/i);
+    const labelledCpf = block.match(/\bCPF\b[^\d]{0,40}(\d{3}\.?\d{3}\.?\d{3}\-?\d{2}|\d{11})/i);
     const labelledIdentity = labelledCnpj || labelledCpf;
     if (labelledIdentity) {
       const candidate = labelledIdentity[1].replace(/\D/g, '');
