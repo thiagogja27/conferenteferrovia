@@ -17,7 +17,7 @@ import { parsePdfClientSide } from '@/lib/client-pdf-parser'
 import { normalizeNfeRecipient, prioritizeSavedRecipient } from '@/lib/pdf-recipient-resolution'
 import { deduplicateNfesByAccessKey } from '@/lib/nfe-deduplication'
 import { generatePDF } from '@/lib/pdf-generator'
-import { Dashboard } from '@/components/dashboard'
+import { Dashboard, getNoteDetails } from '@/components/dashboard'
 import { ChaveDestinatarioDashboard } from '@/components/chave-destinatario-dashboard'
 import { isCarrierCnpj } from '@/lib/destinatario-utils'
 import { SearchPanel } from '@/components/search-panel'
@@ -36,6 +36,7 @@ import {
   getDestinatarioContractByCnpj,
   getDestinatarioNomenclatureByCnpj,
   getRemetenteNomenclatureByCnpj,
+  resolveDestinatarioCadastro,
 } from '@/lib/cadastros-logisticos-service'
 import {
   buildConferenceDashboardSnapshot,
@@ -526,7 +527,6 @@ export function XMLConverter() {
           isPdf: true,
           parsedData: resolved.parsedData,
           rawSnippet: resolved.parsedData?.rawSnippet || '',
-          pdfTextoOriginal: data.pdfTextoOriginal || '',
         }]
       }
     }
@@ -575,7 +575,6 @@ export function XMLConverter() {
         isPdf: true,
         parsedData: resolved.parsedData,
         rawSnippet: resolved.parsedData?.rawSnippet || '',
-        pdfTextoOriginal: clientResult.pdfTextoOriginal || '',
       }]
     } catch (clientErr: any) {
       return [{
@@ -1195,17 +1194,45 @@ export function XMLConverter() {
             ]);
           }
 
-          const emitCNPJ = file.nfeData.emitente?.cnpj || vCNPJ.emitenteCnpjRaw || "N/I";
-          const emitNome = file.nfeData.emitente?.nome || "N/I";
-          const destCNPJ = file.nfeData.destinatario?.cpfCnpj || vCNPJ.destinatarioCnpjRaw || "NÃO INFORMADO";
-          const destNome = file.nfeData.destinatario?.nome || "NÃO INFORMADO";
+          const details = getNoteDetails(file);
+
+          const emitCNPJ = details.emitCNPJ || file.nfeData.emitente?.cnpj || vCNPJ.emitenteCnpjRaw || "N/I";
+          const emitNome = details.emitNome && details.emitNome !== "Não informado" ? details.emitNome : (file.nfeData.emitente?.nome || "N/I");
+          
+          let destCNPJ = details.destCNPJ || file.nfeData.destinatario?.cpfCnpj || vCNPJ.destinatarioCnpjRaw || "";
+          if (destCNPJ === "NÃO INFORMADO") destCNPJ = "";
+
+          let finalDestNome = (details.destNome && details.destNome !== "Não informado" && details.destNome !== "DESTINATÁRIO NÃO IDENTIFICADO")
+            ? details.destNome
+            : (file.nfeData.destinatario?.nome && file.nfeData.destinatario.nome !== "DESTINATÁRIO NÃO IDENTIFICADO" && file.nfeData.destinatario.nome !== "NÃO INFORMADO")
+            ? file.nfeData.destinatario.nome
+            : (file.parsedData?.destNome && file.parsedData.destNome !== "DESTINATÁRIO NÃO IDENTIFICADO" && file.parsedData.destNome !== "Não informado")
+            ? file.parsedData.destNome
+            : "";
+
+          if ((!finalDestNome || finalDestNome === "Não informado" || finalDestNome === "DESTINATÁRIO NÃO IDENTIFICADO") && destCNPJ) {
+            const cad = resolveDestinatarioCadastro(undefined, destCNPJ);
+            if (cad?.nome) finalDestNome = cad.nome;
+          }
+
+          if ((!finalDestNome || finalDestNome === "Não informado" || finalDestNome === "DESTINATÁRIO NÃO IDENTIFICADO") && emitNome && emitNome !== "N/I" && emitNome !== "Não informado") {
+            finalDestNome = emitNome.toUpperCase();
+          }
+
+          const destNome = finalDestNome && finalDestNome !== "Não informado" ? finalDestNome : "NÃO INFORMADO";
+          const finalDestCnpjFormatted = destCNPJ || "NÃO INFORMADO";
+
+          const terminalEntrega = details.terminal && details.terminal !== "Não Informado" ? details.terminal : (file.nfeData.terminalEntrega || "Não Informado");
+          const transbordo = details.transbordo && details.transbordo !== "Não Informado" ? details.transbordo : (file.nfeData.transbordo || "Não Informado");
+          const retirada = details.retirada || file.nfeData.retirada || "-";
+          const tipoProduto = details.produto || file.nfeData.tipoProduto || "-";
 
           const rowData = [
             file.fileName,
             isPdf ? 'PDF' : 'XML',
             key,
             vCNPJ.chaveCnpj || "N/I",
-            destCNPJ,
+            finalDestCnpjFormatted,
             destNome,
             getDestinatarioNomenclatureByCnpj(destCNPJ) || '-',
             getRemetenteNomenclatureByCnpj(emitCNPJ) || '-',
@@ -1224,10 +1251,10 @@ export function XMLConverter() {
             detalhesIaExport,
             isPdf ? initialQtd : quantidadeFinal,
             file.nfeData.impostos.valorTotal,
-            file.nfeData.terminalEntrega,
-            file.nfeData.transbordo,
-            file.nfeData.retirada,
-            file.nfeData.tipoProduto
+            terminalEntrega,
+            transbordo,
+            retirada,
+            tipoProduto
           ];
 
           dataToExport.push(rowData);
@@ -1238,7 +1265,7 @@ export function XMLConverter() {
               isPdf ? 'PDF' : 'XML',
               key,
               vCNPJ.chaveCnpj || "N/I",
-              destCNPJ,
+              finalDestCnpjFormatted,
               destNome,
               getDestinatarioNomenclatureByCnpj(destCNPJ) || '-',
               getRemetenteNomenclatureByCnpj(emitCNPJ) || '-',
@@ -1254,8 +1281,8 @@ export function XMLConverter() {
               quantidadeFinal,
               statusIaExport,
               file.nfeData.impostos.valorTotal,
-              file.nfeData.terminalEntrega,
-              file.nfeData.transbordo
+              terminalEntrega,
+              transbordo
             ]);
           }
         }

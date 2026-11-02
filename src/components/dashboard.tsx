@@ -26,6 +26,7 @@ import {
   getRemetenteNomenclatureByCnpj,
   matchTransbordoFromText,
   subscribeCadastrosChanges,
+  resolveDestinatarioCadastro,
 } from "@/lib/cadastros-logisticos-service"
 import { extractTerminalFromDeliveryRule } from "@/lib/terminal-utils"
 
@@ -184,6 +185,14 @@ export function getNoteDetails(
   }
   if (isCarrierCnpj(destCNPJ)) {
     destCNPJ = emitCNPJ ? formatCNPJ(emitCNPJ) : ""
+  }
+
+  // Se o destinatário ainda estiver não informado ou não identificado, resolver pelo CNPJ via cadastros
+  if ((!destNome || destNome === "Não informado" || destNome === "DESTINATÁRIO NÃO IDENTIFICADO") && destCNPJ) {
+    const cad = resolveDestinatarioCadastro(undefined, destCNPJ)
+    if (cad?.nome) {
+      destNome = cad.nome
+    }
   }
 
   // Verificação oficial de CNPJ Chave de Acesso x Destinatário
@@ -968,8 +977,33 @@ export function Dashboard({ files }: DashboardProps) {
   const handleExportGroupExcel = () => {
     if (!selectedGroup) return
 
+    const groupDestNome =
+      selectedGroup.category === "Destinatário"
+        ? selectedGroup.fullName.replace(/\s*\(CNPJ:.*\)/i, "").trim()
+        : ""
+    const groupDestCnpj =
+      selectedGroup.category === "Destinatário"
+        ? selectedGroup.fullName.match(/CNPJ:\s*([\d.\/-]+)/i)?.[1]?.trim() || ""
+        : ""
+
     const dataToExport = filteredGroupFiles.map((f, idx) => {
       const d = getNoteDetails(f, logisticsOverrides)
+
+      let finalDestNome = d.destNome
+      if (!finalDestNome || finalDestNome === "Não informado" || finalDestNome === "DESTINATÁRIO NÃO IDENTIFICADO") {
+        if (groupDestNome) {
+          finalDestNome = groupDestNome
+        } else if (d.destCNPJ) {
+          const cad = resolveDestinatarioCadastro(undefined, d.destCNPJ)
+          if (cad?.nome) finalDestNome = cad.nome
+        }
+      }
+      if ((!finalDestNome || finalDestNome === "Não informado" || finalDestNome === "DESTINATÁRIO NÃO IDENTIFICADO") && d.emitNome && d.emitNome !== "Não informado") {
+        finalDestNome = d.emitNome.toUpperCase()
+      }
+
+      const finalDestCnpj = d.destCNPJ || groupDestCnpj || ""
+
       return {
         Item: idx + 1,
         "Número da Nota": d.numero,
@@ -978,11 +1012,11 @@ export function Dashboard({ files }: DashboardProps) {
         "Data de Emissão": d.dataEmissao,
         Emitente: d.emitNome,
         "CNPJ Emitente": d.emitCNPJ,
-        Destinatário: d.destNome,
-        "CNPJ Destinatário": d.destCNPJ,
-        "Nomenclatura": selectedGroup.nomenclatureName || "-",
+        Destinatário: finalDestNome && finalDestNome !== "Não informado" ? finalDestNome : (d.destNome || "-"),
+        "CNPJ Destinatário": finalDestCnpj || "-",
+        "Nomenclatura": getDestinatarioNomenclatureByCnpj(finalDestCnpj) || selectedGroup.nomenclatureName || "-",
         "Nomenclatura Remetente": getRemetenteNomenclatureByCnpj(d.emitCNPJ) || "-",
-        "Contrato": selectedGroup.contractName || "-",
+        "Contrato": getDestinatarioContractByCnpj(finalDestCnpj) || selectedGroup.contractName || "-",
         Produto: d.produto,
         "Terminal de Entrega": d.terminal,
         Transbordo: d.transbordo,

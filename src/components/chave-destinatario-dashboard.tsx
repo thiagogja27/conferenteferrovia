@@ -9,6 +9,7 @@ import {
   getDestinatarioNomenclatureByCnpj,
   getRemetenteNomenclatureByCnpj,
   subscribeCadastrosChanges,
+  resolveDestinatarioCadastro,
 } from '@/lib/cadastros-logisticos-service'
 import {
   PieChart,
@@ -165,11 +166,20 @@ export function ChaveDestinatarioDashboard({
       }
 
       const infCpl = `${nfe?.informacoesComplementares || ''} ${parsed?.infCpl || ''} ${rawXml} ${f.rawSnippet || ''}`
-      let destNome = sanitizeDestinatarioNome(rawDestNome, rawDestCnpj, infCpl)
+      let destNome = sanitizeDestinatarioNome(rawDestNome, rawDestCnpj, infCpl, emitNome, rawEmitCnpj)
 
       // Se ainda contiver cabeçalho de volume, limpa
       if (/QUANTIDADE.*(?:ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO)|PESO\s+BRUTO/i.test(destNome)) {
-        destNome = 'Não informado'
+        destNome = emitNome && emitNome !== 'Não informado' ? emitNome.toUpperCase() : 'Não informado'
+      }
+
+      if ((!destNome || destNome === 'Não informado' || destNome === 'DESTINATÁRIO NÃO IDENTIFICADO') && rawDestCnpj) {
+        const cad = resolveDestinatarioCadastro(undefined, rawDestCnpj)
+        if (cad?.nome) destNome = cad.nome
+      }
+
+      if ((!destNome || destNome === 'Não informado' || destNome === 'DESTINATÁRIO NÃO IDENTIFICADO') && emitNome && emitNome !== 'Não informado') {
+        destNome = emitNome.toUpperCase()
       }
 
       const destCNPJFormatted = formatCNPJ(rawDestCnpj)
@@ -428,30 +438,43 @@ export function ChaveDestinatarioDashboard({
   const handleExportExcel = () => {
     if (items.length === 0) return
 
-    const rows = filteredItems.map((item) => ({
-      Status:
-        item.confronto === 'DIVERGENTES'
-          ? 'DIVERGENTE (Chave ≠ Destinatário)'
-          : item.confronto === 'IGUAIS'
-          ? 'CONFORME (Chave = Destinatário)'
-          : 'NÃO INFORMADO',
-      'Número NF': item.numero,
-      Série: item.serie,
-      'Data Emissão': item.dataEmissao,
-      'Valor Total (R$)': item.valorTotal,
-      'Chave de Acesso (44 dígitos)': item.chave,
-      'CNPJ na Chave': item.chaveCnpjFormatted,
-      'CNPJ Destinatário': item.destCNPJFormatted || 'Não Informado',
-      'Destinatário (Razão Social)': item.destNome,
-      Nomenclatura: getDestinatarioNomenclatureByCnpj(item.destCNPJ) || '-',
-      'Nomenclatura Remetente': getRemetenteNomenclatureByCnpj(item.emitCNPJ) || '-',
-      Contrato: getDestinatarioContractByCnpj(item.destCNPJ) || '-',
-      'CNPJ Emitente': item.emitCNPJFormatted || 'Não Informado',
-      'Emitente (Razão Social)': item.emitNome,
-      'Chave Pertence ao Emitente?': item.matchesEmitente ? 'SIM' : 'NÃO',
-      'Diagnóstico / Detalhes': item.statusDetails,
-      Arquivo: item.fileName,
-    }))
+    const rows = filteredItems.map((item) => {
+      let finalDestNome = item.destNome
+      if (!finalDestNome || finalDestNome === 'Não informado' || finalDestNome === 'DESTINATÁRIO NÃO IDENTIFICADO') {
+        if (item.destCNPJ) {
+          const cad = resolveDestinatarioCadastro(undefined, item.destCNPJ)
+          if (cad?.nome) finalDestNome = cad.nome
+        }
+      }
+      if ((!finalDestNome || finalDestNome === 'Não informado' || finalDestNome === 'DESTINATÁRIO NÃO IDENTIFICADO') && item.emitNome && item.emitNome !== 'Não informado') {
+        finalDestNome = item.emitNome.toUpperCase()
+      }
+
+      return {
+        Status:
+          item.confronto === 'DIVERGENTES'
+            ? 'DIVERGENTE (Chave ≠ Destinatário)'
+            : item.confronto === 'IGUAIS'
+            ? 'CONFORME (Chave = Destinatário)'
+            : 'NÃO INFORMADO',
+        'Número NF': item.numero,
+        Série: item.serie,
+        'Data Emissão': item.dataEmissao,
+        'Valor Total (R$)': item.valorTotal,
+        'Chave de Acesso (44 dígitos)': item.chave,
+        'CNPJ na Chave': item.chaveCnpjFormatted,
+        'CNPJ Destinatário': item.destCNPJFormatted || 'Não Informado',
+        'Destinatário (Razão Social)': finalDestNome && finalDestNome !== 'Não informado' ? finalDestNome : (item.destNome || 'Não Informado'),
+        Nomenclatura: getDestinatarioNomenclatureByCnpj(item.destCNPJ) || '-',
+        'Nomenclatura Remetente': getRemetenteNomenclatureByCnpj(item.emitCNPJ) || '-',
+        Contrato: getDestinatarioContractByCnpj(item.destCNPJ) || '-',
+        'CNPJ Emitente': item.emitCNPJFormatted || 'Não Informado',
+        'Emitente (Razão Social)': item.emitNome,
+        'Chave Pertence ao Emitente?': item.matchesEmitente ? 'SIM' : 'NÃO',
+        'Diagnóstico / Detalhes': item.statusDetails,
+        Arquivo: item.fileName,
+      }
+    })
 
     const wb = XLSX.utils.book_new()
     const ws = XLSX.utils.json_to_sheet(rows)

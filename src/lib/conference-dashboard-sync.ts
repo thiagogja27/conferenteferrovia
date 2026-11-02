@@ -22,7 +22,7 @@ import {
   formatDateBR,
   formatTimeBR,
 } from '@/lib/firebase-realtime'
-import { matchTransbordoFromText } from '@/lib/cadastros-logisticos-service'
+import { matchTransbordoFromText, resolveDestinatarioCadastro } from '@/lib/cadastros-logisticos-service'
 import { getExplicitGuarujaTerminalCode, isUltrafertil, extractTerminalFromDeliveryRule } from '@/lib/terminal-utils'
 import { ref, push, onValue, off, query, limitToLast, remove, get } from 'firebase/database'
 
@@ -259,6 +259,11 @@ export function buildConferenceDashboardSnapshot(
     )
 
     // Se o destinatário não foi informado separadamente ou é a própria usina/remetente (ex: transferência/filial)
+    if ((!destNome || destNome === 'Não informado' || destNome === 'DESTINATÁRIO NÃO IDENTIFICADO') && rawDestCnpj) {
+      const cad = resolveDestinatarioCadastro(undefined, rawDestCnpj)
+      if (cad?.nome) destNome = cad.nome
+    }
+
     if ((!destNome || destNome === 'Não informado' || destNome === 'DESTINATÁRIO NÃO IDENTIFICADO') && emitNome) {
       destNome = emitNome.toUpperCase()
     }

@@ -69,6 +69,7 @@ import {
   getDestinatarioContractByCnpj,
   getDestinatarioNomenclatureByCnpj,
   getRemetenteNomenclatureByCnpj,
+  resolveDestinatarioCadastro,
 } from '@/lib/cadastros-logisticos-service'
 
 const PIE_COLORS = [
@@ -281,10 +282,35 @@ export function ConferenceMirrorDashboard() {
   // Exportação para Excel (.xlsx) das notas do modal de drilldown
   const exportModalToExcel = () => {
     if (!selectedGroup) return
+
+    const groupDestNome =
+      selectedGroup.category === 'Destinatário'
+        ? (selectedGroup.fullName || '').replace(/\s*\(CNPJ:.*\)/i, '').trim()
+        : ''
+    const groupDestCnpj =
+      selectedGroup.category === 'Destinatário'
+        ? (selectedGroup.fullName || '').match(/CNPJ:\s*([\d.\/-]+)/i)?.[1]?.trim() || ''
+        : ''
+
     const exportData = (selectedGroup.notes || []).map((n) => {
       const chaveCnpj = n.chave && n.chave.length === 44 
         ? n.chave.substring(6, 20).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') 
         : 'N/I'
+
+      let finalDestNome = n.destNome
+      if (!finalDestNome || finalDestNome === 'Não informado' || finalDestNome === 'DESTINATÁRIO NÃO IDENTIFICADO') {
+        if (groupDestNome) {
+          finalDestNome = groupDestNome
+        } else if (n.destCNPJ) {
+          const cad = resolveDestinatarioCadastro(undefined, n.destCNPJ)
+          if (cad?.nome) finalDestNome = cad.nome
+        }
+      }
+      if ((!finalDestNome || finalDestNome === 'Não informado' || finalDestNome === 'DESTINATÁRIO NÃO IDENTIFICADO') && n.emitNome && n.emitNome !== 'Não informado') {
+        finalDestNome = n.emitNome.toUpperCase()
+      }
+
+      const finalDestCnpj = n.destCNPJ || groupDestCnpj || ''
 
       return {
         Número: n.numero,
@@ -292,11 +318,11 @@ export function ConferenceMirrorDashboard() {
         'Data Emissão': n.dataEmissao,
         'Chave de Acesso': n.chave,
         'CNPJ na Chave': chaveCnpj,
-        'Destinatário CNPJ': n.destCNPJ,
-        'Destinatário': n.destNome,
-        Nomenclatura: getDestinatarioNomenclatureByCnpj(n.destCNPJ) || '-',
+        'Destinatário CNPJ': finalDestCnpj || '-',
+        'Destinatário': finalDestNome && finalDestNome !== 'Não informado' ? finalDestNome : (n.destNome || '-'),
+        Nomenclatura: getDestinatarioNomenclatureByCnpj(finalDestCnpj) || '-',
         'Nomenclatura Remetente': getRemetenteNomenclatureByCnpj(n.emitCNPJ) || '-',
-        Contrato: getDestinatarioContractByCnpj(n.destCNPJ) || '-',
+        Contrato: getDestinatarioContractByCnpj(finalDestCnpj) || '-',
         'Confronto Chave x Destinatário': n.confrontoChaveXDest,
         Emitente: n.emitNome,
         'CNPJ Emitente': n.emitCNPJ,
@@ -326,14 +352,25 @@ export function ConferenceMirrorDashboard() {
         ? n.chave.substring(6, 20).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') 
         : 'N/I'
 
+      let finalDestNome = n.destNome
+      if (!finalDestNome || finalDestNome === 'Não informado' || finalDestNome === 'DESTINATÁRIO NÃO IDENTIFICADO') {
+        if (n.destCNPJ) {
+          const cad = resolveDestinatarioCadastro(undefined, n.destCNPJ)
+          if (cad?.nome) finalDestNome = cad.nome
+        }
+      }
+      if ((!finalDestNome || finalDestNome === 'Não informado' || finalDestNome === 'DESTINATÁRIO NÃO IDENTIFICADO') && n.emitNome && n.emitNome !== 'Não informado') {
+        finalDestNome = n.emitNome.toUpperCase()
+      }
+
       return {
         Número: n.numero,
         Série: n.serie,
         'Data Emissão': n.dataEmissao,
         'Chave de Acesso': n.chave,
         'CNPJ na Chave': chaveCnpj,
-        'Destinatário CNPJ': n.destCNPJ,
-        'Destinatário': n.destNome,
+        'Destinatário CNPJ': n.destCNPJ || '-',
+        'Destinatário': finalDestNome && finalDestNome !== 'Não informado' ? finalDestNome : (n.destNome || '-'),
         Nomenclatura: getDestinatarioNomenclatureByCnpj(n.destCNPJ) || '-',
         'Nomenclatura Remetente': getRemetenteNomenclatureByCnpj(n.emitCNPJ) || '-',
         Contrato: getDestinatarioContractByCnpj(n.destCNPJ) || '-',
