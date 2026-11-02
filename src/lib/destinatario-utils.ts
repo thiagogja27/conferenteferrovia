@@ -31,6 +31,23 @@ export function isCarrierCnpj(cnpj?: string, contextTranspCnpj?: string): boolea
   return /^(?:02387241|10991380|49964752|13370835|52618139|04286197|04721589|00414545)/.test(digits)
 }
 
+export function isInvalidRecipientName(name?: string): boolean {
+  if (!name) return true
+  const trimmed = name.trim()
+  if (trimmed.length < 3) return true
+  // Se for UF + Inscrição Estadual (ex: "MG 3448766990054", "SP 123456789") ou apenas dígitos
+  if (/^[A-Z]{2}\s+\d{6,16}$/i.test(trimmed)) return true
+  if (/^\d{6,16}$/.test(trimmed.replace(/\s+/g, ''))) return true
+  if (
+    /^(?:NOME|RAZ[ÃA]O|SOCIAL|DESTINAT|REMETENT|ENDERE|BAIRRO|MUNIC|CNPJ|CPF|CEP|INSC|UF|TELEFONE|FONE|DATA|CÁLCULO|CALCULO|VALOR|QUANTIDADE|ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO|VOLUMES|TRANSPORTADOR|FRETE|BASE|-?ENTRADA|-?SA[IÍ]DA|DOCUMENTOAUXILIAR)/i.test(
+      trimmed
+    )
+  ) {
+    return true
+  }
+  return false
+}
+
 export function sanitizeDestinatarioNome(
   rawNome?: string,
   rawCnpj?: string,
@@ -51,6 +68,10 @@ export function sanitizeDestinatarioNome(
     .replace(/[:=\-.,;/]+$/, '')
     .trim()
 
+  if (isInvalidRecipientName(nome)) {
+    nome = ''
+  }
+
   const catalogMatch = matchDestinatarioFromTextOrCnpj(nome, rawCnpj)
   if (catalogMatch) return catalogMatch
 
@@ -62,8 +83,8 @@ export function sanitizeDestinatarioNome(
   const isSameCompanyOrEmpty =
     !nome ||
     nome.length < 3 ||
+    isInvalidRecipientName(nome) ||
     nome === 'DESTINATARIO NAO IDENTIFICADO' ||
-    /QUANTIDADE|ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO|VOLUMES|TRANSPORTADOR|FRETE|C[AÁ]LCULO|BASE|VALOR|-?ENTRADA|-?SA[IÍ]DA|DOCUMENTOAUXILIAR/i.test(nome) ||
     (cnpjClean && emitCnpjClean && (cnpjClean === emitCnpjClean || cnpjClean.slice(0, 8) === emitCnpjClean.slice(0, 8)))
 
   if (isSameCompanyOrEmpty) {
@@ -75,7 +96,7 @@ export function sanitizeDestinatarioNome(
         .trim()
         .replace(/[:=\-.,;/]+$/, '')
         .trim()
-      if (cleanEmit.length >= 3 && !/QUANTIDADE|ESP[EÉ]CIE|VOLUMES|-?ENTRADA|-?SA[IÍ]DA|DOCUMENTOAUXILIAR|S[EÉ]RIE/i.test(cleanEmit)) {
+      if (cleanEmit.length >= 3 && !isInvalidRecipientName(cleanEmit)) {
         return cleanEmit.toUpperCase()
       }
     }
@@ -84,7 +105,7 @@ export function sanitizeDestinatarioNome(
   if (
     !nome ||
     nome.length < 3 ||
-    /QUANTIDADE|ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO|VOLUMES|TRANSPORTADOR|FRETE|C[AÁ]LCULO|BASE|VALOR|-?ENTRADA|-?SA[IÍ]DA|DOCUMENTOAUXILIAR/i.test(nome)
+    isInvalidRecipientName(nome)
   ) {
     return 'Não informado'
   }

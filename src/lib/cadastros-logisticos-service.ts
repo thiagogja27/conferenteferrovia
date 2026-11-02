@@ -336,8 +336,10 @@ export const SISTEMA_DESTINATARIOS_PADRAO: CadastroDestinatario[] = [
   {
     id: 'sys-dest-coruripe-0010',
     nome: 'S/A USINA CORURIPE ACUCAR E ALCOOL',
+    nomenclatura: 'CORURIPE001',
     cnpjPrincipal: '12.229.415/0010-01',
-    aliases: [],
+    cnpjsAdicionais: ['12229415001001', '12229415'],
+    aliases: ['CORURIPE', 'USINA CORURIPE', 'CORURIPE 0010', 'CORURIPE001', 'USINA CORURIPE ACUCAR E ALCOOL'],
     isSistema: true,
     ativo: true,
     criadoEm: 1700000000000,

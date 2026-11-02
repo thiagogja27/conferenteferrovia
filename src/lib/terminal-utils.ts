@@ -27,7 +27,7 @@ export function getExplicitGuarujaTerminalCode(_text: string): GuarujaTerminalCo
 export function extractTerminalFromDeliveryRule(text: string): string | null {
   if (!text) return null
 
-  const regex = /(?:INFORMA[ÇC][ÕO]ES\s+DO\s+LOCAL\s+DE\s+ENTREGA|LOCAL\s+DE\s+ENTREGA|RECINTO\s+ALFANDEGADO|RECINTO\s+AFADEGADO|\bALFANDEGADO\b|\bAFADEGADO\b|MERC\.?\s*ENTR\.?\s*ARM\.?\s*ALFANDEGADO|DESCARGA\s+NO\s+RECINTO|TERMINAL\s+(?:DE\s+)?ENTREGA|\bENTREGAR?\s+(?:EM|NO|NA)\b|\bENTREGA\s*[:=-])\s*[:=-]?\s*([\s\S]{1,500})/i
+  const regex = /(?:INFORMA[ÇC][ÕO]ES\s+DO\s+LOCAL\s+DE\s+ENTREGA|LOCAL\s+(?:DE\s+|DA\s+|DO\s+)?DESCARGA\s+FINAL|DESCARGA\s+FINAL|LOCAL\s+(?:DE\s+|DA\s+|DO\s+)?DESCARGA|LOCAL\s+DE\s+ENTREGA|RECINTO\s+ALFANDEGADO|RECINTO\s+AFADEGADO|\bALFANDEGADO\b|\bAFADEGADO\b|MERC\.?\s*ENTR\.?\s*ARM\.?\s*ALFANDEGADO|DESCARGA\s+NO\s+RECINTO|TERMINAL\s+(?:DE\s+)?ENTREGA|\bENTREGAR?\s+(?:EM|NO|NA)\b|\bENTREGA\s*[:=-])\s*[:=-]?\s*([\s\S]{1,500})/i
 
   const match = text.match(regex)
   if (!match || !match[1]) return null

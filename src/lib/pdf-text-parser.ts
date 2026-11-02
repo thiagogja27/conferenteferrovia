@@ -1,4 +1,4 @@
-import { sanitizeDestinatarioNome, isCarrierCnpj } from './destinatario-utils';
+import { sanitizeDestinatarioNome, isCarrierCnpj, isInvalidRecipientName } from './destinatario-utils';
 import { getExplicitGuarujaTerminalCode, isUltrafertil, extractTerminalFromDeliveryRule } from './terminal-utils';
 import { resolveDestinatarioCadastro } from './cadastros-logisticos-service';
 
@@ -483,7 +483,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   // Isolar o texto estritamente fiscal antes de DADOS ADICIONAIS / INFORMAÇÕES COMPLEMENTARES
   // Isso impede categoricamente que CNPJ de terminal portuário, armazém, operador ou cliente logístico citado
   // nos dados adicionais seja indevidamente assumido como o CNPJ do Destinatário da nota.
-  const dadosAdicionaisIdx = text.search(/(?:INFORMA[ÇC][ÕO]ES\s+COMPLEMENTARES|INFORMAC[ÕO]ES\s+COMPLEMENTARES|INFORMACOES\s+COMPLEMENTARES|DADOS\s+ADICIONAIS|INF\.\s*CONTRIBUINTE|RESERVADO\s+AO\s+FISCO)/i);
+  const dadosAdicionaisIdx = text.search(/(?:INFORMA[ÇC][ÕO]ES\s+COMPLEMENTARES|INFORMAC[ÕO]ES\s+COMPLEMENTARES|INFORMACOES\s+COMPLEMENTARES|DADOS\s+ADICIONAIS|INF\.\s*CONTRIBUINTE)/i);
   const textFiscal = dadosAdicionaisIdx > 0 ? text.substring(0, dadosAdicionaisIdx) : text;
 
   // Bloco de transportador para identificar e ignorar o CNPJ da transportadora
@@ -541,7 +541,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   // Buscar primeiro os blocos compostos padrão de DANFE (evitando capturar "DESTINATÁRIO:" isolado fora do quadro)
   let destBlockMatch = recipientTextForMatching.match(/(?:DESTINAT[AÁ]RIO\s*[\/\-]\s*REMETENTE|REMETENTE\s*[\/\-]\s*DESTINAT[AÁ]RIO|DADOS\s+DO\s+DESTINAT[AÁ]RIO\s*[\/\-]\s*REMETENTE)([\s\S]+)/i);
   if (!destBlockMatch) {
-    destBlockMatch = recipientTextForMatching.match(/(?:DADOS\s+DO\s+DESTINAT[AÁ]RIO|DADOS\s+DO\s+REMETENTE|DESTINAT[AÁ]RIO|DESTINATARIO)([\s\S]+)/i);
+    destBlockMatch = recipientTextForMatching.match(/(?:DADOS\s+DO\s+DESTINAT[AÁ]RIO|DADOS\s+DO\s+REMETENTE|(?<!\b[0-9]\s*-\s*)(?:DESTINAT[AÁ]RIO|DESTINATARIO)\b)([\s\S]+)/i);
   }
 
   if (destBlockMatch) {
@@ -560,7 +560,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     // 1. Layout tabular onde rótulos aparecem agrupados antes dos valores:
     // Ex: "NOME / RAZÃO SOCIAL CNPJ / CPF DATA DA EMISSÃO BTG PACTUAL COMMODITIES SERTRADING S.A. 04.626.426/0034-74"
     const tabularMatch = block.match(/(?:NOME\s*[\/\s]*RAZ[ÃA]O\s*SOCIAL\s*(?:CNPJ\s*[\/\s]*CPF\s*)?(?:DATA\s*(?:DA)?\s*EMISS[ÃA]O\s*)?)[:\s-]*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)(?=\s*(?:CNPJ|CPF|\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{14}|ENDERE[ÇC]O))/i);
-    if (tabularMatch && tabularMatch[1].trim().length > 2 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL|DESTINAT|REMETENT)/i.test(tabularMatch[1].trim())) {
+    if (tabularMatch && tabularMatch[1].trim().length > 2 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL|DESTINAT|REMETENT)/i.test(tabularMatch[1].trim()) && !isInvalidRecipientName(tabularMatch[1].trim())) {
       destNome = tabularMatch[1].trim().replace(/[:=\-.,;]+$/, '').trim();
     }
 
@@ -572,7 +572,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
         const stopIdx = raw.search(/(?:AVENIDA|AV\.|RUA|ROD|RODOVIA|ALAMEDA|ESTRADA|PRACA|PRAÇA|ENDEREÇO|ENDEREC|BAIRRO|CNPJ|CPF|CEP|MUNICÍPIO|MUNICIPIO|UF|FONE|TELEFONE|INSCRIÇÃO|INSCRICAO|DATA|ENTRADA|SAIDA|SAÍDA|INSC|FASE|CÓDIGO|CODIGO)/i);
         if (stopIdx > 0) raw = raw.substring(0, stopIdx).trim();
         const cand = raw.replace(/[:=\-.,;]+$/, '').trim();
-        if (cand.length > 2 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL)/i.test(cand)) {
+        if (cand.length > 2 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL)/i.test(cand) && !isInvalidRecipientName(cand)) {
           destNome = cand;
         }
       }
@@ -585,7 +585,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
         if (!/^(?:DESTINAT|REMETENT|ENDERE|BAIRRO|MUNIC|CNPJ|CPF|CEP|INSC|UF|TELEFONE|FONE|DATA|CÁLCULO|CALCULO|VALOR|NOME|RAZ[ÃA]O)/i.test(line)) {
           const stopIdx = line.search(/(?:ROD|RODOVIA|RUA|AV|AVENIDA|ALAMEDA|CNPJ|CPF|CEP)/i);
           const candidateLine = (stopIdx > 0 ? line.substring(0, stopIdx) : line).trim();
-          if (candidateLine.length > 3 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL)/i.test(candidateLine)) {
+          if (candidateLine.length > 3 && !/^(?:NOME|RAZ[ÃA]O|SOCIAL)/i.test(candidateLine) && !isInvalidRecipientName(candidateLine)) {
             destNome = candidateLine;
             break;
           }
@@ -596,7 +596,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     // 4. Fallback sem quebras de linha: pegar texto antes de endereço ou CNPJ no início do bloco
     if (!destNome) {
       const rawFirstMatch = block.match(/^\s*([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)(?=\s+(?:ROD|RODOVIA|RUA|AV|AVENIDA|ALAMEDA|ENDEREÇO|CNPJ|\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\d{14}))/i);
-      if (rawFirstMatch && rawFirstMatch[1].trim().length > 3 && !/^(?:NOME|RAZ[ÃA]O|DESTINAT)/i.test(rawFirstMatch[1].trim())) {
+      if (rawFirstMatch && rawFirstMatch[1].trim().length > 3 && !/^(?:NOME|RAZ[ÃA]O|DESTINAT)/i.test(rawFirstMatch[1].trim()) && !isInvalidRecipientName(rawFirstMatch[1].trim())) {
         destNome = rawFirstMatch[1].trim();
       }
     }
@@ -664,6 +664,39 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     destNome = sanitizeDestinatarioNome(destNome, destCNPJ, textFiscal, emitNome, emitCNPJRaw);
   }
 
+  // 2.5 Buscar CNPJ e Razão Social em layout invertido (onde valores aparecem antes dos rótulos NOME / RAZÃO SOCIAL ou 0-Emitente/1-Destinatário)
+  if (!destNome || isInvalidRecipientName(destNome) || !destCNPJ) {
+    const precedingMatch = textFiscal.match(
+      /(?:^|\n|\r)[^\n\r]*?(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})\s+([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)(?=\s*(?:\r?\n\s*)?(?:NOME\s*[\/\s]*RAZ[ÃA]O\s*SOCIAL|0\s*-\s*Emitente|1\s*-\s*Destinat[aá]rio))/i
+    );
+    if (precedingMatch) {
+      const candidateCnpj = precedingMatch[1].replace(/\D/g, '');
+      const candidateNome = precedingMatch[2].trim().replace(/[:=\-.,;]+$/, '').trim();
+      if (!isInvalidRecipientName(candidateNome) && (!destNome || isInvalidRecipientName(destNome))) {
+        destNome = sanitizeDestinatarioNome(candidateNome, candidateCnpj, textFiscal, emitNome, emitCNPJRaw);
+      }
+      if (!destCNPJ && candidateCnpj.length === 14 && !isCarrierCnpj(candidateCnpj) && candidateCnpj !== transpBlockCNPJ && candidateCnpj !== retiradaCNPJ && candidateCnpj !== entregaCNPJ) {
+        destCNPJ = candidateCnpj;
+      }
+    }
+
+    if (!destNome || isInvalidRecipientName(destNome) || !destCNPJ) {
+      const precedingRevMatch = textFiscal.match(
+        /(?:^|\n|\r)[^\n\r]*?([A-ZÀ-Ú0-9\s\.\,\-\/&]{3,80}?)\s+(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})(?=\s*(?:\r?\n\s*)?(?:NOME\s*[\/\s]*RAZ[ÃA]O\s*SOCIAL|0\s*-\s*Emitente|1\s*-\s*Destinat[aá]rio))/i
+      );
+      if (precedingRevMatch) {
+        const candidateNome = precedingRevMatch[1].trim().replace(/[:=\-.,;]+$/, '').trim();
+        const candidateCnpj = precedingRevMatch[2].replace(/\D/g, '');
+        if (!isInvalidRecipientName(candidateNome) && (!destNome || isInvalidRecipientName(destNome))) {
+          destNome = sanitizeDestinatarioNome(candidateNome, candidateCnpj, textFiscal, emitNome, emitCNPJRaw);
+        }
+        if (!destCNPJ && candidateCnpj.length === 14 && !isCarrierCnpj(candidateCnpj) && candidateCnpj !== transpBlockCNPJ && candidateCnpj !== retiradaCNPJ && candidateCnpj !== entregaCNPJ) {
+          destCNPJ = candidateCnpj;
+        }
+      }
+    }
+  }
+
   // 3. Buscar CNPJ imediatamente adjacente à Data de Emissão/Saída no cabeçalho fiscal (como no layout Copersucar e LDC)
   if (!destCNPJ) {
     const destPos = textFiscal.search(/DESTINAT[AÁ]RIO|REMETENTE/i);
@@ -687,7 +720,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
 
   // 3.5. Fallback para Cadastros Logísticos APENAS se o destinatário NÃO for a mesma empresa do emitente
   // Se for a mesma empresa/grupo (ex: filial/transferência/formação de lote), o CNPJ deve ser emitCNPJRaw, NUNCA inventar outra filial aleatória de cadastros!
-  if (!destCNPJ && destNome) {
+  if (!destCNPJ && destNome && !isInvalidRecipientName(destNome)) {
     const isSameEntityName = emitNome && (
       destNome.toUpperCase().includes(emitNome.toUpperCase()) ||
       emitNome.toUpperCase().includes(destNome.toUpperCase()) ||
@@ -702,11 +735,17 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
         destCNPJ = resolved.cnpj;
       }
     }
+  } else if (destCNPJ && (!destNome || isInvalidRecipientName(destNome))) {
+    const resolved = resolveDestinatarioCadastro(undefined, destCNPJ);
+    if (resolved && resolved.nome) {
+      destNome = resolved.nome;
+    }
   }
 
   // 4. Verificar se há destinatário distinto explicitamente identificado na nota
   const hasDistinctDest = Boolean(
     destNome &&
+    !isInvalidRecipientName(destNome) &&
     destNome !== 'Não informado' &&
     destNome !== 'DESTINATÁRIO NÃO IDENTIFICADO' &&
     destNome.length > 3 &&
@@ -727,7 +766,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
      (destCNPJ && emitCNPJRaw && (destCNPJ === emitCNPJRaw || destCNPJ.slice(0, 8) === emitCNPJRaw.slice(0, 8))));
 
   if (isSameEntityOrMissing && emitNome) {
-    if (!destNome || destNome === 'Não informado' || destNome === 'DESTINATÁRIO NÃO IDENTIFICADO') {
+    if (!destNome || isInvalidRecipientName(destNome) || destNome === 'Não informado' || destNome === 'DESTINATÁRIO NÃO IDENTIFICADO') {
       destNome = emitNome.toUpperCase();
     }
     if (!destCNPJ || isCarrierCnpj(destCNPJ) || destCNPJ === retiradaCNPJ || destCNPJ === entregaCNPJ) {
