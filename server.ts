@@ -515,7 +515,45 @@ ${JSON.stringify(promptPayload, null, 2)}`,
   }
 });
 
-// Endpoint de Auditoria e Preenchimento de Logística (Terminal e Transbordo) com Gemini 3.7 Flash
+  // Consulta conversacional sobre as notas carregadas, sem alterar o processamento determinístico.
+  app.post("/api/gemini/note-chat", async (req, res) => {
+    try {
+      const { question, notes } = req.body || {}
+      if (typeof question !== "string" || !question.trim() || !Array.isArray(notes) || notes.length === 0) {
+        return res.status(400).json({ error: "Pergunta e notas são obrigatórias." })
+      }
+
+      const ai = getGenAI()
+      if (!ai) return res.status(503).json({ error: "A IA não está configurada neste ambiente." })
+
+      const safeNotes = notes.slice(0, 200).map((note: any, index: number) => ({
+        indice: index + 1,
+        numero: note.numero || "S/N",
+        chave: note.chave || "Sem chave",
+        terminal: note.terminal || "Não informado",
+        transbordo: note.transbordo || "Não informado",
+        destinatario: note.destinatario || "Não informado",
+        cnpjDestinatario: note.cnpjDestinatario || "Não informado",
+        emitente: note.emitente || "Não informado",
+        produto: note.produto || "Não informado",
+        textoDocumento: String(note.textoDocumento || "").slice(0, 7000),
+      }))
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.7-flash",
+        contents: `Você é o assistente de conferência de notas fiscais deste sistema. Responda SOMENTE com base nos dados e textos das notas abaixo. Não altere dados e não invente. Se houver divergência entre campos processados e texto do documento, diga claramente qual é a divergência e cite a nota. Responda de forma direta, curta e em no máximo 4 frases. A busca do terminal deve respeitar o valor já processado; não classifique TEAG/TEG por CNPJ ou por menção isolada: só explique o que estiver documentado.\n\nPERGUNTA: ${question.trim().slice(0, 1000)}\n\nNOTAS:\n${JSON.stringify(safeNotes)}`,
+      })
+
+      const answer = String(response.text || "").trim()
+      return res.json({ answer: answer || "Não encontrei essa informação nas notas carregadas." })
+    } catch (err: any) {
+      console.error("Erro na rota /api/gemini/note-chat:", err)
+      return res.status(500).json({ error: err.message || "Erro ao consultar a IA." })
+    }
+  })
+
+  // Endpoint de Auditoria e Preenchimento de Logística (Terminal e Transbordo) com Gemini 3.7 Flash
+
 app.post("/api/gemini/audit-logistics", async (req, res) => {
   try {
     const { items } = req.body;

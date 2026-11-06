@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { parseNFE, verifyChaveCNPJ, type NFEData } from "@/lib/nfe-parser"
 import { type ParsedNFeData } from "@/lib/pdf-text-parser"
 import { ChaveDestinatarioDashboard } from "@/components/chave-destinatario-dashboard"
+import { NoteAiChat } from "@/components/note-ai-chat"
 import {
   auditarLogisticaComIA,
   type LogisticsAuditInputItem,
@@ -1197,6 +1198,23 @@ export function Dashboard({ files }: DashboardProps) {
           </Button>
         </div>
       )}
+
+      <NoteAiChat
+        notes={files.map((file) => {
+          const details = getNoteDetails(file, logisticsOverrides)
+          return {
+            numero: details.numero,
+            chave: details.chave,
+            terminal: details.terminal,
+            transbordo: details.transbordo,
+            destinatario: details.destNome,
+            cnpjDestinatario: details.destCNPJ,
+            emitente: details.emitNome,
+            produto: details.produto,
+            textoDocumento: `${details.infCpl || ""} ${file.pdfTextoOriginal || file.parsedData?.rawSnippet || ""} ${file.xmlContent || file.xmlGerado || ""}`.slice(0, 7000),
+          }
+        })}
+      />
 
       {/* Banner de transmissão em tempo real para o Monitor Realtime */}
       <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center justify-between gap-3 text-xs text-emerald-950 dark:text-emerald-200">
