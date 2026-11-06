@@ -1216,43 +1216,6 @@ export function Dashboard({ files }: DashboardProps) {
         })}
       />
 
-      {/* Banner de transmissão em tempo real para o Monitor Realtime */}
-      <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center justify-between gap-3 text-xs text-emerald-950 dark:text-emerald-200">
-        <div className="flex items-center gap-2">
-          <Radio className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0 animate-pulse" />
-          <span>
-            <strong>Espelho em Tempo Real Ativo:</strong> Este dashboard está sendo transmitido instantaneamente para a aba <strong>"Espelho da Conferência"</strong> no <strong>Monitor Realtime</strong> {lastMirrorSyncTime && `(última transmissão às ${lastMirrorSyncTime})`}.
-          </span>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            if (files && files.length > 0) {
-              const snap = buildConferenceDashboardSnapshot(files, undefined, logisticsOverrides, undefined)
-              publishConferenceDashboard(snap, true)
-              setLastMirrorSyncTime(snap.timeFormatted)
-            }
-          }}
-          className="h-7 text-[11px] bg-white dark:bg-emerald-900 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 font-semibold cursor-pointer shrink-0"
-        >
-          Sincronizar Espelho Agora
-        </Button>
-      </div>
-
-      {/* Banner explicativo de interação */}
-      <div className="p-3.5 bg-indigo-50/80 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/80 rounded-xl flex items-center justify-between gap-3 text-xs text-indigo-900 dark:text-indigo-200">
-        <div className="flex items-center gap-2.5">
-          <MousePointerClick className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0 animate-bounce" />
-          <span>
-            <strong>Dica Interativa:</strong> Clique em qualquer barra ou fatia dos gráficos abaixo para abrir a lista detalhada com todas as notas fiscais correspondentes e ver os ajustes aplicados pela IA.
-          </span>
-        </div>
-        <span className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 bg-white dark:bg-indigo-900 px-2.5 py-1 rounded-md shadow-xs border border-indigo-200 dark:border-indigo-700 shrink-0">
-          Interativo
-        </span>
-      </div>
 
       {/* Cards de resumo */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">

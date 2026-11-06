@@ -21,8 +21,9 @@ export function NoteAiChat({ notes }: { notes: NoteChatContext[] }) {
     try {
       const answer = await perguntarSobreNotas(currentQuestion, notes)
       setMessages((current) => [...current, { role: "assistant" as const, text: answer }].slice(-8))
-    } catch {
-      setMessages((current) => [...current, { role: "assistant" as const, text: "Não consegui consultar a IA agora. Tente novamente." }].slice(-8))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não consegui consultar a IA agora. Tente novamente."
+      setMessages((current) => [...current, { role: "assistant" as const, text: message }].slice(-8))
     } finally {
       setLoading(false)
     }
