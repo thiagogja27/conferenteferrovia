@@ -540,7 +540,7 @@ ${JSON.stringify(promptPayload, null, 2)}`,
       }))
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
+        model: "gemini-2.5-flash",
         contents: `Você é o assistente de conferência de notas fiscais deste sistema. Responda SOMENTE com base nos dados e textos das notas abaixo. Não altere dados e não invente. Se houver divergência entre campos processados e texto do documento, diga claramente qual é a divergência e cite a nota. Responda de forma direta, curta e em no máximo 4 frases. A busca do terminal deve respeitar o valor já processado; não classifique TEAG/TEG por CNPJ ou por menção isolada: só explique o que estiver documentado.\n\nPERGUNTA: ${question.trim().slice(0, 1000)}\n\nNOTAS:\n${JSON.stringify(safeNotes)}`,
       })
 
