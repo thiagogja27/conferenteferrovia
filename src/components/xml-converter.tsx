@@ -64,7 +64,7 @@ import {
   Truck,
   Package,
   FileSpreadsheet,
-  Map,
+  Map as MapIcon,
   Sparkles,
   FileCode,
   Folder,
@@ -246,6 +246,7 @@ export function XMLConverter() {
   const [suggestionsList, setSuggestionsList] = useState<SuggestionMessage[]>([])
   const [aiAuditMap, setAiAuditMap] = useState<Record<string, WeightAuditItemResult>>({})
   const [isExportingExcelWithAI, setIsExportingExcelWithAI] = useState(false)
+  const [isExportingCCT, setIsExportingCCT] = useState(false)
 
   useEffect(() => {
     const unsub = subscribeToSuggestions((list) => {
@@ -1371,6 +1372,180 @@ export function XMLConverter() {
     }
   };
 
+  const handleDownloadCCT = async () => {
+    const successfulFiles = files.filter((f) => f.nfeData !== null || f.parsedData !== null);
+    if (successfulFiles.length === 0) {
+      alert("Nenhuma nota processada com sucesso para exportar CCT.");
+      return;
+    }
+
+    setIsExportingCCT(true);
+    try {
+      let currentAuditMap = { ...aiAuditMap };
+      const pdfFiles = successfulFiles.filter(
+        (f) => f.isPdf || f.fileType === 'pdf' || f.fileName.toLowerCase().endsWith('.pdf') || !f.xmlContent?.startsWith('<?xml')
+      );
+
+      // Se houver notas de PDF, garantir a conferência da IA para apuração exata do peso
+      if (pdfFiles.length > 0) {
+        const itemsToAudit = pdfFiles.map((f) => {
+          const pesoLiquido = f.nfeData?.transportador?.pesoLiquido ? Number(f.nfeData.transportador.pesoLiquido) : 0;
+          const sumItensQtd = f.nfeData?.itens?.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0);
+          const initialQtd = (pesoLiquido && pesoLiquido > 0)
+            ? pesoLiquido
+            : (sumItensQtd && sumItensQtd > 0 ? sumItensQtd : (Number(f.nfeData?.transportador?.quantidade) || 0));
+
+          return {
+            id: f.nfeData?.chaveAcesso || f.fileName,
+            fileName: f.fileName,
+            chave: f.nfeData?.chaveAcesso,
+            numero: f.nfeData?.numero,
+            serie: f.nfeData?.serie,
+            pesoLido: initialQtd,
+            snippet: f.rawSnippet || f.parsedData?.rawSnippet || '',
+            xmlContent: f.xmlContent,
+            isPdf: true,
+          };
+        });
+
+        currentAuditMap = await conferirQuantidadesNotasPdfComIA(itemsToAudit, currentAuditMap);
+        setAiAuditMap(currentAuditMap);
+      }
+
+      // Deduplicação sem duplicatas baseada na Chave de Acesso
+      const uniqueCctMap = new Map<string, { chave: string; dataEmissao: string; pesoFiscal: number }>();
+
+      for (const file of successfulFiles) {
+        const nfe = file.nfeData;
+        const parsed = file.parsedData;
+        if (!nfe && !parsed) continue;
+
+        // Chave de acesso limpa (apenas dígitos)
+        const rawDigits = (nfe?.chaveAcesso || parsed?.chave || '').replace(/\D/g, '').trim();
+        const cleanKey = rawDigits.length === 44 ? rawDigits : (nfe?.chaveAcesso || parsed?.chave || '').trim();
+
+        // Identificador único para deduplicação (se tiver 44 dígitos usa a chave; senão usa numero+serie ou fileName)
+        const dedupKey = (cleanKey && cleanKey.length === 44)
+          ? cleanKey
+          : (nfe?.numero ? `${nfe.numero}_${nfe.serie || '0'}` : file.fileName);
+
+        // Data de emissão
+        const rawDate = nfe?.dataEmissao || parsed?.dhEmi || parsed?.dataEmissao || '';
+        let dataEmissao = rawDate ? String(rawDate).trim() : '';
+        if (/^\d{4}-\d{2}-\d{2}/.test(dataEmissao)) {
+          const [y, m, d] = dataEmissao.substring(0, 10).split('-');
+          dataEmissao = `${d}/${m}/${y}`;
+        } else if (/^\d{2}\/\d{2}\/\d{4}/.test(dataEmissao)) {
+          dataEmissao = dataEmissao.substring(0, 10);
+        }
+        if (!dataEmissao && cleanKey.length === 44) {
+          const aamm = cleanKey.substring(2, 6);
+          dataEmissao = `01/${aamm.substring(2, 4)}/20${aamm.substring(0, 2)}`;
+        }
+
+        // Peso fiscal: quantidade puxada pelo sistema de cada nota
+        const isPdf = file.isPdf || file.fileType === 'pdf' || file.fileName.toLowerCase().endsWith('.pdf') || !file.xmlContent?.startsWith('<?xml');
+        const pesoLiquido = nfe?.transportador?.pesoLiquido
+          ? Number(nfe.transportador.pesoLiquido)
+          : parsed?.pesoLiquido
+          ? Number(parsed.pesoLiquido)
+          : 0;
+
+        const sumItensQtd = nfe?.itens?.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0)
+          ?? parsed?.itens?.reduce((acc: number, i: any) => acc + (Number(i.quantidade) || 0), 0)
+          ?? 0;
+
+        const initialQtd = (pesoLiquido && pesoLiquido > 0)
+          ? pesoLiquido
+          : (sumItensQtd && sumItensQtd > 0
+              ? sumItensQtd
+              : (Number(nfe?.transportador?.quantidade) || Number(parsed?.quantidade) || Number(parsed?.peso) || 0));
+
+        let pesoFiscal = initialQtd;
+        if (isPdf) {
+          const mainId = nfe?.chaveAcesso || parsed?.chave || file.fileName;
+          const conf = obterQuantidadeConferidaIA(mainId, initialQtd, currentAuditMap, undefined, file.fileName);
+          if (conf && conf.quantidade > 0) {
+            pesoFiscal = conf.quantidade;
+          }
+        }
+
+        // Garantir inclusão sem duplicatas (prioriza a entrada com peso > 0)
+        if (!uniqueCctMap.has(dedupKey)) {
+          uniqueCctMap.set(dedupKey, {
+            chave: cleanKey || 'SEM CHAVE',
+            dataEmissao: dataEmissao || '-',
+            pesoFiscal: Number(pesoFiscal) || 0,
+          });
+        } else if (pesoFiscal > 0 && uniqueCctMap.get(dedupKey)?.pesoFiscal === 0) {
+          uniqueCctMap.set(dedupKey, {
+            chave: cleanKey || uniqueCctMap.get(dedupKey)!.chave,
+            dataEmissao: dataEmissao || uniqueCctMap.get(dedupKey)!.dataEmissao,
+            pesoFiscal: Number(pesoFiscal),
+          });
+        }
+      }
+
+      // Monta as linhas da planilha CCT com as colunas Chave, Data de Emissão e Peso Fiscal
+      const headers = ["Chave", "Data de Emissão", "Peso Fiscal"];
+      const cctRows: any[][] = [headers];
+
+      for (const item of uniqueCctMap.values()) {
+        cctRows.push([
+          item.chave,
+          item.dataEmissao,
+          item.pesoFiscal,
+        ]);
+      }
+
+      const worksheet = XLSX.utils.aoa_to_sheet(cctRows);
+
+      // Forçar células de Chave e Data como texto explícito ('s') para nunca virar notação científica no Excel
+      const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1:C1');
+      for (let R = 1; R <= range.e.r; ++R) {
+        const cellChave = XLSX.utils.encode_cell({ r: R, c: 0 });
+        if (worksheet[cellChave]) {
+          worksheet[cellChave].t = 's';
+          worksheet[cellChave].z = '@';
+        }
+        const cellData = XLSX.utils.encode_cell({ r: R, c: 1 });
+        if (worksheet[cellData]) {
+          worksheet[cellData].t = 's';
+          worksheet[cellData].z = '@';
+        }
+        const cellPeso = XLSX.utils.encode_cell({ r: R, c: 2 });
+        if (worksheet[cellPeso] && typeof worksheet[cellPeso].v === 'number') {
+          worksheet[cellPeso].t = 'n';
+        }
+      }
+
+      // Largura confortável das colunas
+      worksheet['!cols'] = [
+        { wch: 50 }, // Chave
+        { wch: 18 }, // Data de Emissão
+        { wch: 18 }, // Peso Fiscal
+      ];
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "CCT");
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(workbook, `cct_notas_${todayStr}.xlsx`);
+
+      logRealtimeActivity(
+        'export_excel',
+        'Exportação de Planilha CCT',
+        `Exportou planilha CCT contendo ${uniqueCctMap.size} nota(s) consolidada(s) sem duplicatas.`,
+        { uniqueCount: uniqueCctMap.size, totalFiles: successfulFiles.length }
+      );
+    } catch (err: any) {
+      console.error('Erro na exportação para CCT:', err);
+      alert('Ocorreu um erro ao exportar CCT: ' + (err.message || 'Falha ao processar'));
+    } finally {
+      setIsExportingCCT(false);
+    }
+  };
+
   const handleClear = async () => {
     cancelAndClearProcessing(true)
     resetActiveConferenceSnapshotId()
@@ -1971,7 +2146,7 @@ export function XMLConverter() {
                       <Button
                         onClick={handleDownloadExcel}
                         size='sm'
-                        disabled={isExportingExcelWithAI}
+                        disabled={isExportingExcelWithAI || isExportingCCT}
                         className='gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer shadow-xs'
                         title="Exporta planilha Excel consolidada. Para notas em PDF, a quantidade é sempre validada e corrigida pela conferência da IA."
                       >
@@ -1984,6 +2159,25 @@ export function XMLConverter() {
                           <>
                             <FileSpreadsheet className='h-4 w-4' />
                             <span>Exportar Excel (.xlsx)</span>
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        onClick={handleDownloadCCT}
+                        size='sm'
+                        disabled={isExportingCCT || isExportingExcelWithAI}
+                        className='gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold cursor-pointer shadow-xs'
+                        title="Exporta planilha CCT (Chave, Data de Emissão e Peso Fiscal sem duplicatas)."
+                      >
+                        {isExportingCCT ? (
+                          <>
+                            <Loader2 className='h-4 w-4 animate-spin text-white' />
+                            <span>Gerando CCT...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Truck className='h-4 w-4' />
+                            <span>Exportar CCT</span>
                           </>
                         )}
                       </Button>
@@ -2205,7 +2399,7 @@ export function XMLConverter() {
                       }`}
                     >
                       <div className="flex items-center gap-2.5">
-                        <Map className={`h-4 w-4 shrink-0 ${activeTab === 'map' ? 'text-white' : 'text-purple-600 dark:text-purple-400'}`} />
+                        <MapIcon className={`h-4 w-4 shrink-0 ${activeTab === 'map' ? 'text-white' : 'text-purple-600 dark:text-purple-400'}`} />
                         <span>Mapa Logístico</span>
                       </div>
                       <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${

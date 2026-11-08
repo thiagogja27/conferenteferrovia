@@ -31,6 +31,9 @@ import {
 } from 'recharts'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { getOperatorName } from '@/lib/firebase-realtime'
 import {
   RumoFileEntry,
@@ -42,6 +45,7 @@ import {
 } from '@/lib/rumo-pdf-parser'
 import { extractPdfTextWithPdfJs } from '@/lib/client-pdf-parser'
 import { notifyWhatsAppEvent } from '@/lib/whatsapp-notifications'
+import { ConfrontoSobreRodasView } from './confronto-sobre-rodas-view'
 
 interface RumoConverterTabProps {
   onNotify?: (message: string, type?: 'success' | 'warning' | 'error') => void
@@ -49,6 +53,25 @@ interface RumoConverterTabProps {
 
 export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) => {
   const [subTab, setSubTab] = useState<'conversao' | 'dashboard' | 'historico'>('conversao')
+  const [activeViewMode, setActiveViewMode] = useState<'desmembres' | 'confronto'>('desmembres')
+  const [isArrivalCutoffDialogOpen, setIsArrivalCutoffDialogOpen] = useState(false)
+  const [arrivalCutoff, setArrivalCutoff] = useState(() => {
+    const now = new Date()
+    const offset = now.getTimezoneOffset() * 60_000
+    return new Date(now.getTime() - offset).toISOString().slice(0, 16)
+  })
+  const [confirmedArrivalCutoff, setConfirmedArrivalCutoff] = useState<string | null>(null)
+
+  const openConfrontoWithArrivalCutoff = () => {
+    setIsArrivalCutoffDialogOpen(true)
+  }
+
+  const confirmArrivalCutoff = () => {
+    if (!arrivalCutoff) return
+    setConfirmedArrivalCutoff(arrivalCutoff)
+    setIsArrivalCutoffDialogOpen(false)
+    setActiveViewMode('confronto')
+  }
 
   // Estados de Upload e Processamento
   const [isProcessing, setIsProcessing] = useState(false)
@@ -421,6 +444,35 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
 
   return (
     <div className="space-y-6">
+      <Dialog open={isArrivalCutoffDialogOpen} onOpenChange={setIsArrivalCutoffDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Filtro do confronto Sobre Rodas</DialogTitle>
+            <DialogDescription>
+              Informe a data e hora inicial pela coluna Data Chegada do Excel Sobre Rodas.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="sobre-rodas-arrival-cutoff">Data e hora de chegada</Label>
+            <Input
+              id="sobre-rodas-arrival-cutoff"
+              type="datetime-local"
+              value={arrivalCutoff}
+              onChange={(event) => setArrivalCutoff(event.target.value)}
+              required
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsArrivalCutoffDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button disabled={!arrivalCutoff} onClick={confirmArrivalCutoff}>
+              Aplicar filtro
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Banner / Cabeçalho da Aba */}
       <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 shadow-xs transition-all">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -555,9 +607,9 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
           {activeResult && (
             <div className="space-y-6">
               {/* KPIs da Composição */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <Card className="p-4 border-zinc-200 dark:border-zinc-800">
-                  <span className="text-[11px] font-bold uppercase text-zinc-400 block mb-1">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <Card className="p-3.5 border-zinc-200 dark:border-zinc-800">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block mb-1">
                     Composição / Trem
                   </span>
                   <div className="text-base font-extrabold text-foreground truncate">
@@ -570,11 +622,11 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                   )}
                 </Card>
 
-                <Card className="p-4 border-zinc-200 dark:border-zinc-800">
-                  <span className="text-[11px] font-bold uppercase text-zinc-400 block mb-1">
+                <Card className="p-3.5 border-zinc-200 dark:border-zinc-800">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block mb-1">
                     Total de Vagões
                   </span>
-                  <div className="text-2xl font-extrabold text-indigo-600 dark:text-indigo-400">
+                  <div className="text-xl font-extrabold text-indigo-600 dark:text-indigo-400">
                     {activeResult.totalWagons}
                   </div>
                   <span className="text-[10px] text-zinc-500">
@@ -582,11 +634,11 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                   </span>
                 </Card>
 
-                <Card className="p-4 border-amber-200 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20">
-                  <span className="text-[11px] font-bold uppercase text-amber-700 dark:text-amber-400 block mb-1">
+                <Card className="p-3.5 border-amber-200 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400 block mb-1">
                     Desmembres Detectados
                   </span>
-                  <div className="text-2xl font-extrabold text-amber-600 dark:text-amber-400">
+                  <div className="text-xl font-extrabold text-amber-600 dark:text-amber-400">
                     {activeResult.desmembreCount}
                   </div>
                   <span className="text-[10px] text-amber-800 dark:text-amber-300">
@@ -596,9 +648,23 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                   </span>
                 </Card>
 
-                <Card className="p-4 border-zinc-200 dark:border-zinc-800">
-                  <span className="text-[11px] font-bold uppercase text-zinc-400 block mb-1">
-                    Exportação Excel
+                <Card className="p-3.5 border-purple-200 dark:border-purple-900/60 bg-purple-50/30 dark:bg-purple-950/20">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400 block mb-1">
+                    Confronto Sobre Rodas
+                  </span>
+                  <Button
+                    size="sm"
+                    onClick={openConfrontoWithArrivalCutoff}
+                    className="w-full mt-1 bg-purple-600 hover:bg-purple-700 text-white text-xs h-7.5 gap-1.5 cursor-pointer shadow-xs font-semibold"
+                  >
+                    <Scale className="h-3.5 w-3.5" />
+                    Abrir Confronto
+                  </Button>
+                </Card>
+
+                <Card className="p-3.5 border-zinc-200 dark:border-zinc-800">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block mb-1">
+                    Exportação Rumo
                   </span>
                   <Button
                     size="sm"
@@ -614,7 +680,7 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                         )
                       }
                     }}
-                    className="w-full mt-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-8 gap-1.5 cursor-pointer shadow-xs"
+                    className="w-full mt-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-7.5 gap-1.5 cursor-pointer shadow-xs font-semibold"
                   >
                     <Download className="h-3.5 w-3.5" />
                     Baixar .XLSX
@@ -622,10 +688,57 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                 </Card>
               </div>
 
-              {/* Resumo de Desmembres */}
-              {activeResult.desmembreCount > 0 && (
-                <Card className="border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/30 dark:bg-indigo-950/20">
-                  <CardHeader className="pb-2">
+              {/* Seletor de visualização: Desmembres da Composição vs. Confronto Sobre Rodas */}
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3 flex-wrap gap-2">
+                <div className="flex items-center gap-1.5 p-1 bg-zinc-100 dark:bg-zinc-800/80 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setActiveViewMode('desmembres')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-2 ${
+                      activeViewMode === 'desmembres'
+                        ? 'bg-white dark:bg-zinc-900 text-indigo-700 dark:text-indigo-300 shadow-xs'
+                        : 'text-zinc-600 dark:text-zinc-400 hover:text-foreground'
+                    }`}
+                  >
+                    <Layers className="h-3.5 w-3.5" />
+                    Desmembres da Composição
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-mono">
+                      {activeResult.desmembreCount}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openConfrontoWithArrivalCutoff}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-2 ${
+                      activeViewMode === 'confronto'
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'text-zinc-600 dark:text-zinc-400 hover:text-foreground'
+                    }`}
+                  >
+                    <Scale className="h-3.5 w-3.5" />
+                    Confronto Estoque Sobre Rodas
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 font-mono">
+                      Placa · NFE · Rateio
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {activeViewMode === 'confronto' ? (
+                <ConfrontoSobreRodasView
+                  aoaData={activeResult.aoaData}
+                  trainName={activeResult.trainName}
+                  prefixo={activeResult.prefixo}
+                  outputFileName={activeResult.outputFileName}
+                  onNotify={onNotify}
+                  arrivalCutoff={confirmedArrivalCutoff || undefined}
+                />
+              ) : (
+                <>
+                  {/* Resumo de Desmembres */}
+                  {activeResult.desmembreCount > 0 && (
+                    <Card className="border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/30 dark:bg-indigo-950/20">
+                      <CardHeader className="pb-2">
                     <CardTitle className="text-sm font-bold text-indigo-900 dark:text-indigo-200 flex items-center gap-2">
                       <Layers className="h-4 w-4 text-indigo-600" />
                       Resumo de Desmembres da Composição
@@ -832,10 +945,12 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                   </div>
                 </div>
               )}
-            </div>
+            </>
           )}
         </div>
       )}
+    </div>
+  )}
 
       {/* ========================================================================= */}
       {/* SUB-ABA 2: DASHBOARD OPERACIONAL BI                                       */}

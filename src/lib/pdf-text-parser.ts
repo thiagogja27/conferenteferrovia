@@ -13,6 +13,7 @@ export interface ParsedNFeData {
   cDV: string;
   natOp: string;
   dhEmi: string;
+  dataEmissao?: string;
   emitCNPJ: string;
   emitNome: string;
   emitFant: string;
@@ -1102,6 +1103,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
   const terminalEntrega = extractTerminalEntrega(text);
   const transbordo = extractTransbordo(text);
   const retirada = extractRetirada(text);
+  const emission = extractDanfeDataEmissao(text, chave);
 
   const parserData: ParsedNFeData = {
     chave,
@@ -1111,7 +1113,8 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     cNF,
     cDV,
     natOp,
-    dhEmi: new Date().toISOString().split('T')[0] + 'T12:00:00-03:00',
+    dhEmi: emission.dhEmi,
+    dataEmissao: emission.dataEmissao,
     emitCNPJ: emitCNPJFormatted,
     emitNome,
     emitFant: emitNome,
@@ -1567,4 +1570,138 @@ function extractRetirada(text: string): string {
     return match[1].trim();
   }
   return '';
+}
+
+/**
+ * Normaliza uma data no formato brasileiro para DD/MM/AAAA.
+ */
+export function normalizeDateString(raw: string): string {
+  if (!raw) return '';
+  const clean = raw.trim();
+  const parts = clean.split('/');
+  if (parts.length === 3) {
+    const d = parts[0].padStart(2, '0');
+    const m = parts[1].padStart(2, '0');
+    let y = parts[2];
+    if (y.length === 2) {
+      y = parseInt(y, 10) < 50 ? '20' + y : '19' + y;
+    }
+    return `${d}/${m}/${y}`;
+  }
+  return clean;
+}
+
+/**
+ * Converte data DD/MM/AAAA para formato SEFAZ ISO: YYYY-MM-DDTHH:mm:ss-03:00.
+ */
+export function convertDateToDhEmi(dateStr: string, timeStr?: string): string {
+  const norm = normalizeDateString(dateStr);
+  const parts = norm.split('/');
+  if (parts.length === 3) {
+    const [d, m, y] = parts;
+    let t = '12:00:00';
+    if (timeStr && /^\d{2}:\d{2}(?::\d{2})?$/.test(timeStr.trim())) {
+      const tClean = timeStr.trim();
+      t = tClean.length === 5 ? `${tClean}:00` : tClean;
+    }
+    return `${y}-${m}-${d}T${t}-03:00`;
+  }
+  return '';
+}
+
+/**
+ * Extrai a data de emissão real contida no texto do DANFE.
+ * Prioriza padrões explícitos como 'EMISSÃO: DD/MM/AAAA', cabeçalhos de data de emissão,
+ * dados do destinatário, e validação contra o AAMM da Chave de Acesso (44 dígitos).
+ */
+export function extractDanfeDataEmissao(text: string, chave?: string): { dataEmissao: string; dhEmi: string } {
+  if (!text) text = '';
+
+  let foundDate = '';
+  let foundTime = '';
+
+  // 1. Padrão explícito EMISSÃO: DD/MM/AAAA (comum no topo de DANFEs e canhotos)
+  const mEmissao = text.match(/(?:EMISS[ÃA]O|DT\.?\s*EMISS[ÃA]O|DATA\s*(?:DA|DE)?\s*EMISS[ÃA]O)\s*[:=-]?\s*(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?/i)
+    || text.match(/(?:EMISS[ÃA]O|DT\.?\s*EMISS[ÃA]O|DATA\s*(?:DA|DE)?\s*EMISS[ÃA]O)\s*[:=-]?\s*(\d{2}\/\d{2}\/\d{2})\b(?:\s+(\d{2}:\d{2}(?::\d{2})?))?/i);
+  if (mEmissao) {
+    foundDate = normalizeDateString(mEmissao[1]);
+    if (mEmissao[2]) foundTime = mEmissao[2];
+  }
+
+  // 2. Cabeçalho 'DATA DA EMISSÃO' seguido de data nas linhas subsequentes
+  if (!foundDate) {
+    const mDataHeader = text.match(/DATA\s*(?:DA|DE)?\s*EMISS[ÃA]O[\s\S]{0,120}?(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?/i)
+      || text.match(/DATA\s*(?:DA|DE)?\s*EMISS[ÃA]O[\s\S]{0,120}?(\d{2}\/\d{2}\/\d{2})\b(?:\s+(\d{2}:\d{2}(?::\d{2})?))?/i);
+    if (mDataHeader) {
+      foundDate = normalizeDateString(mDataHeader[1]);
+      if (mDataHeader[2]) foundTime = mDataHeader[2];
+    }
+  }
+
+  // 3. Destinatário: CNPJ seguido de Data de Emissão (típico da caixa DESTINATÁRIO/REMETENTE)
+  if (!foundDate) {
+    const mCnpjDate = text.match(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\s+(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?/i)
+      || text.match(/\b\d{14}\s+(\d{2}\/\d{2}\/\d{4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?/i)
+      || text.match(/\b\d{14}\s+(\d{2}\/\d{2}\/\d{2})\b(?:\s+(\d{2}:\d{2}(?::\d{2})?))?/i);
+    if (mCnpjDate) {
+      foundDate = normalizeDateString(mCnpjDate[1]);
+      if (mCnpjDate[2]) foundTime = mCnpjDate[2];
+    }
+  }
+
+  // 4. Verificação autoritativa com base na Chave de Acesso (SEFAZ: posições 2..6 correspondem a AAMM)
+  if (chave && chave.length === 44) {
+    const aa = chave.substring(2, 4);
+    const mm = chave.substring(4, 6);
+    const fullYear = parseInt(aa, 10) < 50 ? '20' + aa : '19' + aa;
+
+    // Se já encontramos uma data, verificar se o mês e ano batem com a chave
+    if (foundDate) {
+      const parts = foundDate.split('/');
+      if (parts.length === 3) {
+        const foundM = parts[1];
+        const foundY = parts[2];
+        if (foundM === mm && foundY === fullYear) {
+          const dhEmi = convertDateToDhEmi(foundDate, foundTime);
+          return { dataEmissao: foundDate, dhEmi };
+        }
+      }
+    }
+
+    // Se a data encontrada não bate com a chave ou não encontramos, procurar especificamente por DD/MM/AAAA com MM e AAAA da chave
+    const regexKeyDate = new RegExp(`\\b(\\d{2})\\/${mm}\\/${fullYear}\\b(?:\\s+(\\d{2}:\\d{2}(?::\\d{2})?))?`);
+    const mKeyDate = text.match(regexKeyDate);
+    if (mKeyDate) {
+      const date = `${mKeyDate[1]}/${mm}/${fullYear}`;
+      const dhEmi = convertDateToDhEmi(date, mKeyDate[2]);
+      return { dataEmissao: date, dhEmi };
+    }
+
+    const regexKeyDate2 = new RegExp(`\\b(\\d{2})\\/${mm}\\/${aa}\\b(?:\\s+(\\d{2}:\\d{2}(?::\\d{2})?))?`);
+    const mKeyDate2 = text.match(regexKeyDate2);
+    if (mKeyDate2) {
+      const date = `${mKeyDate2[1]}/${mm}/${fullYear}`;
+      const dhEmi = convertDateToDhEmi(date, mKeyDate2[2]);
+      return { dataEmissao: date, dhEmi };
+    }
+
+    // Se nenhuma data com o dia foi achada, mas a chave é válida, a emissão ocorreu naquele mês/ano da chave
+    const fallbackDate = `01/${mm}/${fullYear}`;
+    return { dataEmissao: fallbackDate, dhEmi: convertDateToDhEmi(fallbackDate) };
+  }
+
+  if (foundDate) {
+    return { dataEmissao: foundDate, dhEmi: convertDateToDhEmi(foundDate, foundTime) };
+  }
+
+  // Fallback seguro: hoje
+  const today = new Date();
+  const d = String(today.getDate()).padStart(2, '0');
+  const m = String(today.getMonth() + 1).padStart(2, '0');
+  const y = today.getFullYear();
+  const defaultDate = `${d}/${m}/${y}`;
+  return {
+    dataEmissao: defaultDate,
+    dhEmi: `${y}-${m}-${d}T12:00:00-03:00`,
+  };
 }
