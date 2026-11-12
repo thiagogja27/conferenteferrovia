@@ -1451,24 +1451,21 @@ export function XMLConverter() {
           ? Number(parsed.pesoLiquido)
           : 0;
 
-        const sumItensQtd = nfe?.itens?.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0)
-          ?? parsed?.itens?.reduce((acc: number, i: any) => acc + (Number(i.quantidade) || 0), 0)
+        const parsedProductQuantity = Number(parsed?.prodQCom) || 0;
+        const parsedProductUnit = String(parsed?.prodUCom || '').trim().toUpperCase();
+        const itemQuantity = nfe?.itens?.reduce((acc, item) => acc + (Number(item.quantidade) || 0), 0)
+          ?? parsed?.itens?.reduce((acc: number, item: any) => acc + (Number(item.quantidade) || 0), 0)
           ?? 0;
+        const itemUnit = String(nfe?.itens?.[0]?.unidade || parsed?.itens?.[0]?.unidade || '').trim().toUpperCase();
+        const productQuantity = parsedProductQuantity > 0 ? parsedProductQuantity : itemQuantity;
+        const productUnit = parsedProductQuantity > 0 ? parsedProductUnit : itemUnit;
+        const isTonnes = /^(TON|TONELADA|TONELADAS|TO|T)$/.test(productUnit);
 
-        const initialQtd = (pesoLiquido && pesoLiquido > 0)
-          ? pesoLiquido
-          : (sumItensQtd && sumItensQtd > 0
-              ? sumItensQtd
-              : (Number(nfe?.transportador?.quantidade) || Number(parsed?.quantidade) || Number(parsed?.peso) || 0));
-
-        let pesoFiscal = initialQtd;
-        if (isPdf) {
-          const mainId = nfe?.chaveAcesso || parsed?.chave || file.fileName;
-          const conf = obterQuantidadeConferidaIA(mainId, initialQtd, currentAuditMap, undefined, file.fileName);
-          if (conf && conf.quantidade > 0) {
-            pesoFiscal = conf.quantidade;
-          }
-        }
+        // Peso fiscal da CCT vem da quantidade da mercadoria na DANFE, não da IA
+        // nem do peso líquido/volume do transporte. Converter toneladas para kg.
+        const pesoFiscal = productQuantity > 0
+          ? productQuantity * (isTonnes ? 1000 : 1)
+          : (pesoLiquido || Number(nfe?.transportador?.quantidade) || Number(parsed?.quantidade) || Number(parsed?.peso) || 0);
 
         // Garantir inclusão sem duplicatas (prioriza a entrada com peso > 0)
         if (!uniqueCctMap.has(dedupKey)) {
@@ -2278,7 +2275,7 @@ export function XMLConverter() {
         {files.length > 0 ? (
           <Tabs value={activeTab} onValueChange={setActiveTab} className='w-full'>
             <div className="flex flex-col lg:flex-row items-start gap-6 w-full">
-              {/* Menu Lateral com opções empilhadas verticalmente */}
+              {/* Menu Lateral com opç��es empilhadas verticalmente */}
               <aside className="w-full lg:w-64 xl:w-72 shrink-0 lg:sticky lg:top-4 z-10">
                 <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-xs space-y-1">
                   <div className="px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 border-b border-zinc-100 dark:border-zinc-800/80 mb-2 flex items-center justify-between">
