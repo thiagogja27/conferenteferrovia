@@ -50,6 +50,7 @@ import {
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { verifyChaveCNPJ, parseNFE, type NFEData } from '@/lib/nfe-parser'
+import { parseDanfeText } from '@/lib/pdf-text-parser'
 import {
   sanitizeDestinatarioNome,
   formatCNPJ,
@@ -136,6 +137,26 @@ export function ChaveDestinatarioDashboard({
       const serie = nfe?.serie || parsed?.serie || '1'
       const chave = (nfe?.chaveAcesso || parsed?.chave || '').replace(/\D/g, '')
       const dataEmissao = nfe?.dataEmissao || parsed?.dhEmi || 'Não informada'
+      const hasValidDestCnpj = (value?: string | null) => {
+        const digits = (value || '').replace(/\D/g, '')
+        return digits.length === 11 || digits.length === 14
+      }
+      const hasValidDestName = (value?: string | null) => Boolean(value && !isInvalidRecipientName(value))
+      const sourceText = f.rawSnippet || parsed?.rawSnippet || ''
+      let recoveredParsed: ReturnType<typeof parseDanfeText>['data'] | null = null
+
+      if (
+        sourceText &&
+        chave.length === 44 &&
+        (!hasValidDestCnpj(nfe?.destinatario?.cpfCnpj) && !hasValidDestCnpj(parsed?.destCNPJ) ||
+          !hasValidDestName(nfe?.destinatario?.nome) && !hasValidDestName(parsed?.destNome))
+      ) {
+        try {
+          recoveredParsed = parseDanfeText(sourceText, f.fileName || '', chave).data
+        } catch {
+          recoveredParsed = null
+        }
+      }
 
       // Emitente
       let emitNome = 'Não informado'
@@ -149,12 +170,12 @@ export function ChaveDestinatarioDashboard({
 
       // Destinatário
       const rawDestNome =
-        [nfe?.destinatario?.nome, parsed?.destNome].find(
+        [recoveredParsed?.destNome, nfe?.destinatario?.nome, parsed?.destNome].find(
           (name) => name && !isInvalidRecipientName(name),
         ) || ''
 
       let rawDestCnpj =
-        [nfe?.destinatario?.cpfCnpj, parsed?.destCNPJ]
+        [recoveredParsed?.destCNPJ, nfe?.destinatario?.cpfCnpj, parsed?.destCNPJ]
           .map((value) => (value || '').replace(/\D/g, ''))
           .find((value) => value.length === 11 || value.length === 14) || ''
 
