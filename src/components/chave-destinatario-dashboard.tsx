@@ -593,7 +593,7 @@ export function ChaveDestinatarioDashboard({
       )}
 
       {/* Cards de Métricas Principais (KPIs Interativos) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Card 1: Total de Notas */}
         <Card
           className={`cursor-pointer transition-all hover:border-indigo-400 dark:hover:border-indigo-700 ${
@@ -684,7 +684,43 @@ export function ChaveDestinatarioDashboard({
           </CardContent>
         </Card>
 
-        {/* Card 4: Índice de Conformidade */}
+        {/* Card 4: Destinatário não informado */}
+        <Card
+          className={`cursor-pointer transition-all hover:border-amber-400 dark:hover:border-amber-700 bg-amber-50/20 dark:bg-amber-950/10 ${
+            filterStatus === 'NÃO INFORMADO' ? 'ring-2 ring-amber-500 shadow-md' : 'shadow-xs'
+          }`}
+          onClick={() => setFilterStatus('NÃO INFORMADO')}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              setFilterStatus('NÃO INFORMADO')
+            }
+          }}
+          aria-label={`Filtrar notas com destinatário não informado: ${stats.naoInformados.length}`}
+        >
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-xs font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+              Destinatário Não Informado
+            </CardTitle>
+            <div className="p-1 rounded-full bg-amber-100 dark:bg-amber-900/60 text-amber-600 dark:text-amber-400">
+              <HelpCircle className="h-4 w-4" aria-hidden="true" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 flex items-baseline gap-2">
+              <span>{stats.naoInformados.length}</span>
+              <span className="text-xs font-semibold text-amber-600/80">({stats.pctNaoInformados.toFixed(1)}%)</span>
+            </div>
+            <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1 flex items-center justify-between">
+              <span>Sem CNPJ ou dados do destinatário</span>
+              <span className="font-bold underline">Filtrar</span>
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Card 5: Índice de Conformidade */}
         <Card className="shadow-xs">
           <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
             <CardTitle className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">
