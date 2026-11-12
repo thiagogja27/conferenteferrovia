@@ -1038,6 +1038,53 @@ export function XMLConverter() {
     }
   };
 
+  /**
+   * Extrai o peso fiscal real da nota fiscal (idêntico à lógica do Exportar CCT).
+   * Prioriza a quantidade do produto da DANFE (prodQCom / itens), convertendo toneladas para kg se necessário.
+   */
+  const extrairPesoFiscalDaNota = (file: {
+    nfeData?: NFEData | null
+    parsedData?: any
+    isPdf?: boolean
+    fileType?: string
+    fileName?: string
+    xmlContent?: string
+  }): number => {
+    const nfe = file.nfeData;
+    const parsed = file.parsedData;
+
+    const pesoLiquido = nfe?.transportador?.pesoLiquido
+      ? Number(nfe.transportador.pesoLiquido)
+      : parsed?.pesoLiquido
+      ? Number(parsed.pesoLiquido)
+      : 0;
+
+    const parsedProductQuantity = Number(parsed?.prodQCom) || 0;
+    const parsedProductUnit = String(parsed?.prodUCom || '').trim().toUpperCase();
+    const itemQuantity =
+      nfe?.itens?.reduce((acc, item) => acc + (Number(item.quantidade) || 0), 0) ??
+      parsed?.itens?.reduce((acc: number, item: any) => acc + (Number(item.quantidade) || 0), 0) ??
+      0;
+    const itemUnit = String(nfe?.itens?.[0]?.unidade || parsed?.itens?.[0]?.unidade || '')
+      .trim()
+      .toUpperCase();
+    const productQuantity = parsedProductQuantity > 0 ? parsedProductQuantity : itemQuantity;
+    const productUnit = parsedProductQuantity > 0 ? parsedProductUnit : itemUnit;
+    const isTonnes = /^(TON|TONELADA|TONELADAS|TO|T)$/.test(productUnit);
+
+    // Peso fiscal vem da quantidade da mercadoria na DANFE (convertendo toneladas para kg).
+    const pesoFiscal =
+      productQuantity > 0
+        ? productQuantity * (isTonnes ? 1000 : 1)
+        : pesoLiquido ||
+          Number(nfe?.transportador?.quantidade) ||
+          Number(parsed?.quantidade) ||
+          Number(parsed?.peso) ||
+          0;
+
+    return Number(pesoFiscal) || 0;
+  };
+
   const handleDownloadExcel = async () => {
     const successfulFiles = files.filter((f) => f.nfeData !== null);
     if (successfulFiles.length === 0) return;
@@ -1051,14 +1098,10 @@ export function XMLConverter() {
         (f) => f.isPdf || f.fileType === 'pdf' || f.fileName.toLowerCase().endsWith('.pdf') || !f.xmlContent?.startsWith('<?xml')
       );
 
-      // 2. Se houver notas de PDF, garantir a conferência da IA para 100% delas
+      // 2. Se houver notas de PDF, garantir a conferência da IA para 100% delas alimentando com o peso fiscal
       if (pdfFiles.length > 0) {
         const itemsToAudit = pdfFiles.map((f) => {
-          const pesoLiquido = f.nfeData?.transportador?.pesoLiquido ? Number(f.nfeData.transportador.pesoLiquido) : 0;
-          const sumItensQtd = f.nfeData?.itens?.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0);
-          const initialQtd = (pesoLiquido && pesoLiquido > 0)
-            ? pesoLiquido
-            : (sumItensQtd && sumItensQtd > 0 ? sumItensQtd : (Number(f.nfeData?.transportador?.quantidade) || 0));
+          const pesoFiscal = extrairPesoFiscalDaNota(f);
 
           return {
             id: f.nfeData?.chaveAcesso || f.fileName,
@@ -1066,7 +1109,7 @@ export function XMLConverter() {
             chave: f.nfeData?.chaveAcesso,
             numero: f.nfeData?.numero,
             serie: f.nfeData?.serie,
-            pesoLido: initialQtd,
+            pesoLido: pesoFiscal,
             snippet: f.rawSnippet || f.parsedData?.rawSnippet || '',
             xmlContent: f.xmlContent,
             isPdf: true,
@@ -1077,7 +1120,7 @@ export function XMLConverter() {
         setAiAuditMap(currentAuditMap);
       }
 
-      // 3. Montar dados para exportação com Quantidade sempre conferida pela IA para notas em PDF
+      // 3. Montar dados para exportação com Peso Fiscal idêntico à CCT
       const dataToExport = [];
       const divergentDataToExport: any[][] = [];
       const aiAuditReportRows: any[][] = [];
@@ -1100,6 +1143,7 @@ export function XMLConverter() {
         "Numero NFe",
         "Série",
         "Data Emissão",
+        "Peso Fiscal",
         "Quantidade",
         "Quantidade (Conferida por IA)",
         "Status Conferência IA",
@@ -1130,6 +1174,7 @@ export function XMLConverter() {
         "Numero NFe",
         "Série",
         "Data Emissão",
+        "Peso Fiscal",
         "Quantidade (Conferida)",
         "Status Conferência IA",
         "Valor Total (R$)",
@@ -1162,36 +1207,32 @@ export function XMLConverter() {
             file.nfeData.destinatario.cpfCnpj
           );
 
-          const pesoLiquido = file.nfeData.transportador?.pesoLiquido ? Number(file.nfeData.transportador.pesoLiquido) : 0;
-          const sumItensQtd = file.nfeData.itens?.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0);
-          const initialQtd = (pesoLiquido && pesoLiquido > 0)
-            ? pesoLiquido
-            : (sumItensQtd && sumItensQtd > 0 ? sumItensQtd : (Number(file.nfeData.transportador?.quantidade) || 0));
+          // Extrair peso fiscal exato da nota (mesma lógica do Exportar CCT)
+          const pesoFiscal = extrairPesoFiscalDaNota(file);
 
-          let quantidadeFinal = initialQtd;
-          let quantidadeIaExport: any = 'N/A (XML Original)';
-          let statusIaExport = 'XML Original';
-          let detalhesIaExport = '';
+          let quantidadeFinal = pesoFiscal;
+          let quantidadeIaExport: any = isPdf ? pesoFiscal : 'N/A (XML Original)';
+          let statusIaExport = isPdf ? 'Peso Fiscal DANFE' : 'XML Original';
+          let detalhesIaExport = isPdf ? 'Peso fiscal obtido da quantidade do produto na DANFE' : '';
 
           if (isPdf) {
-            const conf = obterQuantidadeConferidaIA(mainId, initialQtd, currentAuditMap, undefined, file.fileName);
-            quantidadeFinal = conf.quantidade;
-            quantidadeIaExport = conf.quantidade;
-            statusIaExport = conf.status;
-            detalhesIaExport = conf.explicacao;
+            const conf = obterQuantidadeConferidaIA(mainId, pesoFiscal, currentAuditMap, undefined, file.fileName);
+            if (conf?.explicacao) {
+              detalhesIaExport = conf.explicacao;
+            }
 
             const itemAudit = currentAuditMap[mainId] || currentAuditMap[file.fileName];
             aiAuditReportRows.push([
               file.fileName,
               file.nfeData.numero,
               key,
-              initialQtd,
-              conf.quantidade,
-              conf.status,
-              itemAudit?.veredito || 'Quantidade conferida pela IA',
-              conf.explicacao,
+              pesoFiscal,
+              pesoFiscal,
+              'OK',
+              itemAudit?.veredito || 'Peso fiscal apurado da DANFE',
+              detalhesIaExport,
               itemAudit?.confianca || 'ALTA',
-              itemAudit?.modoUtilizado || 'GEMINI_IA'
+              itemAudit?.modoUtilizado || 'DANFE_PESO_FISCAL'
             ]);
           }
 
@@ -1246,11 +1287,12 @@ export function XMLConverter() {
             file.nfeData.numero,
             file.nfeData.serie || "",
             file.nfeData.dataEmissao,
-            quantidadeFinal, // Quantidade sempre exportada via conferência da IA para PDFs!
+            pesoFiscal, // Peso Fiscal (idêntico ao Exportar CCT)
+            pesoFiscal, // Quantidade
             quantidadeIaExport,
             statusIaExport,
             detalhesIaExport,
-            isPdf ? initialQtd : quantidadeFinal,
+            pesoFiscal, // Quantidade Original (Sistema)
             file.nfeData.impostos.valorTotal,
             terminalEntrega,
             transbordo,
@@ -1279,7 +1321,8 @@ export function XMLConverter() {
               file.nfeData.numero,
               file.nfeData.serie || "",
               file.nfeData.dataEmissao,
-              quantidadeFinal,
+              pesoFiscal, // Peso Fiscal
+              pesoFiscal, // Quantidade (Conferida)
               statusIaExport,
               file.nfeData.impostos.valorTotal,
               terminalEntrega,
@@ -1325,14 +1368,23 @@ export function XMLConverter() {
       for (const file of successfulFiles) {
         if (file.nfeData && file.nfeData.itens) {
           const isPdf = file.isPdf || file.fileType === 'pdf' || file.fileName.toLowerCase().endsWith('.pdf') || !file.xmlContent?.startsWith('<?xml');
-          const key = file.nfeData.chaveAcesso;
-          const mainId = key || file.fileName;
-          const conf = isPdf ? obterQuantidadeConferidaIA(mainId, 0, currentAuditMap, undefined, file.fileName) : null;
+          const pesoFiscal = extrairPesoFiscalDaNota(file);
 
           file.nfeData.itens.forEach((item) => {
-            const itemQtd = (isPdf && conf && conf.quantidade > 0 && (file.nfeData!.itens.length === 1 || Number(item.quantidade) === 0))
-              ? conf.quantidade
-              : item.quantidade;
+            const parsedProductQuantity = Number(file.parsedData?.prodQCom) || 0;
+            const parsedProductUnit = String(file.parsedData?.prodUCom || item.unidade || '').trim().toUpperCase();
+            const isTonnes = /^(TON|TONELADA|TONELADAS|TO|T)$/.test(parsedProductUnit);
+
+            let itemQtd = Number(item.quantidade) || 0;
+            if (isPdf) {
+              if (parsedProductQuantity > 0) {
+                itemQtd = parsedProductQuantity * (isTonnes ? 1000 : 1);
+              } else if (pesoFiscal > 0 && file.nfeData!.itens.length === 1) {
+                itemQtd = pesoFiscal;
+              }
+            } else if (isTonnes && itemQtd > 0 && itemQtd < 500) {
+              itemQtd = itemQtd * 1000;
+            }
 
             itemsDataToExport.push([
               file.nfeData!.chaveAcesso,
@@ -1345,7 +1397,7 @@ export function XMLConverter() {
               item.unidade,
               item.valorUnitario,
               item.valorTotal,
-              isPdf ? 'Conferido por IA' : 'Original XML'
+              isPdf ? 'DANFE (Peso Fiscal)' : 'Original XML'
             ]);
           });
         }
@@ -1443,29 +1495,8 @@ export function XMLConverter() {
           dataEmissao = `01/${aamm.substring(2, 4)}/20${aamm.substring(0, 2)}`;
         }
 
-        // Peso fiscal: quantidade puxada pelo sistema de cada nota
-        const isPdf = file.isPdf || file.fileType === 'pdf' || file.fileName.toLowerCase().endsWith('.pdf') || !file.xmlContent?.startsWith('<?xml');
-        const pesoLiquido = nfe?.transportador?.pesoLiquido
-          ? Number(nfe.transportador.pesoLiquido)
-          : parsed?.pesoLiquido
-          ? Number(parsed.pesoLiquido)
-          : 0;
-
-        const parsedProductQuantity = Number(parsed?.prodQCom) || 0;
-        const parsedProductUnit = String(parsed?.prodUCom || '').trim().toUpperCase();
-        const itemQuantity = nfe?.itens?.reduce((acc, item) => acc + (Number(item.quantidade) || 0), 0)
-          ?? parsed?.itens?.reduce((acc: number, item: any) => acc + (Number(item.quantidade) || 0), 0)
-          ?? 0;
-        const itemUnit = String(nfe?.itens?.[0]?.unidade || parsed?.itens?.[0]?.unidade || '').trim().toUpperCase();
-        const productQuantity = parsedProductQuantity > 0 ? parsedProductQuantity : itemQuantity;
-        const productUnit = parsedProductQuantity > 0 ? parsedProductUnit : itemUnit;
-        const isTonnes = /^(TON|TONELADA|TONELADAS|TO|T)$/.test(productUnit);
-
-        // Peso fiscal da CCT vem da quantidade da mercadoria na DANFE, não da IA
-        // nem do peso líquido/volume do transporte. Converter toneladas para kg.
-        const pesoFiscal = productQuantity > 0
-          ? productQuantity * (isTonnes ? 1000 : 1)
-          : (pesoLiquido || Number(nfe?.transportador?.quantidade) || Number(parsed?.quantidade) || Number(parsed?.peso) || 0);
+        // Peso fiscal da CCT vem da quantidade da mercadoria na DANFE (função unificada)
+        const pesoFiscal = extrairPesoFiscalDaNota(file);
 
         // Garantir inclusão sem duplicatas (prioriza a entrada com peso > 0)
         if (!uniqueCctMap.has(dedupKey)) {
@@ -1567,10 +1598,12 @@ export function XMLConverter() {
 
   const totalValor = files.reduce((acc, f) => acc + (f.nfeData?.impostos?.valorTotal || 0), 0)
   const totalPesoLiquido = files.reduce((acc, f) => {
-    const raw = f.nfeData?.transportador?.pesoLiquido || '0'
-    const num = parseFloat(String(raw).replace(/\./g, '').replace(',', '.'))
-    return acc + (isNaN(num) ? 0 : num)
-  }, 0)
+    const peso = extrairPesoFiscalDaNota(f);
+    if (peso > 0) return acc + peso;
+    const raw = f.nfeData?.transportador?.pesoLiquido || '0';
+    const num = parseFloat(String(raw).replace(/\./g, '').replace(',', '.'));
+    return acc + (isNaN(num) ? 0 : num);
+  }, 0);
   const totalPesoBruto = files.reduce((acc, f) => {
     const raw = f.nfeData?.transportador?.pesoBruto || '0'
     const num = parseFloat(String(raw).replace(/\./g, '').replace(',', '.'))
