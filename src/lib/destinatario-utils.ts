@@ -38,6 +38,7 @@ export function isInvalidRecipientName(name?: string): boolean {
   // Se for UF + Inscrição Estadual (ex: "MG 3448766990054", "SP 123456789") ou apenas dígitos
   if (/^[A-Z]{2}\s+\d{6,16}$/i.test(trimmed)) return true
   if (/^\d{6,16}$/.test(trimmed.replace(/\s+/g, ''))) return true
+  if (/^(?:N[ÃA]O\s+INFORMAD[OA]|SEM\s+(?:CNPJ|CPF)|DESTINAT[ÁA]RIO\s+N[ÃA]O\s+IDENTIFICAD[OA])$/i.test(trimmed)) return true
   if (
     /^(?:NOME|RAZ[ÃA]O|SOCIAL|DESTINAT|REMETENT|ENDERE|BAIRRO|MUNIC|CNPJ|CPF|CEP|INSC|UF|TELEFONE|FONE|DATA|CÁLCULO|CALCULO|VALOR|QUANTIDADE|ESP[EÉ]CIE|PESO|MARCA|N[UÚ]MERO|VOLUMES|TRANSPORTADOR|FRETE|BASE|-?ENTRADA|-?SA[IÍ]DA|DOCUMENTOAUXILIAR)/i.test(
       trimmed

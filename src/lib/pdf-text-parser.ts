@@ -661,6 +661,12 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
       }
     }
 
+    // CEP, inscrição estadual e outros números não podem ser usados como documento do destinatário.
+    const destDigits = destCNPJ.replace(/\D/g, '');
+    if (destDigits.length !== 11 && destDigits.length !== 14) {
+      destCNPJ = '';
+    }
+
     // Limpar e sanitizar nome inicial capturado
     destNome = sanitizeDestinatarioNome(destNome, destCNPJ, textFiscal, emitNome, emitCNPJRaw);
   }

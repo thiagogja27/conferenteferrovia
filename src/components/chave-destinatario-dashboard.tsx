@@ -55,6 +55,7 @@ import {
   formatCNPJ,
   extractCNPJFilial,
   isCarrierCnpj,
+  isInvalidRecipientName,
 } from '@/lib/destinatario-utils'
 
 export interface ChaveDestinatarioItem {
@@ -148,13 +149,14 @@ export function ChaveDestinatarioDashboard({
 
       // Destinatário
       const rawDestNome =
-        nfe?.destinatario?.nome && nfe.destinatario.nome !== 'DESTINATÁRIO NÃO IDENTIFICADO'
-          ? nfe.destinatario.nome
-          : parsed?.destNome && parsed.destNome !== 'DESTINATÁRIO NÃO IDENTIFICADO'
-          ? parsed.destNome
-          : ''
+        [nfe?.destinatario?.nome, parsed?.destNome].find(
+          (name) => name && !isInvalidRecipientName(name),
+        ) || ''
 
-      let rawDestCnpj = (nfe?.destinatario?.cpfCnpj || parsed?.destCNPJ || '').replace(/\D/g, '')
+      let rawDestCnpj =
+        [nfe?.destinatario?.cpfCnpj, parsed?.destCNPJ]
+          .map((value) => (value || '').replace(/\D/g, ''))
+          .find((value) => value.length === 11 || value.length === 14) || ''
 
       // Se o CNPJ pertencer a transportadora cadastrada (ex: 10.991.380 Liderança ou 02.387.241 Rumo), NÃO é destinatário!
       if (isCarrierCnpj(rawDestCnpj)) {
