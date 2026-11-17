@@ -280,7 +280,9 @@ export function buildConferenceDashboardSnapshot(
       produto = parsed.prodNome
     }
 
-    let terminal = nfe?.terminalEntrega || parsed?.terminalEntrega || 'Não Informado'
+    const explicitInfCpl = nfe?.informacoesComplementares || parsed?.infCpl || ''
+    const explicitTerminal = getExplicitGuarujaTerminalCode(explicitInfCpl)
+    let terminal = explicitTerminal || nfe?.terminalEntrega || parsed?.terminalEntrega || 'Não Informado'
     let transbordo = nfe?.transbordo || parsed?.transbordo || 'Não Informado'
     const retirada = parsed?.retirada || ''
     const fullDocText = `${infCpl} ${rawXml} ${f.rawSnippet || ''}`

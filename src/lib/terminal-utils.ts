@@ -8,9 +8,16 @@ export function isUltrafertil(_text: string): boolean {
 }
 
 /**
- * Desativado: o sistema não classifica mais por atalhos explícitos de TEAG/TEG.
+ * Busca explicitamente a palavra TEG ou TEAG nas informações complementares da nota
+ * antes de recorrer às expressões de entrega/alfandegado.
  */
-export function getExplicitGuarujaTerminalCode(_text: string): GuarujaTerminalCode | null {
+export function getExplicitGuarujaTerminalCode(text: string): GuarujaTerminalCode | null {
+  if (!text) return null
+  const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const match = normalized.match(/(?:^|[^A-Z0-9])(TEAG|TEG)(?=$|[^A-Z0-9])/i)
+  if (match && match[1]) {
+    return match[1].toUpperCase() as GuarujaTerminalCode
+  }
   return null
 }
 

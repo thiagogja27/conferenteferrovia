@@ -759,8 +759,14 @@ export function verifyChaveCNPJ(
 
 // Funções para extrair informações das informações complementares
 function extractTerminalEntrega(infComplementares: string, doc?: Document): string {
-  // 1. Extração mecânica das observações / infComplementares pelas até 15 palavras após o marcador
+  // 1. Prioridade: buscar explicitamente a palavra TEG ou TEAG nas informações complementares
   if (infComplementares) {
+    const explicitTerminal = getExplicitGuarujaTerminalCode(infComplementares)
+    if (explicitTerminal) {
+      return explicitTerminal
+    }
+
+    // 2. Caso não encontre TEG nem TEAG, usar a extração mecânica pelas expressões de entrega/alfandegado
     const fromDeliveryRule = extractTerminalFromDeliveryRule(infComplementares)
     if (fromDeliveryRule) {
       return fromDeliveryRule

@@ -28,7 +28,7 @@ import {
   subscribeCadastrosChanges,
   resolveDestinatarioCadastro,
 } from "@/lib/cadastros-logisticos-service"
-import { extractTerminalFromDeliveryRule } from "@/lib/terminal-utils"
+import { extractTerminalFromDeliveryRule, getExplicitGuarujaTerminalCode } from "@/lib/terminal-utils"
 
 import {
   BarChart,
@@ -212,7 +212,9 @@ export function getNoteDetails(
     produto = parsed.prodNome
   }
 
-  let terminal = nfe?.terminalEntrega || parsed?.terminalEntrega || "Não Informado"
+  const explicitInfCpl = nfe?.informacoesComplementares || parsed?.infCpl || ""
+  const explicitTerminal = getExplicitGuarujaTerminalCode(explicitInfCpl)
+  let terminal = explicitTerminal || nfe?.terminalEntrega || parsed?.terminalEntrega || "Não Informado"
   let transbordo = nfe?.transbordo || parsed?.transbordo || "Não Informado"
   let retirada = parsed?.retirada || ""
 

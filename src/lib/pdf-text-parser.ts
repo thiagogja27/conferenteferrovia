@@ -1106,7 +1106,7 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
     infCpl = text.length > 3000 ? text.slice(-3000).replace(/\s+/g, ' ').trim() : text.replace(/\s+/g, ' ').trim();
   }
 
-  const terminalEntrega = extractTerminalEntrega(text);
+  const terminalEntrega = extractTerminalEntrega(text, infCpl);
   const transbordo = extractTransbordo(text);
   const retirada = extractRetirada(text);
   const emission = extractDanfeDataEmissao(text, chave);
@@ -1386,7 +1386,7 @@ export function extractDataFromXML(xml: string, fileName: string): ParsedNFeData
   const transpPesoL = getTagValue('pesoL');
   const transpPesoB = getTagValue('pesoB');
 
-  let terminalEntrega = extractTerminalEntrega(infCpl || xml);
+  let terminalEntrega = extractTerminalEntrega(infCpl || xml, infCpl);
   let transbordo = extractTransbordo(infCpl || xml);
   let retirada = extractRetirada(infCpl || xml);
 
@@ -1452,10 +1452,17 @@ export function extractDataFromXML(xml: string, fileName: string): ParsedNFeData
   };
 }
 
-function extractTerminalEntrega(text: string): string {
+function extractTerminalEntrega(text: string, infCpl?: string): string {
+  // 1. Prioridade: buscar explicitamente a palavra TEG ou TEAG nas informações complementares
+  const sourceForExplicit = infCpl !== undefined ? infCpl : text;
+  const explicitTerminal = getExplicitGuarujaTerminalCode(sourceForExplicit);
+  if (explicitTerminal) {
+    return explicitTerminal;
+  }
+
   if (!text) return '';
 
-  // Extração 100% mecânica pelas até 15 palavras imediatamente após "alfandegado", "afadegado", "entrega:" e marcadores
+  // 2. Caso não encontre TEG nem TEAG, extração mecânica pelas até 15 palavras após expressões de entrega/alfandegado
   const fromDeliveryRule = extractTerminalFromDeliveryRule(text);
   if (fromDeliveryRule) {
     return fromDeliveryRule;
