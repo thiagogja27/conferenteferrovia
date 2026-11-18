@@ -12,7 +12,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { parseNFE, verifyChaveCNPJ, type NFEData } from '@/lib/nfe-parser'
+import { parseNFE, verifyChaveCNPJ, extractCfopFromNote, type NFEData } from '@/lib/nfe-parser'
 import { parsePdfClientSide } from '@/lib/client-pdf-parser'
 import { normalizeNfeRecipient, prioritizeSavedRecipient } from '@/lib/pdf-recipient-resolution'
 import { deduplicateNfesByAccessKey } from '@/lib/nfe-deduplication'
@@ -1143,6 +1143,7 @@ export function XMLConverter() {
         "Numero NFe",
         "Série",
         "Data Emissão",
+        "CFOP",
         "Peso Fiscal",
         "Quantidade",
         "Quantidade (Conferida por IA)",
@@ -1174,6 +1175,7 @@ export function XMLConverter() {
         "Numero NFe",
         "Série",
         "Data Emissão",
+        "CFOP",
         "Peso Fiscal",
         "Quantidade (Conferida)",
         "Status Conferência IA",
@@ -1268,6 +1270,7 @@ export function XMLConverter() {
           const transbordo = details.transbordo && details.transbordo !== "Não Informado" ? details.transbordo : (file.nfeData.transbordo || "Não Informado");
           const retirada = details.retirada || file.nfeData.retirada || "-";
           const tipoProduto = details.produto || file.nfeData.tipoProduto || "-";
+          const cfop = details.cfop && details.cfop !== "-" ? details.cfop : extractCfopFromNote(file);
 
           const rowData = [
             file.fileName,
@@ -1287,6 +1290,7 @@ export function XMLConverter() {
             file.nfeData.numero,
             file.nfeData.serie || "",
             file.nfeData.dataEmissao,
+            cfop,
             pesoFiscal, // Peso Fiscal (idêntico ao Exportar CCT)
             pesoFiscal, // Quantidade
             quantidadeIaExport,
@@ -1321,6 +1325,7 @@ export function XMLConverter() {
               file.nfeData.numero,
               file.nfeData.serie || "",
               file.nfeData.dataEmissao,
+              cfop,
               pesoFiscal, // Peso Fiscal
               pesoFiscal, // Quantidade (Conferida)
               statusIaExport,
@@ -3086,12 +3091,12 @@ export function XMLConverter() {
 
         {/* Módulo Conversor Resumo Rumo Preservado em Memória */}
         <div className={converterMode === 'conversor-resumo-rumo' ? 'block' : 'hidden'}>
-          <RumoConverterTab />
+          <RumoConverterTab loadedFiles={files} />
         </div>
 
         {/* Módulo Conversor Resumo VLI Preservado em Memória */}
         <div className={converterMode === 'conversor-resumo-vli' ? 'block' : 'hidden'}>
-          <VliConverterTab />
+          <VliConverterTab loadedFiles={files} />
         </div>
 
         {/* Módulo MDF-e x EXCEL (Vagões) Preservado */}

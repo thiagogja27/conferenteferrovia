@@ -15,6 +15,7 @@ import {
   Filter,
   ArrowRight,
   Info,
+  Scale,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -26,12 +27,17 @@ import {
 } from '@/lib/vli-excel-parser'
 import { notifyWhatsAppEvent } from '@/lib/whatsapp-notifications'
 import { getOperatorName } from '@/lib/firebase-realtime'
+import { ConfrontoSobreRodasView } from './confronto-sobre-rodas-view'
+import { extractResumoItemsFromVli } from '@/lib/confronto-sobre-rodas-service'
+import { PlanilhaDigitacaoModal } from './planilha-digitacao-modal'
+import { mapVliToDigitacaoRows } from '@/lib/planilha-digitacao-export'
 
 interface VliConverterTabProps {
   onNotify?: (message: string, type?: 'success' | 'warning' | 'error') => void
+  loadedFiles?: any[]
 }
 
-export const VliConverterTab: React.FC<VliConverterTabProps> = ({ onNotify }) => {
+export const VliConverterTab: React.FC<VliConverterTabProps> = ({ onNotify, loadedFiles = [] }) => {
   // Estados de Upload e Processamento
   const [isProcessing, setIsProcessing] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -44,9 +50,16 @@ export const VliConverterTab: React.FC<VliConverterTabProps> = ({ onNotify }) =>
   const [activeFileName, setActiveFileName] = useState<string | null>(null)
 
   // Filtros e conferência
+  const [activeViewMode, setActiveViewMode] = useState<'desmembres' | 'confronto'>('desmembres')
+  const [isDigitacaoModalOpen, setIsDigitacaoModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [viewFilter, setViewFilter] = useState<'desmembres' | 'todos'>('desmembres')
   const [completedRows, setCompletedRows] = useState<number[]>([])
+
+  const vliResumoItems = useMemo(
+    () => (activeResult ? extractResumoItemsFromVli(activeResult) : []),
+    [activeResult]
+  )
 
   // Processa o arquivo Excel VLI
   const handleFileUpload = async (file: File) => {
@@ -62,6 +75,7 @@ export const VliConverterTab: React.FC<VliConverterTabProps> = ({ onNotify }) =>
     setErrorMessage(null)
     setSuccessMessage(null)
     setCompletedRows([])
+    setActiveViewMode('desmembres')
 
     try {
       const arrayBuffer = await file.arrayBuffer()
@@ -310,7 +324,7 @@ export const VliConverterTab: React.FC<VliConverterTabProps> = ({ onNotify }) =>
       {activeResult && (
         <div className="space-y-6">
           {/* Cartões KPIs */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <Card className="p-4 border-zinc-200 dark:border-zinc-800">
               <span className="text-[11px] font-bold uppercase text-zinc-400 block mb-1">
                 Composição / Trem
@@ -349,6 +363,20 @@ export const VliConverterTab: React.FC<VliConverterTabProps> = ({ onNotify }) =>
               </span>
             </Card>
 
+            <Card className="p-4 border-purple-200 dark:border-purple-900/60 bg-purple-50/30 dark:bg-purple-950/20">
+              <span className="text-[11px] font-bold uppercase text-purple-700 dark:text-purple-400 block mb-1">
+                Confronto Sobre Rodas
+              </span>
+              <Button
+                size="sm"
+                onClick={() => setActiveViewMode('confronto')}
+                className="w-full mt-1 bg-purple-600 hover:bg-purple-700 text-white text-xs h-8 gap-1.5 cursor-pointer shadow-xs font-semibold"
+              >
+                <Scale className="h-3.5 w-3.5" />
+                Abrir Confronto
+              </Button>
+            </Card>
+
             <Card className="p-4 border-zinc-200 dark:border-zinc-800">
               <span className="text-[11px] font-bold uppercase text-zinc-400 block mb-1">
                 Exportar Desmembres
@@ -376,9 +404,66 @@ export const VliConverterTab: React.FC<VliConverterTabProps> = ({ onNotify }) =>
             </Card>
           </div>
 
-          {/* Ocorrências por CNPJ Destinatário */}
-          {activeResult.desmembreCount > 0 && (
-            <Card className="border-sky-200 dark:border-sky-900/60 bg-sky-50/30 dark:bg-sky-950/20">
+          {/* Seletor de visualização: Desmembres VLI vs. Confronto Sobre Rodas */}
+          <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3 flex-wrap gap-2">
+            <div className="flex items-center gap-1.5 p-1 bg-zinc-100 dark:bg-zinc-800/80 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setActiveViewMode('desmembres')}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-2 ${
+                  activeViewMode === 'desmembres'
+                    ? 'bg-white dark:bg-zinc-900 text-sky-700 dark:text-sky-300 shadow-xs'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:text-foreground'
+                }`}
+              >
+                <Layers className="h-3.5 w-3.5" />
+                Desmembres VLI
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-mono">
+                  {activeResult.desmembreCount}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveViewMode('confronto')}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-2 ${
+                  activeViewMode === 'confronto'
+                    ? 'bg-purple-600 text-white shadow-xs'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:text-foreground'
+                }`}
+              >
+                <Scale className="h-3.5 w-3.5" />
+                Confronto Estoque Sobre Rodas
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 font-mono">
+                  Placa · NFE · Rateio
+                </span>
+              </button>
+            </div>
+
+            <Button
+              size="sm"
+              onClick={() => setIsDigitacaoModalOpen(true)}
+              title="Formalizar Planilha de Digitação (Vagão, Bruto, NFe, Data NFe, Rateio, Chave NF, Mercadoria, Fornecedor, Operação, CNPJ Dest., Data, Hora, CFOP)"
+              className="bg-sky-600 hover:bg-sky-700 text-white text-xs h-8.5 px-3.5 gap-1.5 cursor-pointer shadow-xs font-semibold"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              Planilha de Digitação (.xlsx)
+            </Button>
+          </div>
+
+          {activeViewMode === 'confronto' ? (
+            <ConfrontoSobreRodasView
+              resumoItems={vliResumoItems}
+              sourceLabel="Resumo VLI"
+              trainName={activeResult.metadata.prefixoTrem}
+              prefixo={activeResult.metadata.prefixoTrem}
+              outputFileName={activeResult.outputFileName}
+              onNotify={onNotify}
+            />
+          ) : (
+            <>
+              {/* Ocorrências por CNPJ Destinatário */}
+              {activeResult.desmembreCount > 0 && (
+                <Card className="border-sky-200 dark:border-sky-900/60 bg-sky-50/30 dark:bg-sky-950/20">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-bold text-sky-900 dark:text-sky-200 flex items-center gap-2">
                   <Layers className="h-4 w-4 text-sky-600" />
@@ -601,7 +686,21 @@ export const VliConverterTab: React.FC<VliConverterTabProps> = ({ onNotify }) =>
               </table>
             </div>
           </div>
+            </>
+          )}
         </div>
+      )}
+
+      {activeResult && (
+        <PlanilhaDigitacaoModal
+          open={isDigitacaoModalOpen}
+          onClose={() => setIsDigitacaoModalOpen(false)}
+          rows={mapVliToDigitacaoRows(activeResult)}
+          baseFileName={activeResult.metadata.prefixoTrem || activeResult.outputFileName}
+          sourceLabel="Resumo VLI"
+          loadedNotes={loadedFiles}
+          onNotify={onNotify}
+        />
       )}
     </div>
   )

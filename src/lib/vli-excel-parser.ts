@@ -25,6 +25,16 @@ export interface VliRowData {
   cnpjDest: string
   cnpjDestFormatted: string
   destinatario?: string
+  remetente?: string
+  fornecedor?: string
+  mercadoria?: string
+  operacao?: string
+  data?: string
+  hora?: string
+  pesoBrutoNumeric?: number
+  rateioNumeric?: number
+  pesoNfNumeric?: number
+  pesoLiquidoNumeric?: number
   rawRow: Record<string, any>
   originalRowIndex: number
 }
@@ -60,6 +70,25 @@ export function cleanCnpjDigits(rawCnpj: string | number | undefined | null): st
 }
 
 /**
+ * Normaliza a placa do vagão VLI garantindo o prefixo HFE quando vier apenas numérica
+ * Ex: "0604046" -> "HFE0604046"
+ */
+export function normalizeVliWagonPlate(rawVagao: string | number | undefined | null): string {
+  if (rawVagao === undefined || rawVagao === null) return ''
+  const upper = String(rawVagao).toUpperCase().trim()
+  if (!upper) return ''
+
+  const alphanumeric = upper.replace(/[^A-Z0-9]/g, '')
+  if (!alphanumeric) return upper
+
+  if (/^\d+$/.test(alphanumeric)) {
+    return `HFE${alphanumeric}`
+  }
+
+  return alphanumeric
+}
+
+/**
  * Normaliza string para comparação sem acento e em minúsculas
  */
 function normalizeHeader(str: string): string {
@@ -90,12 +119,18 @@ export function parseVliExcelData(
     throw new Error('A planilha está vazia ou não contém abas válidas.')
   }
 
-  // Converte a planilha em matriz 2D bruta
+  // Converte a planilha em matriz 2D bruta (formatada) e matriz numérica exata
   const rawSheet: any[][] = XLSX.utils.sheet_to_json(ws, {
     header: 1,
     defval: '',
     raw: false,
     dateNF: 'dd/mm/yyyy',
+  })
+
+  const rawValuesSheet: any[][] = XLSX.utils.sheet_to_json(ws, {
+    header: 1,
+    defval: '',
+    raw: true,
   })
 
   if (!rawSheet || rawSheet.length === 0) {
@@ -202,6 +237,12 @@ export function parseVliExcelData(
   let colChaveNf = -1
   let colCnpjDest = -1
   let colDestinatario = -1
+  let colRemetente = -1
+  let colFornecedor = -1
+  let colMercadoria = -1
+  let colOperacao = -1
+  let colDataCarreg = -1
+  let colHora = -1
 
   normalizedHeaders.forEach((header, idx) => {
     if (header === 'vagao' || header.startsWith('vagao')) {
@@ -212,7 +253,7 @@ export function parseVliExcelData(
       if (colTara === -1) colTara = idx
     } else if (header === 'peso liquido' || header === 'peso liq' || header === 'liquido') {
       if (colPesoLiquido === -1) colPesoLiquido = idx
-    } else if (header === 'peso' || header === 'peso bruto' || header === 'tb') {
+    } else if (header === 'peso' || header === 'peso bruto' || header === 'tb' || header === 'bruto') {
       if (colPesoBruto === -1) colPesoBruto = idx
     } else if (header === 'nfe' || header === 'nf' || header === 'nota fiscal' || header.startsWith('nfe')) {
       if (colNfe === -1) colNfe = idx
@@ -237,6 +278,18 @@ export function parseVliExcelData(
       header.includes('destinatario')
     ) {
       if (colDestinatario === -1) colDestinatario = idx
+    } else if (header.includes('fornecedor')) {
+      if (colFornecedor === -1) colFornecedor = idx
+    } else if (header.includes('remetente') || header === 'emitente') {
+      if (colRemetente === -1) colRemetente = idx
+    } else if (header.includes('mercadoria') || header === 'produto' || header.includes('descricao produto')) {
+      if (colMercadoria === -1) colMercadoria = idx
+    } else if (header === 'operacao' || header.includes('operacao')) {
+      if (colOperacao === -1) colOperacao = idx
+    } else if (header === 'hora' || header.includes('horario') || header.includes('hora')) {
+      if (colHora === -1) colHora = idx
+    } else if (header === 'data' || (header.includes('data') && !header.includes('nf'))) {
+      if (colDataCarreg === -1) colDataCarreg = idx
     }
   })
 
@@ -278,9 +331,10 @@ export function parseVliExcelData(
     const row = rawSheet[r]
     if (!row || !Array.isArray(row)) continue
 
-    const vagaoVal = String(row[colVagao] || '').trim()
+    const rawVagaoVal = String(row[colVagao] || '').trim()
     // Ignora linhas de totalização ou vazias
-    if (!vagaoVal || /total|m[eé]dia|resumo/i.test(vagaoVal)) continue
+    if (!rawVagaoVal || /total|m[eé]dia|resumo/i.test(rawVagaoVal)) continue
+    const vagaoVal = normalizeVliWagonPlate(rawVagaoVal)
 
     const osVal = colOs !== -1 ? String(row[colOs] || '').trim() : ''
     const taraVal = colTara !== -1 ? String(row[colTara] || '').trim() : ''
@@ -308,6 +362,30 @@ export function parseVliExcelData(
     }
 
     const destinatarioVal = colDestinatario !== -1 ? String(row[colDestinatario] || '').trim() : ''
+    const remetenteVal = colRemetente !== -1 ? String(row[colRemetente] || '').trim() : ''
+    const fornecedorVal = colFornecedor !== -1 ? String(row[colFornecedor] || '').trim() : ''
+    const mercadoriaVal = colMercadoria !== -1 ? String(row[colMercadoria] || '').trim() : ''
+    const operacaoVal = colOperacao !== -1 ? String(row[colOperacao] || '').trim() : ''
+    const dataVal = colDataCarreg !== -1 ? String(row[colDataCarreg] || '').trim() : ''
+    const horaVal = colHora !== -1 ? String(row[colHora] || '').trim() : ''
+
+    const rawValuesRow = rawValuesSheet[r] || []
+    const getNumericVal = (colIdx: number, strFallback: string): number | undefined => {
+      if (colIdx !== -1 && typeof rawValuesRow[colIdx] === 'number' && !isNaN(rawValuesRow[colIdx])) {
+        return Math.round(rawValuesRow[colIdx] * 1000) / 1000
+      }
+      if (strFallback) {
+        const cleaned = strFallback.replace(/\s/g, '').replace(/\./g, '').replace(',', '.')
+        const parsed = parseFloat(cleaned)
+        if (!isNaN(parsed)) return Math.round(parsed * 1000) / 1000
+      }
+      return undefined
+    }
+
+    const pesoBrutoNumeric = getNumericVal(colPesoBruto, pesoBrutoVal)
+    const rateioNumeric = getNumericVal(colRateio, rateioVal)
+    const pesoNfNumeric = getNumericVal(colPesoNf, pesoNfVal)
+    const pesoLiquidoNumeric = getNumericVal(colPesoLiquido, pesoLiqVal)
 
     const cleanCnpj = cleanCnpjDigits(cnpjDestVal)
     const formattedCnpj = cleanCnpj ? formatCnpj(cleanCnpj) : (cnpjDestVal || '-')
@@ -333,6 +411,16 @@ export function parseVliExcelData(
       cnpjDest: cleanCnpj || cnpjDestVal,
       cnpjDestFormatted: formattedCnpj,
       destinatario: destinatarioVal,
+      remetente: remetenteVal,
+      fornecedor: fornecedorVal,
+      mercadoria: mercadoriaVal,
+      operacao: operacaoVal,
+      data: dataVal,
+      hora: horaVal,
+      pesoBrutoNumeric,
+      rateioNumeric,
+      pesoNfNumeric,
+      pesoLiquidoNumeric,
       rawRow: rawRowObj,
       originalRowIndex: r,
     }

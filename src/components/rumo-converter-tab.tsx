@@ -31,9 +31,6 @@ import {
 } from 'recharts'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { getOperatorName } from '@/lib/firebase-realtime'
 import {
   RumoFileEntry,
@@ -46,32 +43,18 @@ import {
 import { extractPdfTextWithPdfJs } from '@/lib/client-pdf-parser'
 import { notifyWhatsAppEvent } from '@/lib/whatsapp-notifications'
 import { ConfrontoSobreRodasView } from './confronto-sobre-rodas-view'
+import { PlanilhaDigitacaoModal } from './planilha-digitacao-modal'
+import { mapRumoToDigitacaoRows } from '@/lib/planilha-digitacao-export'
 
 interface RumoConverterTabProps {
   onNotify?: (message: string, type?: 'success' | 'warning' | 'error') => void
+  loadedFiles?: any[]
 }
 
-export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) => {
+export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify, loadedFiles = [] }) => {
   const [subTab, setSubTab] = useState<'conversao' | 'dashboard' | 'historico'>('conversao')
   const [activeViewMode, setActiveViewMode] = useState<'desmembres' | 'confronto'>('desmembres')
-  const [isArrivalCutoffDialogOpen, setIsArrivalCutoffDialogOpen] = useState(false)
-  const [arrivalCutoff, setArrivalCutoff] = useState(() => {
-    const now = new Date()
-    const offset = now.getTimezoneOffset() * 60_000
-    return new Date(now.getTime() - offset).toISOString().slice(0, 16)
-  })
-  const [confirmedArrivalCutoff, setConfirmedArrivalCutoff] = useState<string | null>(null)
-
-  const openConfrontoWithArrivalCutoff = () => {
-    setIsArrivalCutoffDialogOpen(true)
-  }
-
-  const confirmArrivalCutoff = () => {
-    if (!arrivalCutoff) return
-    setConfirmedArrivalCutoff(arrivalCutoff)
-    setIsArrivalCutoffDialogOpen(false)
-    setActiveViewMode('confronto')
-  }
+  const [isDigitacaoModalOpen, setIsDigitacaoModalOpen] = useState(false)
 
   // Estados de Upload e Processamento
   const [isProcessing, setIsProcessing] = useState(false)
@@ -444,35 +427,6 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
 
   return (
     <div className="space-y-6">
-      <Dialog open={isArrivalCutoffDialogOpen} onOpenChange={setIsArrivalCutoffDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Filtro do confronto Sobre Rodas</DialogTitle>
-            <DialogDescription>
-              Informe a data e hora inicial pela coluna Data Chegada do Excel Sobre Rodas.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="sobre-rodas-arrival-cutoff">Data e hora de chegada</Label>
-            <Input
-              id="sobre-rodas-arrival-cutoff"
-              type="datetime-local"
-              value={arrivalCutoff}
-              onChange={(event) => setArrivalCutoff(event.target.value)}
-              required
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsArrivalCutoffDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button disabled={!arrivalCutoff} onClick={confirmArrivalCutoff}>
-              Aplicar filtro
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Banner / Cabeçalho da Aba */}
       <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-5 shadow-xs transition-all">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -654,7 +608,7 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                   </span>
                   <Button
                     size="sm"
-                    onClick={openConfrontoWithArrivalCutoff}
+                    onClick={() => setActiveViewMode('confronto')}
                     className="w-full mt-1 bg-purple-600 hover:bg-purple-700 text-white text-xs h-7.5 gap-1.5 cursor-pointer shadow-xs font-semibold"
                   >
                     <Scale className="h-3.5 w-3.5" />
@@ -708,7 +662,7 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                   </button>
                   <button
                     type="button"
-                    onClick={openConfrontoWithArrivalCutoff}
+                    onClick={() => setActiveViewMode('confronto')}
                     className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-2 ${
                       activeViewMode === 'confronto'
                         ? 'bg-purple-600 text-white shadow-xs'
@@ -722,6 +676,16 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                     </span>
                   </button>
                 </div>
+
+                <Button
+                  size="sm"
+                  onClick={() => setIsDigitacaoModalOpen(true)}
+                  title="Formalizar Planilha de Digitação (Vagão, Bruto, NFe, Data NFe, Rateio, Chave NF, Mercadoria, Fornecedor, Operação, CNPJ Dest., Data, Hora, CFOP)"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs h-8.5 px-3.5 gap-1.5 cursor-pointer shadow-xs font-semibold"
+                >
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                  Planilha de Digitação (.xlsx)
+                </Button>
               </div>
 
               {activeViewMode === 'confronto' ? (
@@ -731,7 +695,6 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
                   prefixo={activeResult.prefixo}
                   outputFileName={activeResult.outputFileName}
                   onNotify={onNotify}
-                  arrivalCutoff={confirmedArrivalCutoff || undefined}
                 />
               ) : (
                 <>
@@ -1313,6 +1276,18 @@ export const RumoConverterTab: React.FC<RumoConverterTabProps> = ({ onNotify }) 
             )}
           </CardContent>
         </Card>
+      )}
+
+      {activeResult && (
+        <PlanilhaDigitacaoModal
+          open={isDigitacaoModalOpen}
+          onClose={() => setIsDigitacaoModalOpen(false)}
+          rows={mapRumoToDigitacaoRows(activeResult)}
+          baseFileName={activeResult.trainName || activeResult.prefixo || activeResult.outputFileName}
+          sourceLabel="Resumo Rumo"
+          loadedNotes={loadedFiles}
+          onNotify={onNotify}
+        />
       )}
     </div>
   )

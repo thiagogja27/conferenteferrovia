@@ -1017,6 +1017,42 @@ export function extractMercadoria(
   return 'N/I'
 }
 
+export function extractCfopFromNote(nota?: any): string {
+  const nfe = nota?.nfeData || nota
+
+  const itens = nfe?.itens
+  if (Array.isArray(itens)) {
+    for (const item of itens) {
+      const cfop = String(item?.cfop || '').trim()
+      if (/^[1-7]\d{3}$/.test(cfop)) return cfop
+    }
+  }
+
+  const directCfop = String(nota?.cfop || nfe?.cfop || nota?.parsedData?.cfop || '').trim()
+  if (/^[1-7]\d{3}$/.test(directCfop)) return directCfop
+
+  const xml = String(
+    nota?.xmlContent ||
+    nota?.xmlGerado ||
+    nfe?.xmlContent ||
+    nfe?.xmlGerado ||
+    ''
+  )
+  const xmlMatch = xml.match(/<(?:ns\d+:)?CFOP[^>]*>([^<]+)<\/(?:ns\d+:)?CFOP\s*>/i)
+  if (xmlMatch?.[1]) {
+    const cfop = xmlMatch[1].replace(/\D/g, '').trim()
+    if (/^[1-7]\d{3}$/.test(cfop)) return cfop
+  }
+
+  const text = [
+    nota?.rawSnippet,
+    nota?.parsedData?.rawText,
+    nfe?.informacoesComplementares,
+  ].filter(Boolean).join(' ')
+  const textMatch = text.match(/\b([1-7]\d{3})\b/)
+  return textMatch?.[1] || ''
+}
+
 /**
  * Extrai e formata a Data de Emissão.
  * Se tiver rawDate (ex: '2024-03-15T...', '15/03/2024'), formata para DD/MM/AAAA.

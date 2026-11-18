@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
+import { normalizeVliWagonPlate, type VliExtractionResult } from '@/lib/vli-excel-parser'
 
 export interface ResumoItem {
   vagao: string
@@ -50,38 +51,6 @@ export interface ConfrontoSummary {
 }
 
 /**
- * Mantém registros cuja Data Chegada seja igual ou posterior ao corte informado.
- * Aceita os formatos produzidos pelo parser de Excel e os formatos ISO.
- */
-export function filterSobreRodasRowsByArrival(
-  rows: SobreRodasRow[],
-  cutoff: string
-): SobreRodasRow[] {
-  const cutoffDate = new Date(cutoff)
-  if (Number.isNaN(cutoffDate.getTime())) return rows
-
-  return rows.filter((row) => {
-    const raw = String(row.matrizDataChegada || '').trim()
-    if (!raw) return false
-
-    let parsed: Date
-    const isoMatch = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[T ](\d{1,2}:\d{2})(?::\d{2})?)?/)
-    const brMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}:\d{2}))?/)
-
-    if (isoMatch) {
-      parsed = new Date(raw.replace(' ', 'T'))
-    } else if (brMatch) {
-      const [, day, month, year, time = '00:00'] = brMatch
-      parsed = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${time}:00`)
-    } else {
-      parsed = new Date(raw)
-    }
-
-    return !Number.isNaN(parsed.getTime()) && parsed.getTime() >= cutoffDate.getTime()
-  })
-}
-
-/**
  * Sanitiza identificador de placa/vagão (maiúsculo, remove hífens, espaços e caracteres especiais)
  */
 export function sanitizeWagonPlate(str: any): string {
@@ -93,17 +62,60 @@ export function sanitizeWagonPlate(str: any): string {
 }
 
 /**
- * Sanitiza número de NF (apenas dígitos, sem zeros à esquerda)
+ * Sanitiza número de NF (remove série se presente com hífen/barra e remove zeros à esquerda)
+ * Ex: "50-153207" -> "153207", "1-239166" -> "239166", "000153207" -> "153207"
  */
 export function sanitizeNfeNumber(str: any): string {
-  const raw = String(str || '').trim()
-  if (!raw) return ''
+  if (!str) return ''
+  const s = String(str).trim()
 
-  const withoutSeries = raw.includes('-') ? raw.split('-').pop() || '' : raw
-  const digits = withoutSeries.replace(/\D/g, '')
+  // Se tiver hífen (ex: "50-153207" ou "1 - 239166")
+  if (s.includes('-')) {
+    const parts = s.split('-').map((p) => p.replace(/\D/g, '').replace(/^0+/, ''))
+    const last = parts[parts.length - 1]
+    const first = parts[0]
+    // A nota fiscal é o número principal (geralmente >= 3 dígitos ou maior que a série)
+    if (last && (!first || last.length >= first.length)) {
+      return last
+    }
+    if (first) return first
+  }
+
+  // Se tiver barra (ex: "50/153207" ou "153207/50")
+  if (s.includes('/')) {
+    const parts = s.split('/').map((p) => p.replace(/\D/g, '').replace(/^0+/, ''))
+    const p1 = parts[0]
+    const p2 = parts[1]
+    if (p2 && p1 && p2.length >= p1.length) return p2
+    if (p1) return p1
+  }
+
+  const digits = s.replace(/\D/g, '')
   if (!digits) return ''
   const trimmed = digits.replace(/^0+/, '')
   return trimmed || '0'
+}
+
+/**
+ * Compara dois números de Nota Fiscal garantindo equivalência mesmo com série acoplada
+ * Ex: "50-153207" é igual a "153207"
+ */
+export function isNfeEqual(val1: any, val2: any): boolean {
+  if (!val1 || !val2) return false
+  const s1 = sanitizeNfeNumber(val1)
+  const s2 = sanitizeNfeNumber(val2)
+  if (s1 && s2 && s1 === s2) return true
+
+  // Verificação de sufixo caso a série de 1 a 3 dígitos esteja grudada sem separador (ex: "50153207" e "153207")
+  const d1 = String(val1).replace(/\D/g, '').replace(/^0+/, '')
+  const d2 = String(val2).replace(/\D/g, '').replace(/^0+/, '')
+  if (d1 && d2) {
+    if (d1 === d2) return true
+    if (d1.length > d2.length && d1.endsWith(d2) && d1.length - d2.length <= 3) return true
+    if (d2.length > d1.length && d2.endsWith(d1) && d2.length - d1.length <= 3) return true
+  }
+
+  return false
 }
 
 /**
@@ -159,6 +171,96 @@ export function extractResumoItemsFromAoa(aoaData: string[][]): ResumoItem[] {
       remetenteNf: (r[16] || '').trim(),
       destinatarioNf: (r[17] || '').trim(),
       isDesmembre,
+    }
+  })
+}
+
+/**
+ * Extrai os itens de composição a partir do resultado estruturado do Relatório Resumo VLI
+ */
+export function extractResumoItemsFromVli(vliResult: VliExtractionResult): ResumoItem[] {
+  if (!vliResult || !vliResult.allRows || vliResult.allRows.length === 0) return []
+
+  const desmembreSet = new Set(
+    (vliResult.desmembreWagons || [])
+      .map((v) => sanitizeWagonPlate(normalizeVliWagonPlate(v)))
+      .filter(Boolean)
+  )
+
+  return vliResult.allRows.map((row) => {
+    const normalizedVagao = normalizeVliWagonPlate(row.vagao)
+    const cleanPlate = sanitizeWagonPlate(normalizedVagao)
+    const isDesmembre = cleanPlate ? desmembreSet.has(cleanPlate) : false
+
+    let pesoRateio: string | number = ''
+    if (row.rateioNumeric !== undefined && row.rateioNumeric > 0) {
+      pesoRateio = row.rateioNumeric
+    } else if (row.rateio) {
+      pesoRateio = row.rateio
+    } else if (row.pesoNfNumeric !== undefined && row.pesoNfNumeric > 0) {
+      pesoRateio = row.pesoNfNumeric
+    } else if (row.pesoNf) {
+      pesoRateio = row.pesoNf
+    } else if (row.pesoLiquidoNumeric !== undefined && row.pesoLiquidoNumeric > 0) {
+      pesoRateio = row.pesoLiquidoNumeric
+    } else if (row.pesoLiquido) {
+      pesoRateio = row.pesoLiquido
+    }
+
+    let mercadoria = (row.mercadoria || '').trim()
+    if (!mercadoria && row.rawRow) {
+      const mercKey = Object.keys(row.rawRow).find((k) => /mercadoria|produto/i.test(k))
+      if (mercKey && row.rawRow[mercKey]) {
+        mercadoria = String(row.rawRow[mercKey]).trim()
+      }
+    }
+
+    const destinatarioNf = (
+      row.destinatario ||
+      (row.cnpjDestFormatted && row.cnpjDestFormatted !== '-' ? row.cnpjDestFormatted : '') ||
+      row.cnpjDest ||
+      ''
+    ).trim()
+
+    return {
+      vagao: normalizedVagao,
+      mercadoria,
+      notaFiscal: (row.nfe || '').trim(),
+      chaveNfe: (row.chaveNf || '').replace(/\s/g, '').trim(),
+      dataNf: (row.dataNfe || '').trim(),
+      pesoRateio,
+      remetenteNf: (row.remetente || '').trim(),
+      destinatarioNf,
+      isDesmembre,
+    }
+  })
+}
+
+/**
+ * Alinha a unidade do Peso Rateio quando o resumo está em toneladas (< 500) e o Sobre Rodas em kg (>= 500)
+ */
+export function alignResumoRateioUnits(
+  resumoRows: ResumoItem[],
+  sobreRodasRows: SobreRodasRow[]
+): ResumoItem[] {
+  if (!resumoRows.length || !sobreRodasRows.length) return resumoRows
+
+  const srWeights = sobreRodasRows.map((r) => parseRateioNumber(r.matrizRateio)).filter((w) => w > 0)
+  const resumoWeights = resumoRows.map((r) => parseRateioNumber(r.pesoRateio)).filter((w) => w > 0)
+
+  if (srWeights.length === 0 || resumoWeights.length === 0) return resumoRows
+
+  const hasKgSobreRodas = srWeights.some((w) => w >= 500)
+  const allResumoInTons = resumoWeights.every((w) => w < 500)
+
+  if (!hasKgSobreRodas || !allResumoInTons) return resumoRows
+
+  return resumoRows.map((item) => {
+    const n = parseRateioNumber(item.pesoRateio)
+    if (n <= 0) return item
+    return {
+      ...item,
+      pesoRateio: Math.round(n * 1000),
     }
   })
 }
@@ -482,7 +584,7 @@ export function executeConfronto(
       const sSrNfe = sanitizeNfeNumber(matchedSobreRodas.matrizNfe)
 
       placaMatch = Boolean(sResumoPlate && sSrPlate && sResumoPlate === sSrPlate)
-      nfeMatch = Boolean(sResumoNfe && sSrNfe && sResumoNfe === sSrNfe)
+      nfeMatch = isNfeEqual(resumo.notaFiscal, matchedSobreRodas.matrizNfe)
       rateioMatch = isRateioEqual(resumoRateio, matchedSobreRodas.matrizRateio)
     }
 
@@ -557,98 +659,134 @@ export function executeConfronto(
 /**
  * Exporta o resultado do confronto exatamente com as 3 seções do modelo da planilha enviada pelo usuário
  */
-export async function exportConfrontoExcel(
+export function exportConfrontoExcel(
   items: ConfrontoResultItem[],
   trainOrFileName: string = 'confronto_sobre_rodas'
-): Promise<void> {
-  const { Workbook } = await import('exceljs')
-  const workbook = new Workbook()
-  workbook.creator = 'Conferente Ferrovia'
-  workbook.created = new Date()
-  const sheet = workbook.addWorksheet('Confronto Sobre Rodas', {
-    views: [{ state: 'frozen', xSplit: 0, ySplit: 2 }],
-    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
-    autoFilter: 'A2:S2',
-  })
+): void {
+  const wb = XLSX.utils.book_new()
 
-  const headers = [
-    'Vagão', 'Mercadoria', 'Nota Fiscal', 'Chave NFE', 'Peso Rateio', 'Destinatário NF',
-    'Matriz PLACA', 'Matriz NFE', 'Matriz RATEIO', 'Matriz ID EXPORT', 'Matriz NOME EXPORT',
-    'Matriz ID FORNECEDOR', 'Matriz NOME FORNECEDOR', 'Matriz OPERACAO RDS',
-    'Matriz PRODUTO DIGITADO', 'Matriz DATA CHEGADA', 'PLACA', 'NFE', 'RATEIO',
+  // Montar array de arrays (AOA) com duas linhas de cabeçalho
+  // Linha 1: Títulos de Seção Mesclados
+  // Colunas A a F (0..5): RESUMO COMPOSIÇÃO
+  // Colunas G a P (6..15): ESTOQUE SOBRE RODAS
+  // Colunas Q a S (16..18): CONFRONTO
+  const row1 = [
+    'RESUMO COMPOSIÇÃO', '', '', '', '', '',
+    'ESTOQUE SOBRE RODAS', '', '', '', '', '', '', '', '', '',
+    'CONFRONTO', '', '',
   ]
 
-  sheet.mergeCells('A1:F1')
-  sheet.mergeCells('G1:P1')
-  sheet.mergeCells('Q1:S1')
-  sheet.getCell('A1').value = 'RESUMO COMPOSIÇÃO'
-  sheet.getCell('G1').value = 'ESTOQUE SOBRE RODAS'
-  sheet.getCell('Q1').value = 'CONFRONTO'
+  // Linha 2: Colunas Exatas da Imagem
+  const row2 = [
+    // Seção 1: RESUMO COMPOSIÇÃO
+    'Vagão',
+    'Mercadoria',
+    'Nota Fiscal',
+    'Chave NFE',
+    'Peso Rateio',
+    'Destinatário NF',
+    // Seção 2: ESTOQUE SOBRE RODAS
+    'Matriz PLACA',
+    'Matriz NFE',
+    'Matriz RATEIO',
+    'Matriz ID EXPORT',
+    'Matriz NOME EXPORT',
+    'Matriz ID FORNECEDOR',
+    'Matriz NOME FORNECEDOR',
+    'Matriz OPERACAO RDS',
+    'Matriz PRODUTO DIGITADO',
+    'Matriz DATA CHEGADA',
+    // Seção 3: CONFRONTO
+    'PLACA',
+    'NFE',
+    'RATEIO',
+  ]
 
-  sheet.addRow(headers)
-  sheet.getRow(1).height = 28
-  sheet.getRow(2).height = 38
+  const dataRows = items.map((it) => {
+    const res = it.resumo
+    const sr = it.sobreRodas
 
-  const sectionColors = ['0284C7', '9333EA', '059669']
-  ;[1, 7, 17].forEach((column, index) => {
-    const endColumn = index === 0 ? 6 : index === 1 ? 16 : 19
-    for (let current = column; current <= endColumn; current++) {
-      const cell = sheet.getRow(1).getCell(current)
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${sectionColors[index]}` } }
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 }
-      cell.alignment = { horizontal: 'center', vertical: 'middle' }
+    const formatRateio = (val: any) => {
+      const num = parseRateioNumber(val)
+      return isNaN(num) || num === 0 ? val : num
     }
+
+    return [
+      // RESUMO COMPOSIÇÃO
+      res.vagao || '',
+      res.mercadoria || '',
+      res.notaFiscal || '',
+      res.chaveNfe || '',
+      formatRateio(res.pesoRateio),
+      res.destinatarioNf || '',
+      // ESTOQUE SOBRE RODAS
+      sr?.matrizPlaca || '',
+      sr?.matrizNfe || '',
+      sr ? formatRateio(sr.matrizRateio) : '',
+      sr?.matrizIdExport || '',
+      sr?.matrizNomeExport || '',
+      sr?.matrizIdFornecedor || '',
+      sr?.matrizNomeFornecedor || '',
+      sr?.matrizOperacaoRds || '',
+      sr?.matrizProdutoDigitado || '',
+      sr?.matrizDataChegada || '',
+      // CONFRONTO (VERDADEIRO / FALSO)
+      it.placaMatch ? 'VERDADEIRO' : 'FALSO',
+      it.nfeMatch ? 'VERDADEIRO' : 'FALSO',
+      it.rateioMatch ? 'VERDADEIRO' : 'FALSO',
+    ]
   })
 
-  sheet.getRow(2).eachCell((cell, column) => {
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: column <= 6 ? 'FFE0F2FE' : column <= 16 ? 'FFF3E8FF' : 'FFD1FAE5' } }
-    cell.font = { bold: true, color: { argb: 'FF27272A' }, size: 9 }
-    cell.alignment = { horizontal: column <= 6 || column >= 17 ? (column >= 17 ? 'center' : 'left') : 'left', vertical: 'middle', wrapText: true }
-    cell.border = { bottom: { style: 'thin', color: { argb: 'FFA1A1AA' } } }
-  })
+  const aoa = [row1, row2, ...dataRows]
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
 
-  items.forEach((item) => {
-    const row = sheet.addRow([
-      item.resumo.vagao || '', item.resumo.mercadoria || '', item.resumo.notaFiscal || '', item.resumo.chaveNfe || '',
-      parseRateioNumber(item.resumo.pesoRateio) || '', item.resumo.destinatarioNf || '',
-      item.sobreRodas?.matrizPlaca || '', item.sobreRodas?.matrizNfe || '', item.sobreRodas ? parseRateioNumber(item.sobreRodas.matrizRateio) || '' : '',
-      item.sobreRodas?.matrizIdExport || '', item.sobreRodas?.matrizNomeExport || '', item.sobreRodas?.matrizIdFornecedor || '',
-      item.sobreRodas?.matrizNomeFornecedor || '', item.sobreRodas?.matrizOperacaoRds || '', item.sobreRodas?.matrizProdutoDigitado || '',
-      item.sobreRodas?.matrizDataChegada || '', item.placaMatch ? 'VERDADEIRO' : 'FALSO',
-      item.nfeMatch ? 'VERDADEIRO' : 'FALSO', item.rateioMatch ? 'VERDADEIRO' : 'FALSO',
-    ])
-    row.height = 22
-    row.eachCell((cell, column) => {
-      cell.font = { size: 9, bold: column === 1 || column === 3 }
-      cell.alignment = { vertical: 'middle', wrapText: true, horizontal: column >= 17 ? 'center' : column === 5 || column === 9 ? 'right' : 'left' }
-      cell.border = { bottom: { style: 'hair', color: { argb: 'FFD4D4D8' } }, right: { style: 'hair', color: { argb: 'FFE4E4E7' } } }
-      if (column >= 17) {
-        const isMatch = String(cell.value) === 'VERDADEIRO'
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isMatch ? 'FFD1FAE5' : 'FFFFE4E6' } }
-        cell.font = { bold: true, color: { argb: isMatch ? 'FF166534' : 'FFBE123C' }, size: 9 }
-      }
-    })
-  })
+  // Mesclagens na Linha 1 (índice 0)
+  ws['!merges'] = [
+    // RESUMO COMPOSIÇÃO: Col 0 a 5, Linha 0
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+    // ESTOQUE SOBRE RODAS: Col 6 a 15, Linha 0
+    { s: { r: 0, c: 6 }, e: { r: 0, c: 15 } },
+    // CONFRONTO: Col 16 a 18, Linha 0
+    { s: { r: 0, c: 16 }, e: { r: 0, c: 18 } },
+  ]
 
-  const widths = [16, 24, 16, 48, 14, 32, 16, 16, 16, 18, 24, 18, 24, 34, 30, 22, 14, 14, 14]
-  widths.forEach((width, index) => { sheet.getColumn(index + 1).width = width })
-  sheet.autoFilter = { from: 'A2', to: 'S2' }
+  // Larguras das Colunas
+  ws['!cols'] = [
+    { wch: 14 }, // Vagão
+    { wch: 22 }, // Mercadoria
+    { wch: 14 }, // Nota Fiscal
+    { wch: 46 }, // Chave NFE
+    { wch: 14 }, // Peso Rateio
+    { wch: 32 }, // Destinatário NF
+    { wch: 14 }, // Matriz PLACA
+    { wch: 14 }, // Matriz NFE
+    { wch: 14 }, // Matriz RATEIO
+    { wch: 18 }, // Matriz ID EXPORT
+    { wch: 24 }, // Matriz NOME EXPORT
+    { wch: 18 }, // Matriz ID FORNECEDOR
+    { wch: 24 }, // Matriz NOME FORNECEDOR
+    { wch: 34 }, // Matriz OPERACAO RDS
+    { wch: 30 }, // Matriz PRODUTO DIGITADO
+    { wch: 20 }, // Matriz DATA CHEGADA
+    { wch: 14 }, // PLACA
+    { wch: 14 }, // NFE
+    { wch: 14 }, // RATEIO
+  ]
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Confronto Sobre Rodas')
 
   const cleanBaseName = trainOrFileName.replace(/\.pdf$/i, '').replace(/\.xlsx$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_')
-  const outputName = cleanBaseName.startsWith('confronto_') ? `${cleanBaseName}.xlsx` : `confronto_sobre_rodas_${cleanBaseName}.xlsx`
-  const buffer = await workbook.xlsx.writeBuffer()
-  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = outputName
-  link.click()
-  URL.revokeObjectURL(url)
+  const outputName = cleanBaseName.startsWith('confronto_')
+    ? `${cleanBaseName}.xlsx`
+    : `confronto_sobre_rodas_${cleanBaseName}.xlsx`
+
+  XLSX.writeFile(wb, outputName)
 }
 
 export function exportConfrontoPdf(
   items: ConfrontoResultItem[],
-  trainOrFileName: string = 'confronto_sobre_rodas'
+  trainOrFileName: string = 'confronto_sobre_rodas',
+  reportTitle: string = 'Confronto Resumo Rumo x Estoque Sobre Rodas'
 ): void {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
@@ -675,10 +813,6 @@ export function exportConfrontoPdf(
       { label: 'ESTOQUE SOBRE RODAS', count: 8, color: [147, 51, 234] },
       { label: 'CONFRONTO', count: 3, color: [5, 150, 105] },
     ]
-    sectionHeaders.forEach((section) => {
-      const sectionWidth = widths.slice(x === margin ? 0 : sectionHeaders[0].count, 0).reduce((sum, width) => sum + width, 0)
-      void sectionWidth
-    })
 
     let offset = 0
     sectionHeaders.forEach((section) => {
@@ -705,6 +839,7 @@ export function exportConfrontoPdf(
       doc.text(lines.slice(0, 2), x + widths[index] / 2, y + 3.1, { align: 'center' })
       x += widths[index]
     })
+
     return y + rowHeight
   }
 
@@ -712,7 +847,7 @@ export function exportConfrontoPdf(
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(13)
     doc.setTextColor(24, 24, 27)
-    doc.text('Confronto Resumo Rumo x Estoque Sobre Rodas', margin, 10)
+    doc.text(reportTitle, margin, 10)
     const okCount = items.filter((item) => item.status === 'ok').length
     const divergentCount = items.filter((item) => item.status === 'divergente').length
     const missingCount = items.filter((item) => item.status === 'nao_localizado').length
@@ -731,30 +866,44 @@ export function exportConfrontoPdf(
     }
 
     const values = [
-      item.resumo.vagao || '-', item.resumo.notaFiscal || '-', item.resumo.chaveNfe || '-',
-      String(item.resumo.pesoRateio || '-'), item.resumo.destinatarioNf || '-', item.sobreRodas?.matrizPlaca || '-',
-      item.sobreRodas?.matrizNfe || '-', String(item.sobreRodas?.matrizRateio || '-'), item.sobreRodas?.matrizIdExport || '-',
-      item.sobreRodas?.matrizNomeExport || '-', item.sobreRodas?.matrizNomeFornecedor || '-',
-      item.sobreRodas?.matrizOperacaoRds || '-', item.sobreRodas?.matrizDataChegada || '-',
-      item.placaMatch ? 'VERDADEIRO' : 'FALSO', item.nfeMatch ? 'VERDADEIRO' : 'FALSO', item.rateioMatch ? 'VERDADEIRO' : 'FALSO',
+      item.resumo.vagao || '-',
+      item.resumo.notaFiscal || '-',
+      item.resumo.chaveNfe || '-',
+      String(item.resumo.pesoRateio || '-'),
+      item.resumo.destinatarioNf || '-',
+      item.sobreRodas?.matrizPlaca || '-',
+      item.sobreRodas?.matrizNfe || '-',
+      String(item.sobreRodas?.matrizRateio || '-'),
+      item.sobreRodas?.matrizIdExport || '-',
+      item.sobreRodas?.matrizNomeExport || '-',
+      item.sobreRodas?.matrizNomeFornecedor || '-',
+      item.sobreRodas?.matrizOperacaoRds || '-',
+      item.sobreRodas?.matrizDataChegada || '-',
+      item.placaMatch ? 'VERDADEIRO' : 'FALSO',
+      item.nfeMatch ? 'VERDADEIRO' : 'FALSO',
+      item.rateioMatch ? 'VERDADEIRO' : 'FALSO',
     ]
 
     let x = margin
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(3.8)
+
     values.forEach((value, index) => {
       let fill: [number, number, number] = [255, 255, 255]
       if (item.status === 'divergente' && index < 13) fill = [255, 241, 242]
       if (item.status === 'nao_localizado' && index < 13) fill = [244, 244, 245]
       if (index >= 13) fill = value === 'VERDADEIRO' ? [209, 250, 229] : [255, 228, 230]
+
       doc.setFillColor(fill[0], fill[1], fill[2])
       doc.setDrawColor(212, 212, 216)
       doc.rect(x, y, widths[index], rowHeight, 'FD')
       doc.setTextColor(value === 'FALSO' ? 190 : 39, value === 'FALSO' ? 18 : 39, value === 'FALSO' ? 60 : 42)
+
       const lines = doc.splitTextToSize(String(value), widths[index] - 0.8)
       doc.text(lines.slice(0, 3), x + widths[index] / 2, y + 3, { align: 'center' })
       x += widths[index]
     })
+
     y += rowHeight
   })
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react'
+import React, { useState, useMemo, useRef, useEffect } from 'react'
 import {
   FileSpreadsheet,
   Upload,
@@ -9,11 +9,12 @@ import {
   AlertTriangle,
   RotateCcw,
   Filter,
-  Eye,
+  Calendar,
+  Clock,
+  ArrowRight,
   Layers,
-  Sparkles,
-  FileCheck,
-  FileDown,
+  Edit2,
+  ListFilter,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -23,49 +24,82 @@ import {
   ConfrontoResultItem,
   ConfrontoSummary,
   extractResumoItemsFromAoa,
+  alignResumoRateioUnits,
   parseSobreRodasExcel,
   executeConfronto,
   exportConfrontoExcel,
   exportConfrontoPdf,
-  filterSobreRodasRowsByArrival,
 } from '@/lib/confronto-sobre-rodas-service'
 
 interface ConfrontoSobreRodasViewProps {
-  aoaData: string[][]
+  aoaData?: string[][]
+  resumoItems?: ResumoItem[]
+  sourceLabel?: string
   trainName?: string | null
   prefixo?: string | null
   outputFileName?: string
   onNotify?: (message: string, type?: 'success' | 'warning' | 'error') => void
-  arrivalCutoff?: string
 }
 
 export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = ({
   aoaData,
+  resumoItems: resumoItemsProp,
+  sourceLabel,
   trainName,
   prefixo,
   outputFileName,
   onNotify,
-  arrivalCutoff,
 }) => {
+  // Estado do arquivo Sobre Rodas carregado
   const [sobreRodasFile, setSobreRodasFile] = useState<{ name: string; rows: SobreRodasRow[] } | null>(null)
   const [isParsing, setIsParsing] = useState(false)
+
+  // Estado da seleção de data e hora de chegada
+  const [selectedArrivalDateTime, setSelectedArrivalDateTime] = useState<string | null>(null)
+  const [isChangingDateTime, setIsChangingDateTime] = useState(false)
+  const [customDate, setCustomDate] = useState('')
+  const [customTime, setCustomTime] = useState('')
+
+  // Filtros da tabela
   const [filterMode, setFilterMode] = useState<'todos' | 'desmembres' | 'divergentes' | 'batidos'>('todos')
   const [searchQuery, setSearchQuery] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Extrair itens da composição do Resumo Rumo
+  // Extrair itens da composição (Rumo aoaData ou VLI pré-estruturado)
   const resumoItems = useMemo(() => {
-    return extractResumoItemsFromAoa(aoaData)
-  }, [aoaData])
+    if (resumoItemsProp) return resumoItemsProp
+    return extractResumoItemsFromAoa(aoaData || [])
+  }, [resumoItemsProp, aoaData])
 
-  // Executar confronto quando a planilha Sobre Rodas for carregada
-  const confrontoData = useMemo(() => {
-    if (!sobreRodasFile || !resumoItems.length) return null
-    const filteredRows = arrivalCutoff
-      ? filterSobreRodasRowsByArrival(sobreRodasFile.rows, arrivalCutoff)
-      : sobreRodasFile.rows
-    return executeConfronto(resumoItems, filteredRows)
-  }, [resumoItems, sobreRodasFile, arrivalCutoff])
+  // Identificar todas as datas/horários de chegada presentes no arquivo Sobre Rodas
+  const availableArrivals = useMemo(() => {
+    if (!sobreRodasFile?.rows) return []
+    const map = new Map<string, number>()
+    for (const r of sobreRodasFile.rows) {
+      const dt = (r.matrizDataChegada || '').trim()
+      if (dt) {
+        map.set(dt, (map.get(dt) || 0) + 1)
+      }
+    }
+    return Array.from(map.entries())
+      .map(([dateTime, count]) => ({ dateTime, count }))
+      .sort((a, b) => b.count - a.count)
+  }, [sobreRodasFile])
+
+  // Quando um novo arquivo é carregado, pré-preencher com a data/hora mais comum
+  useEffect(() => {
+    if (availableArrivals.length > 0) {
+      const top = availableArrivals[0].dateTime
+      const parts = top.split(/\s+/)
+      setCustomDate(parts[0] || '')
+      setCustomTime(parts[1] || '')
+    } else {
+      setCustomDate('')
+      setCustomTime('')
+    }
+    setSelectedArrivalDateTime(null)
+    setIsChangingDateTime(false)
+  }, [availableArrivals])
 
   // Upload e leitura do arquivo Sobre Rodas
   const handleFileUpload = async (file: File) => {
@@ -84,7 +118,7 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
 
       if (parsedRows.length === 0) {
         onNotify?.(
-          'Nenhum registro reconhecido na planilha Sobre Rodas. Verifique se o arquivo possui as colunas de Placa, NFE e Rateio.',
+          'Nenhum registro reconhecido na planilha Sobre Rodas. Verifique se o arquivo possui as colunas de Placa, NF e Peso Nota Rateio.',
           'warning'
         )
         setIsParsing(false)
@@ -97,7 +131,7 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
       })
 
       onNotify?.(
-        `Planilha Sobre Rodas "${file.name}" carregada com sucesso (${parsedRows.length} linhas)!`,
+        `Planilha Sobre Rodas "${file.name}" carregada com sucesso (${parsedRows.length} linhas)! Agora selecione a data e horário de chegada.`,
         'success'
       )
     } catch (err: any) {
@@ -107,6 +141,57 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
       setIsParsing(false)
     }
   }
+
+  // Confirmar filtro de Data e Hora de Chegada
+  const handleConfirmDateTime = (chosen?: string) => {
+    let finalValue = ''
+    if (chosen) {
+      finalValue = chosen
+    } else {
+      const d = customDate.trim()
+      const t = customTime.trim()
+      if (d && t) {
+        finalValue = `${d} ${t}`
+      } else if (d) {
+        finalValue = d
+      } else if (t) {
+        finalValue = t
+      } else {
+        finalValue = 'ALL'
+      }
+    }
+
+    setSelectedArrivalDateTime(finalValue)
+    setIsChangingDateTime(false)
+
+    if (finalValue === 'ALL') {
+      onNotify?.('Confronto renderizado considerando todas as datas e horários da planilha.', 'success')
+    } else {
+      onNotify?.(`Confronto renderizado filtrando para a chegada: ${finalValue}`, 'success')
+    }
+  }
+
+  // Filtrar as linhas do Sobre Rodas pela data e hora de chegada selecionada
+  const activeSobreRodasRows = useMemo(() => {
+    if (!sobreRodasFile?.rows || !selectedArrivalDateTime) return []
+    if (selectedArrivalDateTime === 'ALL') return sobreRodasFile.rows
+
+    const target = selectedArrivalDateTime.trim().toLowerCase()
+    const targetParts = target.split(/\s+/).filter(Boolean)
+
+    return sobreRodasFile.rows.filter((r) => {
+      const dt = (r.matrizDataChegada || '').trim().toLowerCase()
+      if (!dt) return false
+      return targetParts.every((part) => dt.includes(part))
+    })
+  }, [sobreRodasFile, selectedArrivalDateTime])
+
+  // Executar o confronto das linhas do resumo contra as linhas filtradas do Sobre Rodas
+  const confrontoData = useMemo(() => {
+    if (!selectedArrivalDateTime || !resumoItems.length) return null
+    const alignedResumoItems = alignResumoRateioUnits(resumoItems, activeSobreRodasRows)
+    return executeConfronto(alignedResumoItems, activeSobreRodasRows)
+  }, [resumoItems, activeSobreRodasRows, selectedArrivalDateTime])
 
   // Filtragem dos itens para a tabela
   const filteredItems = useMemo(() => {
@@ -141,18 +226,27 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
   }, [confrontoData, filterMode, searchQuery])
 
   // Exportar Excel
-  const getExportBaseName = () =>
-    trainName || prefixo || outputFileName || 'confronto_sobre_rodas'
-
-  const handleExportExcel = async () => {
+  const handleExportExcel = () => {
     if (!confrontoData || confrontoData.items.length === 0) return
-    await exportConfrontoExcel(confrontoData.items, getExportBaseName())
+    const baseName = trainName || prefixo || outputFileName || 'confronto_sobre_rodas'
+    const suffix = selectedArrivalDateTime && selectedArrivalDateTime !== 'ALL'
+      ? `_${selectedArrivalDateTime.replace(/[^0-9]/g, '_')}`
+      : ''
+    exportConfrontoExcel(confrontoData.items, `${baseName}${suffix}`)
     onNotify?.('Planilha de Confronto exportada com sucesso (.xlsx)!', 'success')
   }
 
+  // Exportar PDF
   const handleExportPdf = () => {
     if (!confrontoData || confrontoData.items.length === 0) return
-    exportConfrontoPdf(confrontoData.items, getExportBaseName())
+    const baseName = trainName || prefixo || outputFileName || 'confronto_sobre_rodas'
+    const suffix = selectedArrivalDateTime && selectedArrivalDateTime !== 'ALL'
+      ? `_${selectedArrivalDateTime.replace(/[^0-9]/g, '_')}`
+      : ''
+    const pdfTitle = sourceLabel
+      ? `Confronto ${sourceLabel} x Estoque Sobre Rodas`
+      : 'Confronto Resumo Rumo x Estoque Sobre Rodas'
+    exportConfrontoPdf(confrontoData.items, `${baseName}${suffix}`, pdfTitle)
     onNotify?.('Relatório de Confronto exportado com sucesso (.pdf)!', 'success')
   }
 
@@ -163,24 +257,34 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-base font-bold text-foreground">
-              Confronto: Resumo Composição vs. Estoque Sobre Rodas
+              Confronto: {sourceLabel || 'Resumo Composição'} vs. Estoque Sobre Rodas
             </h3>
             <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-medium">
               Placa · NFE · Rateio
             </span>
           </div>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-            Confronta automaticamente os vagões, notas e rateios extraídos do resumo com a matriz do Sobre Rodas.
+            Cruza automaticamente vagões, notas fiscais e rateios por data/hora de chegada do Sobre Rodas.
           </p>
         </div>
 
-        {confrontoData && (
+        {sobreRodasFile && selectedArrivalDateTime && !isChangingDateTime && (
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsChangingDateTime(true)}
+              className="text-xs h-8 cursor-pointer gap-1.5 border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300"
+            >
+              <Clock className="h-3.5 w-3.5" />
+              Filtrar Outra Chegada
+            </Button>
             <Button
               size="sm"
               variant="outline"
               onClick={() => {
                 setSobreRodasFile(null)
+                setSelectedArrivalDateTime(null)
                 if (fileInputRef.current) fileInputRef.current.value = ''
               }}
               className="text-xs h-8 cursor-pointer gap-1.5"
@@ -190,26 +294,26 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
             </Button>
             <Button
               size="sm"
-              variant="outline"
-              onClick={handleExportPdf}
-              className="text-xs h-8 cursor-pointer gap-1.5 shadow-xs border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300"
-            >
-              <FileDown className="h-3.5 w-3.5" />
-              Exportar PDF
-            </Button>
-            <Button
-              size="sm"
               onClick={handleExportExcel}
               className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-8 cursor-pointer gap-1.5 shadow-xs"
             >
               <Download className="h-3.5 w-3.5" />
-              Exportar Confronto (.xlsx)
+              Exportar (.xlsx)
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleExportPdf}
+              variant="outline"
+              className="border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 text-xs h-8 cursor-pointer gap-1.5 shadow-xs"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Exportar (.pdf)
             </Button>
           </div>
         )}
       </div>
 
-      {/* Seção de Upload da Planilha Sobre Rodas se ainda não carregada */}
+      {/* ETAPA 1: Upload da Planilha Sobre Rodas se ainda não carregada */}
       {!sobreRodasFile ? (
         <Card className="border-dashed border-2 border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/20 dark:bg-zinc-900/40 hover:border-indigo-400 transition-all">
           <CardContent className="p-8">
@@ -244,7 +348,7 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
                 Inserir Planilha "Estoque Sobre Rodas" (.xlsx / .xls)
               </h4>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 max-w-md">
-                Faça o upload do Excel exportado pelo terminal contendo as colunas de Placa, NFE, Rateio e dados de exportação para cruzar com o Resumo Rumo.
+                Faça o upload da planilha do terminal. Em seguida, você escolherá a data e o horário de chegada para filtrar e renderizar o confronto.
               </p>
               <Button
                 size="sm"
@@ -256,9 +360,171 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
             </div>
           </CardContent>
         </Card>
+      ) : (!selectedArrivalDateTime || isChangingDateTime) ? (
+        /* ETAPA 2: Perguntar Data e Hora do Confronto antes de renderizar */
+        <Card className="border-purple-200 dark:border-purple-900/60 bg-white dark:bg-zinc-900 shadow-sm">
+          <CardHeader className="pb-3 border-b border-zinc-100 dark:border-zinc-800">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
+                  <Clock className="h-5 w-5" />
+                </div>
+                <div>
+                  <CardTitle className="text-sm font-bold text-foreground">
+                    Definir Data e Hora de Chegada do Sobre Rodas
+                  </CardTitle>
+                  <CardDescription className="text-xs text-zinc-500 mt-0.5">
+                    Planilha carregada: <strong>{sobreRodasFile.name}</strong> ({sobreRodasFile.rows.length} registros no total).
+                    O confronto será renderizado para a data e hora informadas abaixo:
+                  </CardDescription>
+                </div>
+              </div>
+              {selectedArrivalDateTime && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setIsChangingDateTime(false)}
+                  className="text-xs h-8 text-zinc-500 hover:text-foreground cursor-pointer"
+                >
+                  Voltar ao Confronto Atual
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-6 space-y-6">
+            {/* Opções Rápidas Detectadas na Planilha */}
+            {availableArrivals.length > 0 && (
+              <div className="space-y-2.5">
+                <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
+                  <ListFilter className="h-3.5 w-3.5 text-purple-600" />
+                  Chegadas Identificadas no Arquivo (clique para selecionar):
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                  {availableArrivals.map((arr, idx) => {
+                    const isSelected =
+                      customDate && customTime && `${customDate} ${customTime}` === arr.dateTime
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          const parts = arr.dateTime.split(/\s+/)
+                          setCustomDate(parts[0] || '')
+                          setCustomTime(parts[1] || '')
+                        }}
+                        className={`p-2.5 text-left rounded-xl border text-xs transition-all cursor-pointer flex items-center justify-between ${
+                          isSelected
+                            ? 'border-purple-600 bg-purple-50 dark:bg-purple-950/50 text-purple-900 dark:text-purple-200 font-bold shadow-xs ring-1 ring-purple-600'
+                            : 'border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/40 text-zinc-700 dark:text-zinc-300 hover:border-purple-300'
+                        }`}
+                      >
+                        <span className="font-mono">{arr.dateTime}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 font-sans">
+                          {arr.count} vagão(ões)
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Campos de Input Manual */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-800">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
+                  <Calendar className="h-3.5 w-3.5 text-purple-600" />
+                  Data de Chegada (DD/MM/AAAA)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: 03/11/2026"
+                  value={customDate}
+                  onChange={(e) => setCustomDate(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
+                  <Clock className="h-3.5 w-3.5 text-purple-600" />
+                  Horário de Chegada (HH:mm)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: 12:45"
+                  value={customTime}
+                  onChange={(e) => setCustomTime(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+            </div>
+
+            {/* Ações */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => handleConfirmDateTime('ALL')}
+                className="text-xs text-zinc-500 hover:text-foreground cursor-pointer underline underline-offset-4"
+              >
+                Confrontar todas as chegadas (sem filtro de data/hora)
+              </button>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSobreRodasFile(null)
+                    setSelectedArrivalDateTime(null)
+                    if (fileInputRef.current) fileInputRef.current.value = ''
+                  }}
+                  className="text-xs h-9 cursor-pointer"
+                >
+                  Cancelar / Trocar Planilha
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => handleConfirmDateTime()}
+                  className="bg-purple-600 hover:bg-purple-700 text-white text-xs h-9 px-4 font-bold cursor-pointer gap-2 shadow-xs"
+                >
+                  <span>Confirmar e Renderizar Confronto</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       ) : (
+        /* ETAPA 3: Renderizar Tabela de Confronto Filtrada */
         confrontoData && (
           <div className="space-y-4">
+            {/* Banner de Chegada Ativa */}
+            <div className="flex items-center justify-between p-3 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/60 text-xs">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-purple-600" />
+                <span className="font-semibold text-purple-900 dark:text-purple-200">
+                  Chegada Filtrada:
+                </span>
+                <span className="font-mono font-bold text-purple-700 dark:text-purple-300 bg-white dark:bg-zinc-900 px-2 py-0.5 rounded border border-purple-200 dark:border-purple-800">
+                  {selectedArrivalDateTime === 'ALL' ? 'Todas as Chegadas' : selectedArrivalDateTime}
+                </span>
+                <span className="text-purple-800 dark:text-purple-300 text-[11px]">
+                  ({activeSobreRodasRows.length} registro(s) no Sobre Rodas para esta chegada)
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setIsChangingDateTime(true)}
+                className="text-xs h-7 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900 cursor-pointer gap-1"
+              >
+                <Edit2 className="h-3 w-3" />
+                Alterar Data/Hora
+              </Button>
+            </div>
+
             {/* Cards com Métricas do Confronto */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <Card className="p-3.5 border-zinc-200 dark:border-zinc-800">
@@ -305,7 +571,7 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
                   {confrontoData.summary.totalNaoLocalizados}
                 </div>
                 <span className="text-[10px] text-zinc-500">
-                  Ausentes no Sobre Rodas
+                  Ausentes nesta chegada
                 </span>
               </Card>
             </div>
@@ -434,7 +700,6 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
                       const res = item.resumo
                       const sr = item.sobreRodas
 
-                      // Destaque visual: se for 100% OK fica neutro/limpo, se divergente destaca levemente em vermelho/amarelo
                       const rowBg =
                         item.status === 'ok'
                           ? idx % 2 === 0
@@ -547,7 +812,7 @@ export const ConfrontoSobreRodasView: React.FC<ConfrontoSobreRodasViewProps> = (
                   ) : (
                     <tr>
                       <td colSpan={19} className="py-8 text-center text-zinc-500">
-                        Nenhum registro encontrado com os filtros selecionados.
+                        Nenhum registro encontrado com os filtros selecionados para esta data/horário de chegada.
                       </td>
                     </tr>
                   )}

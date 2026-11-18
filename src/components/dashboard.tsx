@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { parseNFE, verifyChaveCNPJ, type NFEData } from "@/lib/nfe-parser"
+import { extractCfopFromNote, parseNFE, verifyChaveCNPJ, type NFEData } from "@/lib/nfe-parser"
 import { type ParsedNFeData } from "@/lib/pdf-text-parser"
 import { ChaveDestinatarioDashboard } from "@/components/chave-destinatario-dashboard"
 import {
@@ -204,6 +204,7 @@ export function getNoteDetails(
   const confrontoChaveXDest = vCNPJ?.confrontoChaveXDest || "NÃO INFORMADO"
   const isDivergenteCNPJ = confrontoChaveXDest === "DIVERGENTES"
   const isConformeCNPJ = confrontoChaveXDest === "IGUAIS"
+  const cfop = extractCfopFromNote(f)
 
   let produto = "Outros"
   if (nfe?.tipoProduto && nfe.tipoProduto !== "OUTRO") {
@@ -410,6 +411,7 @@ export function getNoteDetails(
     confrontoChaveXDest,
     isDivergenteCNPJ,
     isConformeCNPJ,
+    cfop,
   }
 }
 
