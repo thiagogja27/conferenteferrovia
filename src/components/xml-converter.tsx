@@ -23,6 +23,7 @@ import { isCarrierCnpj } from '@/lib/destinatario-utils'
 import { SearchPanel } from '@/components/search-panel'
 import { MapPanel } from '@/components/map-panel'
 import { ExcelReconciliationTab } from '@/components/excel-reconciliation-tab'
+import { ConferenceToolsTab } from '@/components/conference-tools-tab'
 import { MDFExcelComparator } from '@/components/mdf-excel-comparator'
 import { DocumentationPanel } from '@/components/documentation-panel'
 import { RealtimeMonitor } from '@/components/realtime-monitor'
@@ -86,6 +87,7 @@ import {
   User,
   Lock,
   MessageSquarePlus,
+  Wrench,
 } from 'lucide-react'
 import JSZip from 'jszip'
 import * as XLSX from 'xlsx'
@@ -227,7 +229,7 @@ export function XMLConverter() {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<string>('list')
   const [converterMode, setConverterMode] = useState<
-    'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'mrs-guided' | 'conversor-resumo-rumo' | 'conversor-resumo-vli' | 'documentation' | 'realtime-monitor'
+    'xml-to-pdf' | 'pdf-to-xml' | 'mdf-x-excel' | 'mrs-guided' | 'conversor-resumo-rumo' | 'conversor-resumo-vli' | 'conference-tools' | 'documentation' | 'realtime-monitor'
   >('xml-to-pdf')
   const [mrsGuidedStep, setMrsGuidedStep] = useState<1 | 2 | 3>(1)
   const [mrsGuidedExcelFile, setMrsGuidedExcelFile] = useState<File | null>(null)
@@ -1668,7 +1670,7 @@ export function XMLConverter() {
 
         {/* Seletor de Módulos (Menu Principal Intuitivo e Unificado) */}
         <div className="mb-6">
-          <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRealtimeAdmin ? 'lg:grid-cols-6' : 'lg:grid-cols-5'} gap-2.5 bg-zinc-100/80 dark:bg-zinc-900 p-1.5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800`}>
+          <div className={`grid grid-cols-1 sm:grid-cols-2 ${isRealtimeAdmin ? 'lg:grid-cols-7' : 'lg:grid-cols-6'} gap-2.5 bg-zinc-100/80 dark:bg-zinc-900 p-1.5 rounded-2xl border border-zinc-200/80 dark:border-zinc-800`}>
             <button
               onClick={() => {
                 setConverterMode('xml-to-pdf')
@@ -1778,6 +1780,29 @@ export function XMLConverter() {
               </div>
               <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
                 Conciliação Manifesto
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setConverterMode('conference-tools')
+                setActiveTab('tools')
+                updatePresence('Ferramentas de Conferência')
+              }}
+              className={`flex flex-col items-start p-3 rounded-xl transition-all text-left cursor-pointer border ${
+                converterMode === 'conference-tools'
+                  ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border-indigo-300 dark:border-indigo-600 shadow-xs'
+                  : 'bg-transparent border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-white/50 dark:hover:bg-zinc-800/50'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1 w-full">
+                <div className={`p-1.5 rounded-lg ${converterMode === 'conference-tools' ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-300' : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-500'}`}>
+                  <Wrench className="h-4 w-4" />
+                </div>
+                <span className="text-xs font-bold truncate">Ferramentas de Conferência</span>
+              </div>
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1">
+                Comparar e validar chaves
               </span>
             </button>
 
@@ -3035,6 +3060,10 @@ export function XMLConverter() {
               />
             </TabsContent>
 
+            <TabsContent value='tools'>
+              <ConferenceToolsTab />
+            </TabsContent>
+
             <TabsContent value='dashboard'>
               <Dashboard files={files} />
             </TabsContent>
@@ -3083,10 +3112,15 @@ export function XMLConverter() {
             </div>
           </Tabs>
         ) : (
-          <div className="pt-2">
+          <div className="space-y-4 pt-2">
             <SuggestionsPanel />
           </div>
         )}
+        </div>
+
+        {/* Módulo Ferramentas de Conferência Preservado em Memória */}
+        <div className={converterMode === 'conference-tools' ? 'block' : 'hidden'}>
+          <ConferenceToolsTab />
         </div>
 
         {/* Módulo Conversor Resumo Rumo Preservado em Memória */}
