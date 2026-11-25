@@ -18,6 +18,7 @@ import {
   LoadedNoteSummary,
   applyDigitacaoInputsToRows,
   buildCfopMapFromExistingNotes,
+  buildNoteInfoMapFromExistingNotes,
   exportPlanilhaDigitacaoExcel,
   normalizeChaveAcesso,
   parseNotesForCfop,
@@ -180,30 +181,40 @@ export const PlanilhaDigitacaoModal: React.FC<PlanilhaDigitacaoModalProps> = ({
   }, [open, onClose])
 
   // Mapa unificado: notas já carregadas na aba principal + notas inseridas no modal
-  const { cfopByChave, preloadedCount } = useMemo(() => {
+  const { cfopByChave, noteInfoByChave, preloadedCount } = useMemo(() => {
     const map = buildCfopMapFromExistingNotes(loadedNotes)
+    const infoMap = buildNoteInfoMapFromExistingNotes(loadedNotes)
     const initialSize = map.size
 
     for (const item of uploadedNotes) {
-      if (item.chave && item.cfop) {
+      if (!item.chave) continue
+      if (item.cfop) {
         map.set(item.chave, item.cfop)
       }
+      const existing = infoMap.get(item.chave)
+      infoMap.set(item.chave, {
+        cfop: item.cfop || existing?.cfop || '',
+        destNome: item.destNome || existing?.destNome,
+        destCnpj: item.destCnpj || existing?.destCnpj,
+      })
     }
 
     return {
       cfopByChave: map,
+      noteInfoByChave: infoMap,
       preloadedCount: initialSize,
     }
   }, [loadedNotes, uploadedNotes])
 
-  // Prévia das linhas enriquecidas com Data, Hora e CFOP cruzado por Chave de Acesso
+  // Prévia das linhas enriquecidas com Data, Hora, CFOP, Operação e BP
   const enrichedRows = useMemo(() => {
     return applyDigitacaoInputsToRows(rows, {
       dataDigitacao,
       horaDigitacao,
       cfopByChave,
+      noteInfoByChave,
     })
-  }, [rows, dataDigitacao, horaDigitacao, cfopByChave])
+  }, [rows, dataDigitacao, horaDigitacao, cfopByChave, noteInfoByChave])
 
   const matchStats = useMemo(() => {
     let withChave = 0
@@ -307,7 +318,7 @@ export const PlanilhaDigitacaoModal: React.FC<PlanilhaDigitacaoModalProps> = ({
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
+      <div className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
         {/* Cabeçalho */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-950/60">
           <div className="flex items-center gap-3">
@@ -562,13 +573,15 @@ export const PlanilhaDigitacaoModal: React.FC<PlanilhaDigitacaoModalProps> = ({
             </div>
 
             {/* Prévia compacta */}
-            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden max-h-48 overflow-y-auto">
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-x-auto max-h-48 overflow-y-auto">
               <table className="min-w-full text-[11px] divide-y divide-zinc-200 dark:divide-zinc-800">
                 <thead className="bg-zinc-100 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-300 font-bold uppercase text-[10px] sticky top-0">
                   <tr>
                     <th className="px-2.5 py-2 text-left">Vagão</th>
                     <th className="px-2.5 py-2 text-left">NFe</th>
-                    <th className="px-2.5 py-2 text-left">Chave NF</th>
+                    <th className="px-2.5 py-2 text-left">Mercadoria</th>
+                    <th className="px-2.5 py-2 text-left">Operação</th>
+                    <th className="px-2.5 py-2 text-center">BP</th>
                     <th className="px-2.5 py-2 text-center">CFOP</th>
                     <th className="px-2.5 py-2 text-center">Data</th>
                     <th className="px-2.5 py-2 text-center">Hora</th>
@@ -579,9 +592,17 @@ export const PlanilhaDigitacaoModal: React.FC<PlanilhaDigitacaoModalProps> = ({
                     <tr key={idx} className="bg-white dark:bg-zinc-900">
                       <td className="px-2.5 py-1.5 font-bold whitespace-nowrap">{r.vagao || '-'}</td>
                       <td className="px-2.5 py-1.5 whitespace-nowrap">{r.nfe || '-'}</td>
-                      <td className="px-2.5 py-1.5 text-zinc-500 max-w-[200px] truncate" title={r.chaveNf}>
-                        {r.chaveNf || '-'}
+                      <td className="px-2.5 py-1.5 whitespace-nowrap font-sans font-medium">{r.mercadoria || '-'}</td>
+                      <td className="px-2.5 py-1.5 whitespace-nowrap font-sans">
+                        {r.operacao ? (
+                          <span className="px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 font-semibold text-[10px]">
+                            {r.operacao}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-400">-</span>
+                        )}
                       </td>
+                      <td className="px-2.5 py-1.5 text-center whitespace-nowrap">{r.bp || '-'}</td>
                       <td className="px-2.5 py-1.5 text-center whitespace-nowrap">
                         {r.cfop ? (
                           <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold">
@@ -597,7 +618,7 @@ export const PlanilhaDigitacaoModal: React.FC<PlanilhaDigitacaoModalProps> = ({
                   ))}
                   {enrichedRows.length > 50 && (
                     <tr>
-                      <td colSpan={6} className="px-2.5 py-1.5 text-center text-zinc-500 font-sans">
+                      <td colSpan={8} className="px-2.5 py-1.5 text-center text-zinc-500 font-sans">
                         ... e mais {enrichedRows.length - 50} linha(s) na exportação Excel completa.
                       </td>
                     </tr>
@@ -611,7 +632,7 @@ export const PlanilhaDigitacaoModal: React.FC<PlanilhaDigitacaoModalProps> = ({
         {/* Rodapé */}
         <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-950/60">
           <span className="text-[11px] text-zinc-500 hidden sm:inline">
-            Colunas: Vagão, Bruto, NFe, Data NFe, Rateio, Chave NF, Mercadoria, Fornecedor, Operação, CNPJ Dest., Data, Hora, CFOP
+            Colunas: Vagão, Bruto, NFe, Data NFe, Rateio, Chave NF, Mercadoria, Fornecedor, Operação, CNPJ Dest., Data, Hora, CFOP, BP
           </span>
           <div className="flex items-center gap-2 ml-auto">
             <Button

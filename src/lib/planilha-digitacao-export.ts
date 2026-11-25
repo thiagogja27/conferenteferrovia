@@ -21,6 +21,7 @@ export const PLANILHA_DIGITACAO_HEADERS = [
   'Data',
   'Hora',
   'CFOP',
+  'BP',
 ] as const
 
 export interface PlanilhaDigitacaoRow {
@@ -37,12 +38,15 @@ export interface PlanilhaDigitacaoRow {
   data: string
   hora: string
   cfop: string
+  bp: string
 }
 
 export interface LoadedNoteSummary {
   fileName: string
   chave: string
   cfop: string
+  destNome?: string
+  destCnpj?: string
 }
 
 export function normalizeChaveAcesso(raw?: string | null): string {
@@ -159,6 +163,73 @@ function normalizeMercadoriaDigitacao(rawMercadoria?: string): string {
   return standardized
 }
 
+function normalizeTextUpper(val?: string): string {
+  return (val || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+}
+
+function extractCnpj14(val?: string): string {
+  if (!val) return ''
+  const formattedMatch = String(val).match(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/)
+  if (formattedMatch) {
+    const d = formattedMatch[0].replace(/\D/g, '')
+    if (d.length === 14) return d
+  }
+  const onlyDigits = String(val).replace(/\D/g, '')
+  return onlyDigits.length === 14 ? onlyDigits : ''
+}
+
+export function resolveOperacaoAndBp(
+  mercadoria?: string,
+  destinatarioRaw?: string,
+  cnpjDest?: string
+): { operacao: string; bp: string } {
+  // 1. Quando o produto for Açúcar, a operação sempre será Subprodutos
+  const normMerc = normalizeTextUpper(mercadoria)
+  if (normMerc.includes('ACUCAR') || /\bVHP\b/.test(normMerc)) {
+    return {
+      operacao: 'RECEPÇÃO SUBPRODUTOS',
+      bp: '0222000901',
+    }
+  }
+
+  // 2. Caso contrário, classifica pelo Destinatário / CNPJ Dest.
+  const normDest = normalizeTextUpper(destinatarioRaw)
+  const digitsCnpj = extractCnpj14(cnpjDest) || extractCnpj14(destinatarioRaw)
+  const cadastro = resolveDestinatarioCadastro(
+    destinatarioRaw,
+    digitsCnpj.length === 14 ? digitsCnpj : undefined
+  )
+  const normCadastro = normalizeTextUpper(cadastro?.nome)
+  const combinedDest = `${normDest} ${normCadastro}`.trim()
+
+  if (
+    /CARGIL+/.test(combinedDest) ||
+    digitsCnpj.startsWith('60498706') ||
+    digitsCnpj.startsWith('44934648')
+  ) {
+    return {
+      operacao: 'RECEPÇÃO TRANSFERÊNCIA',
+      bp: '0217100901',
+    }
+  }
+
+  if (
+    /LOUIS\s*DRE[UY]FUS|DRE[UY]FUS|\bLDC\b/.test(combinedDest) ||
+    digitsCnpj.startsWith('47067525')
+  ) {
+    return {
+      operacao: 'RECEPÇÃO TERCEIROS',
+      bp: '0217113104',
+    }
+  }
+
+  return { operacao: '', bp: '' }
+}
+
 function findRawRowValue(rawRow: Record<string, any> | undefined, pattern: RegExp): string {
   if (!rawRow) return ''
   const key = Object.keys(rawRow).find((k) => pattern.test(k))
@@ -173,6 +244,10 @@ export function mapRumoToDigitacaoRows(result: RumoExtractionResult): PlanilhaDi
   return result.aoaData.slice(1).map((r) => {
     const chaveNf = normalizeChaveAcesso(r[12])
     const { data, hora } = splitDateAndTime(r[10])
+    const mercadoria = normalizeMercadoriaDigitacao(r[9])
+    const destinatarioRaw = (r[17] || '').trim()
+    const cnpjDest = resolveCnpjDest(destinatarioRaw)
+    const { operacao, bp } = resolveOperacaoAndBp(mercadoria, destinatarioRaw, cnpjDest)
 
     return {
       vagao: (r[1] || '').trim(),
@@ -181,13 +256,14 @@ export function mapRumoToDigitacaoRows(result: RumoExtractionResult): PlanilhaDi
       dataNfe: (r[13] || '').trim(),
       rateio: parseExcelWeightValue(r[15]),
       chaveNf,
-      mercadoria: normalizeMercadoriaDigitacao(r[9]),
+      mercadoria,
       fornecedor: '',
-      operacao: '',
-      cnpjDest: resolveCnpjDest(r[17]),
+      operacao,
+      cnpjDest,
       data,
       hora,
       cfop: '',
+      bp,
     }
   })
 }
@@ -222,11 +298,18 @@ export function mapVliToDigitacaoRows(result: VliExtractionResult): PlanilhaDigi
     const rawMercadoria = (
       row.mercadoria || findRawRowValue(row.rawRow, /mercadoria|produto/i)
     ).trim()
+    const mercadoria = normalizeMercadoriaDigitacao(rawMercadoria)
+
+    const destinatarioRaw = (
+      row.destinatario || findRawRowValue(row.rawRow, /^(?!.*cnpj).*dest/i)
+    ).trim()
 
     const cnpjDest =
       row.cnpjDestFormatted && row.cnpjDestFormatted !== '-'
         ? row.cnpjDestFormatted
-        : resolveCnpjDest(row.cnpjDest || row.destinatario)
+        : resolveCnpjDest(row.cnpjDest || destinatarioRaw)
+
+    const { operacao, bp } = resolveOperacaoAndBp(mercadoria, destinatarioRaw, cnpjDest)
 
     const rowDt = row.data ? splitDateAndTime(row.data) : { data: '', hora: '' }
     const dataFinal = rowDt.data || metaDt.data
@@ -239,13 +322,14 @@ export function mapVliToDigitacaoRows(result: VliExtractionResult): PlanilhaDigi
       dataNfe: (row.dataNfe || '').trim(),
       rateio: rateioVal,
       chaveNf,
-      mercadoria: normalizeMercadoriaDigitacao(rawMercadoria),
+      mercadoria,
       fornecedor: '',
-      operacao: '',
+      operacao,
       cnpjDest,
       data: dataFinal,
       hora: horaFinal,
       cfop: '',
+      bp,
     }
   })
 }
@@ -282,7 +366,12 @@ export function buildCfopMapFromExistingNotes(existingNotes: any[] = []): Map<st
   return cfopMap
 }
 
-function extractXmlChaveAndCfop(xmlText: string): { chave: string; cfop: string } {
+function extractXmlNoteInfo(xmlText: string): {
+  chave: string
+  cfop: string
+  destNome?: string
+  destCnpj?: string
+} {
   let nfeData: any = null
   try {
     nfeData = parseNFE(xmlText)
@@ -298,11 +387,67 @@ function extractXmlChaveAndCfop(xmlText: string): { chave: string; cfop: string 
     if (chMatch?.[1]) chave = chMatch[1]
   }
 
+  const destBlockMatch = xmlText.match(/<dest>([\s\S]*?)<\/dest>/i)
+  const destNome =
+    nfeData?.destinatario?.nome ||
+    destBlockMatch?.[1]?.match(/<xNome>([\s\S]*?)<\/xNome>/i)?.[1]?.trim() ||
+    ''
+  const destCnpj =
+    nfeData?.destinatario?.cpfCnpj ||
+    destBlockMatch?.[1]?.match(/<CNPJ>([\s\S]*?)<\/CNPJ>/i)?.[1]?.trim() ||
+    ''
+
   const cfop = extractCfopFromNote({ nfeData, xmlContent: xmlText })
   return {
     chave,
     cfop: cfop && cfop !== '-' ? cfop : '',
+    destNome,
+    destCnpj,
   }
+}
+
+export function buildNoteInfoMapFromExistingNotes(
+  existingNotes: any[] = []
+): Map<string, { cfop: string; destNome?: string; destCnpj?: string }> {
+  const infoMap = new Map<string, { cfop: string; destNome?: string; destCnpj?: string }>()
+
+  for (const note of existingNotes) {
+    if (!note || note.error) continue
+    const rawKey =
+      note.nfeData?.chaveAcesso ||
+      note.parsedData?.chave ||
+      note.chaveAcesso ||
+      ''
+    let chave = normalizeChaveAcesso(rawKey)
+
+    if (chave.length !== 44 && typeof note.xmlContent === 'string' && note.xmlContent) {
+      const chMatch =
+        note.xmlContent.match(/<chNFe>\s*(\d{44})\s*<\/chNFe>/i) ||
+        note.xmlContent.match(/Id=["']NFe(\d{44})["']/i)
+      if (chMatch?.[1]) chave = chMatch[1]
+    }
+
+    if (chave.length !== 44) continue
+    const cfop = extractCfopFromNote(note)
+    const destNome =
+      note.nfeData?.destinatario?.nome ||
+      note.parsedData?.destNome ||
+      ''
+    const destCnpj =
+      note.nfeData?.destinatario?.cpfCnpj ||
+      note.parsedData?.destCNPJ ||
+      ''
+
+    if ((cfop && cfop !== '-') || destNome || destCnpj) {
+      infoMap.set(chave, {
+        cfop: cfop && cfop !== '-' ? cfop : '',
+        destNome,
+        destCnpj,
+      })
+    }
+  }
+
+  return infoMap
 }
 
 /**
@@ -372,9 +517,9 @@ export async function parseNotesForCfop(
     try {
       if (item.lowerName.endsWith('.xml')) {
         const xmlText = item.getText ? await item.getText() : new TextDecoder('utf-8').decode(await item.getBuffer())
-        const { chave, cfop } = extractXmlChaveAndCfop(xmlText)
+        const { chave, cfop, destNome, destCnpj } = extractXmlNoteInfo(xmlText)
         if (chave.length === 44) {
-          entries.push({ fileName: item.name, chave, cfop })
+          entries.push({ fileName: item.name, chave, cfop, destNome, destCnpj })
         } else {
           errors.push(`${item.name}: chave de acesso de 44 dígitos não encontrada no XML`)
         }
@@ -439,10 +584,20 @@ export async function parseNotesForCfop(
               parsedData: sub.parsedData,
               xmlContent: sub.xml,
             })
+            const destNome =
+              sub.nfeData?.destinatario?.nome ||
+              sub.parsedData?.destNome ||
+              ''
+            const destCnpj =
+              sub.nfeData?.destinatario?.cpfCnpj ||
+              sub.parsedData?.destCNPJ ||
+              ''
             entries.push({
               fileName: item.name,
               chave,
               cfop: cfopRaw && cfopRaw !== '-' ? cfopRaw : '',
+              destNome,
+              destCnpj,
             })
             foundAny = true
           }
@@ -461,7 +616,7 @@ export async function parseNotesForCfop(
 }
 
 /**
- * Aplica Data/Hora da Digitação e cruza CFOP por Chave de Acesso
+ * Aplica Data/Hora da Digitação e cruza CFOP / fallback de Operação & BP por Chave de Acesso
  */
 export function applyDigitacaoInputsToRows(
   rows: PlanilhaDigitacaoRow[],
@@ -469,21 +624,43 @@ export function applyDigitacaoInputsToRows(
     dataDigitacao?: string
     horaDigitacao?: string
     cfopByChave?: Map<string, string>
+    noteInfoByChave?: Map<string, { cfop?: string; destNome?: string; destCnpj?: string }>
   }
 ): PlanilhaDigitacaoRow[] {
   const customData = (options.dataDigitacao || '').trim()
   const customHora = (options.horaDigitacao || '').trim()
   const cfopMap = options.cfopByChave
+  const noteInfoMap = options.noteInfoByChave
 
   return rows.map((row) => {
     const cleanChave = normalizeChaveAcesso(row.chaveNf)
-    const matchedCfop = cleanChave && cfopMap ? (cfopMap.get(cleanChave) || '') : row.cfop
+    const noteInfo = cleanChave && noteInfoMap ? noteInfoMap.get(cleanChave) : undefined
+    const matchedCfop =
+      (cleanChave && cfopMap ? cfopMap.get(cleanChave) : undefined) ||
+      noteInfo?.cfop ||
+      row.cfop
+
+    let operacao = row.operacao || ''
+    let bp = row.bp || ''
+
+    // Garante prioridade do produto Açúcar mesmo em linhas pré-construídas
+    const sugarCheck = resolveOperacaoAndBp(row.mercadoria)
+    if (sugarCheck.operacao) {
+      operacao = sugarCheck.operacao
+      bp = sugarCheck.bp
+    } else if (!operacao && noteInfo && (noteInfo.destNome || noteInfo.destCnpj)) {
+      const fromNote = resolveOperacaoAndBp(row.mercadoria, noteInfo.destNome, noteInfo.destCnpj)
+      operacao = fromNote.operacao
+      bp = fromNote.bp
+    }
 
     return {
       ...row,
       data: customData || row.data,
       hora: customHora || row.hora,
       cfop: matchedCfop || '',
+      operacao,
+      bp,
     }
   })
 }
@@ -505,17 +682,18 @@ export function exportPlanilhaDigitacaoExcel(
       r.chaveNf || '',
       r.mercadoria || '',
       '',
-      '',
+      r.operacao || '',
       r.cnpjDest || '',
       r.data || '',
       r.hora || '',
       r.cfop || '',
+      r.bp || '',
     ]),
   ]
 
   const ws = XLSX.utils.aoa_to_sheet(aoa)
 
-  // Garante Bruto inteiro sem vírgula (col B / 1) e 3 casas decimais para Rateio fracionado (col E / 4)
+  // Garante Bruto inteiro sem vírgula (col B / 1), 3 casas decimais para Rateio fracionado (col E / 4) e BP como texto (col N / 13)
   for (let rowIdx = 1; rowIdx < aoa.length; rowIdx++) {
     const brutoRef = XLSX.utils.encode_cell({ r: rowIdx, c: 1 })
     const brutoCell = ws[brutoRef]
@@ -528,6 +706,14 @@ export function exportPlanilhaDigitacaoExcel(
     if (rateioCell && rateioCell.t === 'n' && typeof rateioCell.v === 'number' && !Number.isInteger(rateioCell.v)) {
       rateioCell.z = '0.000'
     }
+
+    const bpRef = XLSX.utils.encode_cell({ r: rowIdx, c: 13 })
+    const bpCell = ws[bpRef]
+    if (bpCell && bpCell.v !== undefined && bpCell.v !== '') {
+      bpCell.t = 's'
+      bpCell.v = String(bpCell.v)
+      bpCell.z = '@'
+    }
   }
 
   ws['!cols'] = [
@@ -538,12 +724,13 @@ export function exportPlanilhaDigitacaoExcel(
     { wch: 12 }, // Rateio
     { wch: 46 }, // Chave NF
     { wch: 24 }, // Mercadoria
-    { wch: 30 }, // Fornecedor
-    { wch: 18 }, // Operação
+    { wch: 20 }, // Fornecedor
+    { wch: 26 }, // Operação
     { wch: 20 }, // CNPJ Dest.
     { wch: 13 }, // Data
     { wch: 11 }, // Hora
     { wch: 12 }, // CFOP
+    { wch: 15 }, // BP
   ]
 
   XLSX.utils.book_append_sheet(wb, ws, 'Planilha de Digitação')

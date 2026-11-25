@@ -9,6 +9,7 @@ export interface ButtonProps {
   onClick?: (event: any) => void
   disabled?: boolean
   type?: 'button' | 'submit' | 'reset'
+  'aria-pressed'?: boolean
   title?: string
   style?: React.CSSProperties
 }

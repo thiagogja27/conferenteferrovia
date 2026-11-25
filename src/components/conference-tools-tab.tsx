@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { AlertTriangle, Check, Clipboard, Download, Eraser, Wrench } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { ConferenceSummaryTool } from '@/components/conference-summary-tool'
 
 type AnalysisMode = 'missing-in-b' | 'missing-in-a' | 'duplicates' | 'common' | 'invalid'
 type ResultRow = { key: string; detail: string }
@@ -33,6 +34,7 @@ function unique(values: string[]): string[] {
 }
 
 export function ConferenceToolsTab() {
+  const [selectedTool, setSelectedTool] = useState<'keys' | 'summary' | 'corporate-summary'>('keys')
   const [listAInput, setListAInput] = useState('')
   const [listBInput, setListBInput] = useState('')
   const [mode, setMode] = useState<AnalysisMode>('missing-in-b')
@@ -132,6 +134,34 @@ export function ConferenceToolsTab() {
 
   return (
     <div className="space-y-5">
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Ferramentas de conferência">
+        <Button
+          variant={selectedTool === 'keys' ? 'default' : 'outline'}
+          aria-pressed={selectedTool === 'keys'}
+          onClick={() => setSelectedTool('keys')}
+        >
+          Conferência de chaves
+        </Button>
+        <Button
+          variant={selectedTool === 'summary' ? 'default' : 'outline'}
+          aria-pressed={selectedTool === 'summary'}
+          onClick={() => setSelectedTool('summary')}
+        >
+          Resumo planilha de pesagem
+        </Button>
+        <Button
+          variant={selectedTool === 'corporate-summary' ? 'default' : 'outline'}
+          aria-pressed={selectedTool === 'corporate-summary'}
+          onClick={() => setSelectedTool('corporate-summary')}
+        >
+          Resumo Corporate
+        </Button>
+      </div>
+
+      {selectedTool === 'summary' ? <ConferenceSummaryTool /> : selectedTool === 'corporate-summary' ? (
+        <ConferenceSummaryTool format="corporate" />
+      ) : (
+        <>
       <Card className="overflow-hidden border-indigo-200 dark:border-indigo-900">
         <CardHeader className="bg-gradient-to-r from-indigo-50 to-white dark:from-indigo-950/40 dark:to-zinc-950">
           <div className="flex items-start gap-3">
@@ -262,6 +292,8 @@ export function ConferenceToolsTab() {
           )}
         </CardContent>
       </Card>
+        </>
+      )}
     </div>
   )
 }
