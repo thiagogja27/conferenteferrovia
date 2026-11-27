@@ -285,7 +285,7 @@ export function buildConferenceDashboardSnapshot(
     let terminal = explicitTerminal || nfe?.terminalEntrega || parsed?.terminalEntrega || 'Não Informado'
     let transbordo = nfe?.transbordo || parsed?.transbordo || 'Não Informado'
     const retirada = parsed?.retirada || ''
-    const fullDocText = `${infCpl} ${rawXml} ${f.rawSnippet || ''}`
+    const fullDocText = explicitInfCpl
 
     if (terminal === 'Não Informado' || !terminal) {
       const deliveryRuleTerminal = extractTerminalFromDeliveryRule(fullDocText)

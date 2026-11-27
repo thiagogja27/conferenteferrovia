@@ -219,7 +219,7 @@ export function getNoteDetails(
   let transbordo = nfe?.transbordo || parsed?.transbordo || "Não Informado"
   let retirada = parsed?.retirada || ""
 
-  const fullDocText = `${infCpl} ${rawXml} ${f.rawSnippet || ""}`
+  const fullDocText = explicitInfCpl
   // Extração 100% mecânica pelas até 15 palavras imediatamente após "alfandegado", "afadegado", "entrega:" e marcadores
   if (terminal === "Não Informado" || !terminal) {
     const mechTerminal = extractTerminalFromDeliveryRule(fullDocText)

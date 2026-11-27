@@ -1099,11 +1099,9 @@ export function parseDanfeText(text: string, defaultFileName: string = '', force
 
   // Locais
   let infCpl = '';
-  const infMatch = text.match(/(?:INFORMAÇÕES COMPLEMENTARES|INFORMACÕES COMPLEMENTARES|INFORMACOES COMPLEMENTARES|DADOS ADICIONAIS|Inf\. Contribuinte:?)([\s\S]+)/i);
+  const infMatch = text.match(/(?:INFORMAÇÕES COMPLEMENTARES|INFORMACÕES COMPLEMENTARES|INFORMACOES COMPLEMENTARES|DADOS ADICIONAIS|Inf\. Contribuinte:?)(?:\s*RESERVADO AO FISCO)?([\s\S]*?)(?=\b(?:DCL|DOCUMENTO DE CARGA|ROMANEIO|NOTAS FISCAIS CARREGADAS|TICKET DE PESAGEM)\b|$)/i);
   if (infMatch) {
     infCpl = infMatch[1].replace(/\s+/g, ' ').trim();
-  } else {
-    infCpl = text.length > 3000 ? text.slice(-3000).replace(/\s+/g, ' ').trim() : text.replace(/\s+/g, ' ').trim();
   }
 
   const terminalEntrega = extractTerminalEntrega(text, infCpl);
@@ -1452,18 +1450,17 @@ export function extractDataFromXML(xml: string, fileName: string): ParsedNFeData
   };
 }
 
-function extractTerminalEntrega(text: string, infCpl?: string): string {
-  // 1. Prioridade: buscar explicitamente a palavra TEG ou TEAG nas informações complementares
-  const sourceForExplicit = infCpl !== undefined ? infCpl : text;
-  const explicitTerminal = getExplicitGuarujaTerminalCode(sourceForExplicit);
+function extractTerminalEntrega(_text: string, infCpl?: string): string {
+  // A busca do terminal e limitada ao campo de Informacoes Complementares /
+  // Dados Adicionais. O texto de DCL, DANFE ou documento completo nao participa.
+  const sourceForTerminal = infCpl || '';
+  const explicitTerminal = getExplicitGuarujaTerminalCode(sourceForTerminal);
   if (explicitTerminal) {
     return explicitTerminal;
   }
 
-  if (!text) return '';
-
   // 2. Caso não encontre TEG nem TEAG, extração mecânica pelas até 15 palavras após expressões de entrega/alfandegado
-  const fromDeliveryRule = extractTerminalFromDeliveryRule(text);
+  const fromDeliveryRule = extractTerminalFromDeliveryRule(sourceForTerminal);
   if (fromDeliveryRule) {
     return fromDeliveryRule;
   }

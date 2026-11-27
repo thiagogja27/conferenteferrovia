@@ -45,6 +45,11 @@ export function extractTerminalFromDeliveryRule(text: string): string | null {
   chunk = chunk.replace(/^(?:\b(?:EM|DE|NO|NA|SERA|SERÁ|RECINTO|ALFANDEGADO|AFADEGADO|EMPRESA)\b\s*[:=-]?\s*)+/i, '')
   chunk = chunk.replace(/^(?:NOME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|ME\s*\/\s*RAZ[ÃA]O\s*SOCIAL|RAZ[ÃA]O\s*SOCIAL|NOME|EMPRESA)\s*[:=-]?\s*/i, '').trim()
 
+  // O nome do local pode ser seguido de CNPJ, inscrição estadual e endereço.
+  // Encerrar o terminal no início desses dados evita devolver também o CNPJ.
+  chunk = chunk.replace(/\s*[-–—]\s*\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}.*$/i, '').trim()
+  chunk = chunk.replace(/\s+\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}.*$/i, '').trim()
+
   // Palavras de parada que encerram o bloco do terminal
   const stopKeywords = [
     'TRANSBORDO', 'RETIRADA', 'PLACA', 'MOTORISTA', 'CONTRATO',
