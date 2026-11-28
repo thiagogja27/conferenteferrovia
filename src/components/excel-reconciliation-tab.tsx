@@ -117,6 +117,43 @@ export interface ExcelRowRecord {
   mercadoria?: string
 }
 
+function isExcelHeaderRowRecord(row: ExcelRowRecord): boolean {
+  const normalize = (value: string) =>
+    value
+      .trim()
+      .toUpperCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Z0-9]/g, '')
+  if ((row.key || '').replace(/\D/g, '').length === 44) return false
+
+  const headerLabels = new Set([
+    'VAGAO',
+    'SERIE',
+    'SERIEVAGAO',
+    'BRUTO',
+    'PESOBRUTO',
+    'TARA',
+    'CHAVE',
+    'CHAVEDEACESSO',
+    'PESO',
+    'PESOSELECIONADO',
+    'PESONOTAVAGAO',
+    'DATA',
+    'DATAEMISSAO',
+    'NUMERO',
+    'NF',
+    'NFE',
+    'MERCADORIA',
+  ])
+
+  const wagonCell = normalize(row.vagao || '')
+  if (['VAGAO', 'SERIE', 'SERIEVAGAO', 'NUMVAGAO', 'NRVAGAO'].includes(wagonCell)) return true
+
+  const rawCells = (row.rawValue || '').split('|').map(normalize)
+  return new Set(rawCells.filter((cell) => headerLabels.has(cell))).size >= 2
+}
+
 interface ExcelData {
   fileName: string
   totalRows: number
@@ -667,10 +704,49 @@ export function ExcelReconciliationTab({
         }
       }
 
+      const isHeaderDataRow = (row: any[]): boolean => {
+        const normalizedCells = row.map((cell) =>
+          String(cell || '')
+            .trim()
+            .toUpperCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^A-Z0-9]/g, '')
+        )
+        const headerLabels = new Set([
+          'VAGAO',
+          'SERIE',
+          'SERIEVAGAO',
+          'BRUTO',
+          'PESOBRUTO',
+          'TARA',
+          'CHAVE',
+          'CHAVEDEACESSO',
+          'PESO',
+          'PESOSELECIONADO',
+          'PESONOTAVAGAO',
+          'DATA',
+          'DATAEMISSAO',
+          'NUMERO',
+          'NF',
+          'NFE',
+          'MERCADORIA',
+        ])
+        const matchingHeaders = new Set(normalizedCells.filter((cell) => headerLabels.has(cell)))
+        const wagonCellIsHeader =
+          vagaoColIndex !== -1 &&
+          ['VAGAO', 'SERIE', 'SERIEVAGAO', 'NUMVAGAO', 'NRVAGAO'].includes(
+            normalizedCells[vagaoColIndex] || ''
+          )
+
+        return matchingHeaders.size >= 2 || wagonCellIsHeader
+      }
+
       // Varredura das linhas da aba: Passo 1 - Mapear e acumular todos os rateios (PESO_NOTA_VAGAO) e TARA ÚNICA de cada vagão
       rows.forEach((row, rowIndex) => {
         const rowNumber = rowIndex + 1
         if (!Array.isArray(row)) return
+        if (isHeaderDataRow(row)) return
 
         let rowVagao = ''
         let rowPesoNotaVagao: number | null = null
@@ -734,6 +810,7 @@ export function ExcelReconciliationTab({
       rows.forEach((row, rowIndex) => {
         const rowNumber = rowIndex + 1
         if (!Array.isArray(row)) return
+        if (isHeaderDataRow(row)) return
 
         let rowVagao = ''
         let rowPesoNotaVagao: number | null = null
@@ -1034,6 +1111,32 @@ export function ExcelReconciliationTab({
     return null
   }
 
+  const getConfrontedWeight = (
+    file: ProcessedFile,
+    matchInfo: ExcelMatchInfo | null,
+    auditMap = auditResultsMap,
+    overridesMap = overrideWeightsMap
+  ) => {
+    const initialQuantity = getFileQuantidade(file)
+    const key = getNormalizedKey(file)
+    const isPdf =
+      file.isPdf ||
+      file.fileType === 'pdf' ||
+      file.fileName.toLowerCase().endsWith('.pdf') ||
+      !file.xmlContent?.startsWith('<?xml')
+    const quantity = isPdf
+      ? obterQuantidadeConferidaIA(
+          key || file.fileName,
+          initialQuantity,
+          auditMap,
+          overridesMap,
+          file.fileName
+        ).quantidade
+      : initialQuantity
+
+    return confrontWeights(matchInfo, quantity)
+  }
+
   const matchedResults = validFiles.filter((f) => {
     const key = getNormalizedKey(f)
     return !!getExcelMatchInfo(key)
@@ -1066,6 +1169,7 @@ export function ExcelReconciliationTab({
 
   const excelRowsWithoutFiles = excelData
     ? excelData.allRowsList.filter((r) => {
+        if (isExcelHeaderRowRecord(r)) return false
         if (r.key) {
           return !matchedExcelKeysSet.has(r.key) && !matchedExcelKeysSet.has('0' + r.key) && !(r.key.startsWith('0') && matchedExcelKeysSet.has(r.key.substring(1)))
         }
@@ -1087,8 +1191,7 @@ export function ExcelReconciliationTab({
     if (excelFilter === 'excel_only') return false
 
     if (excelFilter === 'weight_divergent') {
-      const qtd = getFileQuantidade(f)
-      const vWeight = confrontWeights(matchInfo, qtd)
+      const vWeight = getConfrontedWeight(f, matchInfo)
       if (vWeight.status !== 'DIVERGENTE') return false
     }
 
@@ -1927,8 +2030,8 @@ export function ExcelReconciliationTab({
       const destCNPJ = f.nfeData?.destinatario?.cpfCnpj || ''
       const emitCNPJ = f.nfeData?.emitente?.cnpj || ''
       const vCNPJ = f.nfeData?.verificacaoCNPJ || verifyChaveCNPJ(key, emitCNPJ, destCNPJ)
-      const qtdNota = getFileQuantidade(f)
-      const vWeight = confrontWeights(matchInfo, qtdNota)
+      const vWeight = getConfrontedWeight(f, matchInfo, currentAuditMap, overrideWeightsMap)
+      const qtdNota = vWeight.qtdNota
       const itemAudit = auditResultsMap[key || f.fileName]
       const pesoIaEncontrado = itemAudit?.pesoCorrigidoDoc !== undefined && itemAudit?.pesoCorrigidoDoc !== null
         ? itemAudit.pesoCorrigidoDoc
@@ -2150,22 +2253,20 @@ export function ExcelReconciliationTab({
       .filter((f) => {
         const key = getNormalizedKey(f)
         const matchInfo = getExcelMatchInfo(key)
-        const qtd = getFileQuantidade(f)
-        const vWeight = confrontWeights(matchInfo, qtd)
+        const vWeight = getConfrontedWeight(f, matchInfo, currentAuditMap, overrideWeightsMap)
         return vWeight.status === 'DIVERGENTE'
       })
       .map((f) => {
         const key = getNormalizedKey(f)
         const matchInfo = getExcelMatchInfo(key)
-        const qtdNota = getFileQuantidade(f)
-        const vWeight = confrontWeights(matchInfo, qtdNota)
+        const vWeight = getConfrontedWeight(f, matchInfo, currentAuditMap, overrideWeightsMap)
         return {
           'Arquivo': f.fileName,
           'Nº Nota': f.nfeData?.numero || '',
           'Chave de Acesso': key,
           'Linha no Excel': matchInfo?.row || '',
           'Vagão': matchInfo?.vagao || '',
-          'Peso na Nota': qtdNota,
+          'Peso na Nota': vWeight.qtdNota,
           'Peso no Excel': matchInfo?.pesoSelecionadoStr || '',
           'Diferença': vWeight.diferenca,
           'Detalhes': vWeight.detalhes,
@@ -2244,8 +2345,7 @@ export function ExcelReconciliationTab({
     const divergentFiles = validFiles.filter((f) => {
       const key = getNormalizedKey(f)
       const matchInfo = getExcelMatchInfo(key)
-      const qtd = getFileQuantidade(f)
-      const vWeight = confrontWeights(matchInfo, qtd)
+      const vWeight = getConfrontedWeight(f, matchInfo)
       return isMatchedWithDivergence(matchInfo, vWeight)
     })
 
@@ -2311,16 +2411,14 @@ export function ExcelReconciliationTab({
   const matchedWeightCount = validFiles.filter((f) => {
     const key = getNormalizedKey(f)
     const matchInfo = getExcelMatchInfo(key)
-    const qtd = getFileQuantidade(f)
-    const vWeight = confrontWeights(matchInfo, qtd)
+    const vWeight = getConfrontedWeight(f, matchInfo)
     return !!matchInfo && vWeight.status === 'CONFERE'
   }).length
 
   const divergentWeightCount = validFiles.filter((f) => {
     const key = getNormalizedKey(f)
     const matchInfo = getExcelMatchInfo(key)
-    const qtd = getFileQuantidade(f)
-    const vWeight = confrontWeights(matchInfo, qtd)
+    const vWeight = getConfrontedWeight(f, matchInfo)
     return isMatchedWithDivergence(matchInfo, vWeight)
   }).length
 
@@ -3162,8 +3260,8 @@ export function ExcelReconciliationTab({
                     const key = getNormalizedKey(f)
                     const matchInfo = getExcelMatchInfo(key)
                     const isMatched = !!matchInfo
-                    const qtdNota = getFileQuantidade(f)
-                    const vWeight = confrontWeights(matchInfo, qtdNota)
+                    const vWeight = getConfrontedWeight(f, matchInfo)
+                    const qtdNota = vWeight.qtdNota
                     const vCNPJ = f.nfeData?.verificacaoCNPJ || verifyChaveCNPJ(
                       f.nfeData?.chaveAcesso || '',
                       f.nfeData?.emitente?.cnpj || '',

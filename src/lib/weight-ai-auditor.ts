@@ -582,6 +582,7 @@ export function obterQuantidadeConferidaIA(
   let explicacao = 'Quantidade extraída inicialmente.'
   let foiCorrigido = false
   let modoUtilizado = 'PADRAO_SISTEMA'
+  let hasOverride = false
 
   // 1. Override manual
   if (overridesMap) {
@@ -591,14 +592,18 @@ export function obterQuantidadeConferidaIA(
       explicacao = 'Quantidade ajustada manualmente pelo operador.'
       foiCorrigido = overridesMap[idOrKey] !== initialQtd
       modoUtilizado = 'MANUAL'
+      hasOverride = true
     } else if (altKey && overridesMap[altKey] !== undefined) {
       rawQtd = overridesMap[altKey]
       status = 'AJUSTADO_MANUALMENTE'
       explicacao = 'Quantidade ajustada manualmente pelo operador.'
       foiCorrigido = overridesMap[altKey] !== initialQtd
       modoUtilizado = 'MANUAL'
+      hasOverride = true
     }
-  } else if (auditMap) {
+  }
+
+  if (!hasOverride && auditMap) {
     const audit = auditMap[idOrKey] || (altKey ? auditMap[altKey] : undefined)
     if (audit && audit.pesoCorrigidoDoc !== undefined && audit.pesoCorrigidoDoc !== null) {
       rawQtd = audit.pesoCorrigidoDoc
