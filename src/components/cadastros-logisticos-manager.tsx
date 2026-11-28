@@ -132,6 +132,8 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   const [destCidade, setDestCidade] = useState('')
   const [destUf, setDestUf] = useState('')
   const [destObservacoes, setDestObservacoes] = useState('')
+  const [isSavingDestinatario, setIsSavingDestinatario] = useState(false)
+  const [destSaveError, setDestSaveError] = useState('')
 
   // Formulário Transbordo
   const [transNome, setTransNome] = useState('')
@@ -159,6 +161,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   // Limpa formulário de Destinatário
   const openNewDestModal = () => {
     setEditingDest(null)
+    setDestSaveError('')
     setDestNome('')
     setDestNomenclatura('')
     setDestNomenclaturaRemetente('')
@@ -174,6 +177,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
 
   const openEditDestModal = (dest: CadastroDestinatario) => {
     setEditingDest(dest)
+    setDestSaveError('')
     setDestNome(dest.nome)
     setDestNomenclatura(dest.nomenclatura || '')
     setDestNomenclaturaRemetente(dest.nomenclaturaRemetente || '')
@@ -190,6 +194,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
   // Salvar Destinatário
   const handleSaveDestinatario = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (isSavingDestinatario) return
     if (!destNome.trim()) {
       onNotify?.('Informe o nome ou razão social do destinatário.', 'error')
       return
@@ -211,8 +216,10 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
       .filter(Boolean)
 
     let recipientChanged = false
+    let saveWarning = ''
+    setIsSavingDestinatario(true)
+    setDestSaveError('')
     try {
-      await saveDestinatarioContract(cleanCnpj, destContrato)
       recipientChanged =
         !editingDest?.isSistema ||
         destNome.trim().toUpperCase() !== editingDest.nome ||
@@ -225,7 +232,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
         destObservacoes.trim() !== (editingDest.observacoes || '')
 
       if (recipientChanged) {
-        await saveCustomDestinatario({
+        const recipientToSave = {
           id: editingDest && !editingDest.isSistema ? editingDest.id : undefined,
           nome: destNome.trim().toUpperCase(),
           nomenclatura: destNomenclatura.trim(),
@@ -237,25 +244,63 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
           uf: destUf.trim().toUpperCase(),
           observacoes: destObservacoes.trim(),
           ativo: true,
-        })
+        }
+        try {
+          await saveCustomDestinatario(recipientToSave)
+        } catch (err) {
+          const wasSavedLocally = getCustomDestinatarios().some((recipient) =>
+            recipient.cnpjPrincipal.replace(/\D/g, '') === cleanCnpj &&
+            recipient.nome === recipientToSave.nome &&
+            recipient.nomenclatura === recipientToSave.nomenclatura &&
+            recipient.nomenclaturaRemetente === recipientToSave.nomenclaturaRemetente &&
+            (recipient.cnpjsAdicionais || []).join(',') === adCnpjs.join(',') &&
+            recipient.aliases.join(',') === aliases.join(',') &&
+            recipient.cidade === recipientToSave.cidade &&
+            recipient.uf === recipientToSave.uf &&
+            recipient.observacoes === recipientToSave.observacoes
+          )
+          if (!wasSavedLocally) throw err
+          console.error('Destinatário salvo localmente, mas houve falha ao sincronizar com Firebase:', err)
+          saveWarning = 'Cadastro salvo neste dispositivo, mas não foi possível sincronizá-lo com o Firebase.'
+        }
+      }
+
+      const currentContract = editingDest?.contrato || ''
+      if (destContrato !== currentContract) {
+        try {
+          await saveDestinatarioContract(cleanCnpj, destContrato)
+        } catch (err) {
+          const savedContract = getAllDestinatarios().find(
+            (recipient) => recipient.cnpjPrincipal.replace(/\D/g, '') === cleanCnpj
+          )?.contrato || ''
+          if (savedContract !== destContrato) throw err
+          console.error('Contrato salvo localmente, mas houve falha ao sincronizar com Firebase:', err)
+          saveWarning = saveWarning
+            ? `${saveWarning} O contrato também ficou salvo apenas neste dispositivo.`
+            : 'Contrato salvo neste dispositivo, mas não foi possível sincronizá-lo com o Firebase.'
+        }
       }
 
     } catch (err) {
-      onNotify?.(
-        err instanceof Error
-          ? `Erro ao salvar/sincronizar destinatário: ${err.message}`
-          : 'Erro ao salvar/sincronizar destinatário.',
-        'error'
-      )
+      const message = err instanceof Error
+        ? `Erro ao salvar destinatário: ${err.message}`
+        : 'Erro ao salvar destinatário.'
+      setDestSaveError(message)
+      onNotify?.(message, 'error')
       return
+    } finally {
+      setIsSavingDestinatario(false)
     }
 
     setIsDestModalOpen(false)
     reloadData()
-    onNotify?.(editingDest?.isSistema && recipientChanged
-      ? `Personalização salva. O nome "${destNome.trim().toUpperCase()}" substituirá o padrão nas notas correspondentes.`
-      : `Destinatário "${destNome.trim().toUpperCase()}" e contrato salvos com sucesso.`,
-    'success')
+    onNotify?.(
+      saveWarning ||
+        (editingDest?.isSistema && recipientChanged
+          ? `Personalização salva. O nome "${destNome.trim().toUpperCase()}" substituirá o padrão nas notas correspondentes.`
+          : `Destinatário "${destNome.trim().toUpperCase()}" e contrato salvos com sucesso.`),
+      saveWarning ? 'warning' : 'success'
+    )
   }
 
   const updateBulkDestCell = (
@@ -1138,7 +1183,12 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
       )}
 
       {/* MODAL 1: CADASTRO / EDIÇÃO DE DESTINATÁRIO */}
-      <Dialog open={isDestModalOpen} onOpenChange={setIsDestModalOpen}>
+      <Dialog
+        open={isDestModalOpen}
+        onOpenChange={(open) => {
+          if (!isSavingDestinatario) setIsDestModalOpen(open)
+        }}
+      >
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1156,6 +1206,11 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
           </DialogHeader>
 
           <form onSubmit={handleSaveDestinatario} className="space-y-3.5 py-2">
+            {destSaveError && (
+              <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+                {destSaveError}
+              </div>
+            )}
             <div>
               <label className="text-xs font-bold text-zinc-700 dark:text-zinc-300 block mb-1">
                 Razão Social / Nome de Exibição <span className="text-rose-500">*</span>
@@ -1303,6 +1358,7 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
                 variant="outline"
                 size="sm"
                 onClick={() => setIsDestModalOpen(false)}
+                disabled={isSavingDestinatario}
                 className="text-xs"
               >
                 Cancelar
@@ -1310,9 +1366,15 @@ export function CadastrosLogisticosManager({ onNotify }: CadastrosLogisticosMana
               <Button
                 type="submit"
                 size="sm"
+                disabled={isSavingDestinatario}
                 className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white"
               >
-                {editingDest ? 'Salvar Alterações' : 'Cadastrar Destinatário'}
+                {isSavingDestinatario ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    Salvando...
+                  </span>
+                ) : editingDest ? 'Salvar Alterações' : 'Cadastrar Destinatário'}
               </Button>
             </DialogFooter>
           </form>

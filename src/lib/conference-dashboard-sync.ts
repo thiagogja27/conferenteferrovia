@@ -11,6 +11,7 @@ import {
 import {
   extractVagoesFromDocument,
   extractFolderName,
+  compareFolderSequence,
   getVagaoNumeralKey,
   TRANSBORDO_VAGAO_COLORS,
   type ExtractedVagao,
@@ -50,6 +51,7 @@ export interface ConferenceNoteSummary {
   placa?: string
   motorista?: string
   infCpl?: string
+  folderName?: string
   confrontoChaveXDest?: 'IGUAIS' | 'DIVERGENTES' | 'NÃO INFORMADO'
   isDivergentCNPJ?: boolean
   hasMissingLogistics?: boolean
@@ -84,6 +86,14 @@ export interface VagaoTransbordoSummary {
   color: string
   isMissing?: boolean
   vagoesDetails: VagaoDetailItem[]
+}
+
+export interface VagaoSequenciaSummary {
+  ordem: number
+  pasta: string
+  vagao: string
+  transbordo: string
+  totalNotas: number
 }
 
 export interface ChartCategoryItem {
@@ -134,9 +144,50 @@ export interface ConferenceDashboardSnapshot {
   produtos: ChartCategoryItem[]
   transbordos: ChartCategoryItem[]
   vagoesPorTransbordo: VagaoTransbordoSummary[]
+  vagoesEmSequencia: VagaoSequenciaSummary[]
 
   // Lista de todas as notas fiscais resumidas da sessão para drilldown e busca
   notes: ConferenceNoteSummary[]
+}
+
+export function buildVagoesEmSequencia(notes: ConferenceNoteSummary[]): VagaoSequenciaSummary[] {
+  const wagons = new Map<string, VagaoSequenciaSummary>()
+
+  for (const note of notes) {
+    const processedInNote = new Set<string>()
+    for (const wagon of note.vagoes || []) {
+      const key = getVagaoNumeralKey(wagon.numero || wagon.identificador)
+      const folder = note.folderName || note.fileName || 'Pasta não identificada'
+      const sequenceKey = `${folder.toLocaleUpperCase()}::${key}`
+      if (!key || processedInNote.has(sequenceKey)) continue
+      processedInNote.add(sequenceKey)
+
+      const existing = wagons.get(sequenceKey)
+      if (existing) {
+        existing.totalNotas += 1
+        if (
+          (!existing.transbordo || existing.transbordo === 'Não Informado') &&
+          note.transbordo &&
+          note.transbordo !== 'Não Informado'
+        ) {
+          existing.transbordo = note.transbordo
+        }
+        continue
+      }
+
+      wagons.set(sequenceKey, {
+        ordem: 0,
+        pasta: folder,
+        vagao: wagon.identificador,
+        transbordo: note.transbordo || 'Não Informado',
+        totalNotas: 1,
+      })
+    }
+  }
+
+  return Array.from(wagons.values())
+    .sort((a, b) => compareFolderSequence(a.pasta, b.pasta))
+    .map((wagon, index) => ({ ...wagon, ordem: index + 1 }))
 }
 
 const STORAGE_KEY_LATEST = 'vlic_latest_conference_dashboard'
@@ -531,6 +582,7 @@ export function buildConferenceDashboardSnapshot(
       allVagoesStr,
       placa,
       infCpl: infCpl.substring(0, 300),
+      folderName: folderName || f.fileName || 'Pasta não identificada',
       confrontoChaveXDest,
       isDivergentCNPJ,
       hasMissingLogistics,
@@ -693,6 +745,7 @@ export function buildConferenceDashboardSnapshot(
     produtos: toChartData(produtoCount),
     transbordos: toChartData(transbordoCount),
     vagoesPorTransbordo,
+    vagoesEmSequencia: buildVagoesEmSequencia(notesList),
     notes: notesList,
   }
 }
@@ -707,6 +760,7 @@ export function sanitizeSnapshot(data: any): ConferenceDashboardSnapshot | null 
 
   const notesList: ConferenceNoteSummary[] = Array.isArray(data.notes)
     ? data.notes.map((n: any) => ({
+        fileName: n?.fileName || 'Nota Fiscal',
         chave: n?.chave || '',
         numero: n?.numero || '',
         serie: n?.serie || '',
@@ -719,6 +773,7 @@ export function sanitizeSnapshot(data: any): ConferenceDashboardSnapshot | null 
         terminal: n?.terminal || '',
         transbordo: n?.transbordo || '',
         vagoes: Array.isArray(n?.vagoes) ? n.vagoes : [],
+        folderName: n?.folderName || n?.fileName || 'Pasta não identificada',
         primaryVagao: n?.primaryVagao || '',
         allVagoesStr: n?.allVagoesStr || '',
         pesoNum: Number(n?.pesoNum) || 0,
@@ -780,6 +835,7 @@ export function sanitizeSnapshot(data: any): ConferenceDashboardSnapshot | null 
     produtos: Array.isArray(data.produtos) ? data.produtos : [],
     transbordos: Array.isArray(data.transbordos) ? data.transbordos : [],
     vagoesPorTransbordo,
+    vagoesEmSequencia: buildVagoesEmSequencia(notesList),
     notes: notesList,
   }
 }

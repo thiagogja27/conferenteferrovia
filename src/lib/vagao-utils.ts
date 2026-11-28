@@ -108,6 +108,10 @@ export function extractFolderName(pathOrItem?: string | { fileName?: string; fil
   return null
 }
 
+export function compareFolderSequence(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+}
+
 /**
  * Normaliza o identificador do vagão para um padrão limpo (Ex: "HPT-0329479" ou "0329479")
  */

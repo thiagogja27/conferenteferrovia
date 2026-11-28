@@ -47,7 +47,6 @@ import * as XLSX from 'xlsx'
 import {
   type ConferenceDashboardSnapshot,
   type ConferenceNoteSummary,
-  type VagaoTransbordoSummary,
   type ChartCategoryItem,
   subscribeToLatestConferenceDashboard,
   subscribeToConferenceDashboardHistory,
@@ -212,6 +211,9 @@ export function ConferenceMirrorDashboard() {
         (h.operatorName && h.operatorName.toLowerCase().includes(q)) ||
         (h.dateFormatted && h.dateFormatted.includes(q)) ||
         (Array.isArray(h.vagoesPorTransbordo) && h.vagoesPorTransbordo.some((t) => t?.fullName && t.fullName.toLowerCase().includes(q))) ||
+        (Array.isArray(h.vagoesEmSequencia) && h.vagoesEmSequencia.some((v) =>
+          `${v?.pasta || ''} ${v?.vagao || ''} ${v?.transbordo || ''}`.toLowerCase().includes(q)
+        )) ||
         (Array.isArray(h.destinatarios) && h.destinatarios.some((d) => d?.fullName && d.fullName.toLowerCase().includes(q)))
       )
     })
@@ -393,13 +395,12 @@ export function ConferenceMirrorDashboard() {
 
     // Aba de resumo por transbordo/vagões
     const wsVagoes = XLSX.utils.json_to_sheet(
-      (activeSnapshot.vagoesPorTransbordo || []).map((v) => ({
-        Transbordo: v.fullName || '',
-        'Total Vagões': v.totalVagoes || 0,
-        'Vagões Identificados': Array.isArray(v.vagoesList) ? v.vagoesList.join(', ') : '',
-        'Total Notas': v.totalNotas || 0,
-        'Peso Total (kg)': v.pesoTotalKg || 0,
-        'Valor Total (R$)': v.valorTotal || 0,
+      (activeSnapshot.vagoesEmSequencia || []).map((v) => ({
+        Ordem: v.ordem,
+        Pasta: v.pasta,
+        'Placa / Vagão': v.vagao,
+        Transbordo: v.transbordo,
+        'Total Notas': v.totalNotas,
       }))
     )
     XLSX.utils.book_append_sheet(wb, wsVagoes, 'Resumo Vagões Transbordo')
@@ -933,8 +934,8 @@ export function ConferenceMirrorDashboard() {
                   {activeSnapshot.totalVagoesUnicos || 0}
                 </div>
                 <p className="text-[11px] text-zinc-500 mt-1">
-                  {Array.isArray(activeSnapshot.vagoesPorTransbordo) && activeSnapshot.vagoesPorTransbordo.length > 0
-                    ? `${activeSnapshot.vagoesPorTransbordo.length} transbordo(s)`
+                  {Array.isArray(activeSnapshot.vagoesEmSequencia) && activeSnapshot.vagoesEmSequencia.length > 0
+                    ? `${activeSnapshot.vagoesEmSequencia.length} placa(s) na sequência das pastas`
                     : 'Sem vagões'}
                 </p>
               </CardContent>
@@ -971,165 +972,57 @@ export function ConferenceMirrorDashboard() {
                   </div>
                   <div>
                     <CardTitle className="text-base font-bold flex items-center gap-2 text-zinc-900 dark:text-zinc-100 flex-wrap">
-                      <span>Quantidade de Vagões por Transbordo</span>
-                      {(activeSnapshot.totalVagoesUnicos || 0) > 0 && (
+                      <span>Vagões por Transbordo — Sequência das Pastas</span>
+                      {(activeSnapshot.vagoesEmSequencia || []).length > 0 && (
                         <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
-                          {activeSnapshot.totalVagoesUnicos} vagão(ões) único(s)
+                          {(activeSnapshot.vagoesEmSequencia || []).length} pasta(s) / placa(s)
                         </span>
                       )}
                     </CardTitle>
                     <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                      {activeSnapshot.isDerivedFromFolders
-                        ? 'Contagem calculada a partir das pastas inputadas no Painel de Conferência'
-                        : 'Distribuição e volume de vagões ferroviários identificados em cada ponto de transbordo'}
+                      Placas únicas na ordem das pastas/PDFs, sem agrupamento por transbordo.
                     </p>
                   </div>
                 </div>
 
                 <span className="text-[11px] font-normal text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950 px-2.5 py-1 rounded-md border border-amber-200 dark:border-amber-800 shrink-0">
-                  Clique nas barras para filtrar
+                  Transbordo associado a cada placa
                 </span>
               </div>
             </CardHeader>
 
             <CardContent className="pt-4 space-y-5">
-              {!Array.isArray(activeSnapshot.vagoesPorTransbordo) || activeSnapshot.vagoesPorTransbordo.length === 0 ? (
+              {!Array.isArray(activeSnapshot.vagoesEmSequencia) || activeSnapshot.vagoesEmSequencia.length === 0 ? (
                 <div className="py-8 px-4 text-center rounded-xl bg-zinc-50/50 dark:bg-zinc-900/50 border border-dashed border-zinc-200 dark:border-zinc-800">
                   <TrainTrack className="h-8 w-8 text-zinc-400 mx-auto mb-2 opacity-60" />
                   <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                    Nenhum vagão ferroviário identificado nesta conferência.
+                    Nenhum vagão ou placa identificado nesta conferência.
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                  {/* Gráfico de Barras de Vagões por Transbordo */}
-                  <div className="lg:col-span-6 h-[280px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={activeSnapshot.vagoesPorTransbordo || []}
-                        layout="vertical"
-                        onClick={(state: any) => {
-                          if (state && state.activePayload && state.activePayload.length > 0) {
-                            handleChartClick('Vagões no Transbordo', state.activePayload[0].payload)
-                          }
-                        }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis type="number" allowDecimals={false} />
-                        <YAxis dataKey="name" type="category" width={150} tick={{ fontSize: 11 }} />
-                        <Tooltip
-                          content={({ active, payload }) => {
-                            if (active && payload && payload.length > 0) {
-                              const data = payload[0].payload as VagaoTransbordoSummary
-                              return (
-                                <div className="bg-white dark:bg-zinc-900 p-3 rounded-xl shadow-xl border border-zinc-200 dark:border-zinc-800 text-xs space-y-1.5 z-50 max-w-xs">
-                                  <div className="font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                                    <span
-                                      className="inline-block w-3 h-3 rounded-full shrink-0"
-                                      style={{ backgroundColor: data.color || '#f59e0b' }}
-                                    />
-                                    Transbordo: {data.fullName}
-                                  </div>
-                                  <div className="text-amber-600 dark:text-amber-400 font-bold text-sm">
-                                    {data.totalVagoes} vagão(ões) único(s)
-                                  </div>
-                                  <div className="text-zinc-600 dark:text-zinc-400 text-[11px]">
-                                    {data.totalNotas} nota(s) vinculada(s) • {data.pesoTotalFormatted} • {data.valorTotalFormatted}
-                                  </div>
-                                  {Array.isArray(data.vagoesList) && data.vagoesList.length > 0 && (
-                                    <div className="pt-1 border-t border-zinc-100 dark:border-zinc-800">
-                                      <span className="text-[10px] text-zinc-400 uppercase font-semibold block mb-1">
-                                        Vagões:
-                                      </span>
-                                      <div className="flex flex-wrap gap-1">
-                                        {data.vagoesList.slice(0, 10).map((v, i) => (
-                                          <span
-                                            key={i}
-                                            className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-mono text-[10px]"
-                                          >
-                                            {v}
-                                          </span>
-                                        ))}
-                                        {data.vagoesList.length > 10 && (
-                                          <span className="text-[10px] text-zinc-400">
-                                            +{data.vagoesList.length - 10} mais...
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            }
-                            return null
-                          }}
-                        />
-                        <Bar
-                          dataKey="totalVagoes"
-                          className="cursor-pointer hover:opacity-80 transition-opacity"
-                          onClick={(entry) => handleChartClick('Vagões no Transbordo', entry)}
-                        >
-                          {(activeSnapshot.vagoesPorTransbordo || []).map((entry, index) => (
-                            <Cell key={`vag-trans-cell-${index}`} fill={entry.color || '#f59e0b'} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  {/* Resumo e Lista de Vagões Identificados */}
-                  <div className="lg:col-span-6 space-y-3">
-                    <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 flex items-center justify-between">
-                      <span>Detalhamento por Ponto de Transbordo</span>
-                      <span className="text-[11px] text-zinc-400">
-                        {(activeSnapshot.vagoesPorTransbordo || []).length} local(is)
-                      </span>
-                    </div>
-
-                    <div className="max-h-[250px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                      {(activeSnapshot.vagoesPorTransbordo || []).map((trans, idx) => (
-                        <div
-                          key={idx}
-                          onClick={() => handleChartClick('Vagões no Transbordo', trans)}
-                          className="p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/70 hover:border-amber-400 dark:hover:border-amber-700 transition-all cursor-pointer space-y-2"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <span
-                                className="w-2.5 h-2.5 rounded-full shrink-0"
-                                style={{ backgroundColor: trans.color }}
-                              />
-                              <span className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                                {trans.fullName}
-                              </span>
-                            </div>
-                            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300 font-mono">
-                              {trans.totalVagoes} vagão(ões)
-                            </span>
-                          </div>
-
-                          <div className="flex items-center gap-3 text-[11px] text-zinc-500 dark:text-zinc-400">
-                            <span>{trans.totalNotas} nota(s)</span>
-                            <span>•</span>
-                            <span>{trans.pesoTotalFormatted}</span>
-                            <span>•</span>
-                            <span>{trans.valorTotalFormatted}</span>
-                          </div>
-
-                          <div className="flex flex-wrap gap-1 pt-1 border-t border-zinc-100 dark:border-zinc-800">
-                            {(trans.vagoesList || []).map((vag, vIdx) => (
-                              <span
-                                key={vIdx}
-                                className="inline-flex items-center px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 text-[10px] font-mono font-medium border border-zinc-200 dark:border-zinc-700"
-                              >
-                                {vag}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
+                <div className="max-h-[360px] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+                  <table className="min-w-full text-xs">
+                    <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 uppercase text-[10px]">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Ordem</th>
+                        <th className="px-3 py-2 text-left">Pasta / Arquivo</th>
+                        <th className="px-3 py-2 text-left">Placa / Vagão</th>
+                        <th className="px-3 py-2 text-left">Transbordo</th>
+                        <th className="px-3 py-2 text-center">Notas</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                      {activeSnapshot.vagoesEmSequencia.map((item) => (
+                        <tr key={`${item.ordem}-${item.vagao}`} className="bg-white dark:bg-zinc-900">
+                          <td className="px-3 py-2 font-mono text-zinc-500">{item.ordem}</td>
+                          <td className="px-3 py-2 font-medium">{item.pasta}</td>
+                          <td className="px-3 py-2 font-mono font-bold">{item.vagao}</td>
+                          <td className="px-3 py-2">{item.transbordo || 'Não Informado'}</td>
+                          <td className="px-3 py-2 text-center">{item.totalNotas}</td>
+                        </tr>
                       ))}
-                    </div>
-                  </div>
+                    </tbody>
+                  </table>
                 </div>
               )}
             </CardContent>

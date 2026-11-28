@@ -74,6 +74,7 @@ import {
 import {
   extractVagoesFromDocument,
   extractFolderName,
+  compareFolderSequence,
   getVagaoNumeralKey,
   TRANSBORDO_VAGAO_COLORS,
   type ExtractedVagao,
@@ -528,6 +529,10 @@ export function Dashboard({ files }: DashboardProps) {
       >
     >()
     const allUniqueVagoesGlobal = new Set<string>()
+    const vagoesEmSequenciaMap = new Map<
+      string,
+      { identificador: string; pasta: string; transbordo: string; files: DashboardFileItem[] }
+    >()
     const allFilesWithWagons: DashboardFileItem[] = []
     let hasFolderDerivedWagons = false
     let hasDocExtractedWagons = false
@@ -577,6 +582,25 @@ export function Dashboard({ files }: DashboardProps) {
           processedVagKeysInNote.add(numKey)
 
           allUniqueVagoesGlobal.add(numKey)
+
+          const folderName = extractFolderName(f) || f.fileName || 'Pasta não identificada'
+          const sequenceKey = `${folderName.toLocaleUpperCase()}::${numKey}`
+          if (!vagoesEmSequenciaMap.has(sequenceKey)) {
+            vagoesEmSequenciaMap.set(sequenceKey, {
+              identificador: vag.identificador,
+              pasta: folderName,
+              transbordo: transKey,
+              files: [],
+            })
+          }
+          const sequencedWagon = vagoesEmSequenciaMap.get(sequenceKey)!
+          if (
+            (sequencedWagon.transbordo === 'Não Informado' || !sequencedWagon.transbordo) &&
+            transKey !== 'Não Informado'
+          ) {
+            sequencedWagon.transbordo = transKey
+          }
+          if (!sequencedWagon.files.includes(f)) sequencedWagon.files.push(f)
 
           if (!vagoesMapForTransbordo.has(numKey)) {
             vagoesMapForTransbordo.set(numKey, {
@@ -743,6 +767,10 @@ export function Dashboard({ files }: DashboardProps) {
 
     const totalAdjustedByAI = Object.keys(logisticsOverrides).length
 
+    const vagoesEmSequencia = Array.from(vagoesEmSequenciaMap.values())
+      .sort((a, b) => compareFolderSequence(a.pasta, b.pasta))
+      .map((vagao, index) => ({ ordem: index + 1, ...vagao }))
+
     // Construção dos dados do gráfico e tabela de Vagões por Transbordo
     const vagoesPorTransbordo = Array.from(transbordoVagoesMap.entries())
       .map(([transbordo, vagoesMap], index) => {
@@ -822,6 +850,7 @@ export function Dashboard({ files }: DashboardProps) {
       produtos: toChartData(produtoCount, produtoFiles),
       transbordos: toChartData(transbordoCount, transbordoFiles),
       vagoesPorTransbordo,
+      vagoesEmSequencia,
       totalVagoesUnicos: allUniqueVagoesGlobal.size,
       isDerivedFromFolders: hasFolderDerivedWagons && !hasDocExtractedWagons,
       hasFolderDerivedWagons,
@@ -1594,197 +1623,62 @@ export function Dashboard({ files }: DashboardProps) {
               </div>
               <div>
                 <CardTitle className="text-base font-bold flex items-center gap-2 text-zinc-900 dark:text-zinc-100 flex-wrap">
-                  <span>Quantidade de Vagões por Transbordo</span>
-                  {stats.totalVagoesUnicos > 0 && (
+                  <span>Vagões por Transbordo — Sequência das Pastas</span>
+                  {stats.vagoesEmSequencia.length > 0 && (
                     <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
-                      {stats.totalVagoesUnicos} {stats.isDerivedFromFolders ? "pasta(s) / vagão(ões)" : "vagão(ões) único(s)"}
+                      {stats.vagoesEmSequencia.length} pasta(s) / placa(s)
                     </span>
                   )}
                 </CardTitle>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                  {stats.isDerivedFromFolders
-                    ? "Contagem de vagões calculada com base na quantidade de pastas inputadas (sem placas identificadas nos documentos)"
-                    : "Distribuição e contagem de vagões ferroviários identificados em cada local de transbordo (DCL, DANFEs, XMLs ou pastas)"}
+                  A lista segue a ordem das pastas/PDFs; cada placa aparece uma vez com seu transbordo.
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
               <span className="text-[11px] font-normal text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950 px-2.5 py-1 rounded-md border border-amber-200 dark:border-amber-800">
-                Clique nas barras ou vagões para filtrar
+                Sem agrupamento ou ordenação por transbordo
               </span>
             </div>
           </div>
         </CardHeader>
 
         <CardContent className="pt-4 space-y-5">
-          {stats.vagoesPorTransbordo.length === 0 ? (
+          {stats.vagoesEmSequencia.length === 0 ? (
             <div className="py-8 px-4 text-center rounded-xl bg-zinc-50/50 dark:bg-zinc-900/50 border border-dashed border-zinc-200 dark:border-zinc-800">
               <TrainTrack className="h-8 w-8 text-zinc-400 mx-auto mb-2 opacity-60" />
               <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-                Nenhum vagão ferroviário identificado nas notas atuais.
+                Nenhum vagão ou placa identificado nas notas atuais.
               </p>
               <p className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-1 max-w-lg mx-auto">
-                Quando carregar documentos com vagão (DCLs da Rumo, DANFEs com Série/Cód. Vagão ou XMLs CT-e/MDF-e/NF-e com identificador de vagão), os vagões serão agrupados e contabilizados por transbordo aqui automaticamente.
+                Ao carregar PDFs/XMLs ou pastas, as placas serão listadas na sequência de entrada junto ao transbordo relacionado.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* Gráfico de Barras de Vagões por Transbordo */}
-              <div className="lg:col-span-6 h-[280px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={stats.vagoesPorTransbordo}
-                    layout="vertical"
-                    onClick={(state: any) => {
-                      if (state && state.activePayload && state.activePayload.length > 0) {
-                        handleChartClick("Vagões no Transbordo", state.activePayload[0].payload)
-                      }
-                    }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis type="number" allowDecimals={false} />
-                    <YAxis
-                      dataKey="name"
-                      type="category"
-                      width={160}
-                      tick={{ fontSize: 11 }}
-                    />
-                    <Tooltip
-                      content={({ active, payload }) => {
-                        if (active && payload && payload.length > 0) {
-                          const data = payload[0].payload
-                          return (
-                            <div className="bg-white dark:bg-zinc-900 p-3 rounded-xl shadow-xl border border-zinc-200 dark:border-zinc-800 text-xs space-y-1.5 z-50 max-w-xs">
-                              <div className="font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
-                                <span
-                                  className="inline-block w-3 h-3 rounded-full shrink-0"
-                                  style={{ backgroundColor: data.color || "#f59e0b" }}
-                                />
-                                Transbordo: {data.fullName}
-                              </div>
-                              <div className="text-amber-600 dark:text-amber-400 font-bold text-sm">
-                                {data.totalVagoes} vagão(ões) único(s)
-                              </div>
-                              <div className="text-zinc-600 dark:text-zinc-400 text-[11px]">
-                                {data.totalNotas} nota(s) vinculada(s) • {data.pesoTotalFormatted}
-                              </div>
-                              {data.vagoesList && data.vagoesList.length > 0 && (
-                                <div className="pt-1 border-t border-zinc-100 dark:border-zinc-800">
-                                  <span className="text-[10px] text-zinc-400 uppercase font-semibold block mb-1">
-                                    Vagões Identificados:
-                                  </span>
-                                  <div className="flex flex-wrap gap-1">
-                                    {data.vagoesList.slice(0, 8).map((vag: string, idx: number) => (
-                                      <span
-                                        key={idx}
-                                        className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-mono text-[10px] border border-amber-200 dark:border-amber-800"
-                                      >
-                                        {vag}
-                                      </span>
-                                    ))}
-                                    {data.vagoesList.length > 8 && (
-                                      <span className="text-[10px] text-zinc-500 font-medium">
-                                        +{data.vagoesList.length - 8} mais
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          )
-                        }
-                        return null
-                      }}
-                    />
-                    <Bar
-                      dataKey="value"
-                      className="cursor-pointer hover:opacity-80 transition-opacity"
-                      onClick={(entry) => handleChartClick("Vagões no Transbordo", entry)}
-                    >
-                      {stats.vagoesPorTransbordo.map((entry, index) => (
-                        <Cell
-                          key={`vag-trans-cell-${index}`}
-                          fill={entry.color || TRANSBORDO_VAGAO_COLORS[index % TRANSBORDO_VAGAO_COLORS.length]}
-                        />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Lista Detalhada de Transbordos com seus Vagões */}
-              <div className="lg:col-span-6 space-y-3 max-h-[280px] overflow-y-auto pr-1">
-                {stats.vagoesPorTransbordo.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 shadow-xs space-y-2 hover:border-amber-300 dark:hover:border-amber-700 transition-all"
-                  >
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: item.color || "#f59e0b" }}
-                        />
-                        <span className="font-bold text-xs text-zinc-900 dark:text-zinc-100">
-                          {item.fullName}
-                        </span>
-                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300">
-                          {item.totalVagoes} vagão(ões)
-                        </span>
-                      </div>
-
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          handleChartClick("Vagões no Transbordo", {
-                            fullName: `${item.fullName} (${item.totalVagoes} vagões)`,
-                            relatedFiles: item.relatedFiles,
-                          })
-                        }
-                        className="h-6 px-2 text-[11px] font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950 cursor-pointer"
-                      >
-                        Ver {item.totalNotas} Notas ({item.pesoTotalFormatted})
-                      </Button>
-                    </div>
-
-                    {/* Chips de vagões identificados */}
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {item.vagoesDetails.map((vagDetail, vIdx) => (
-                        <button
-                          key={vIdx}
-                          type="button"
-                          onClick={() => {
-                            setSelectedGroup({
-                              category: vagDetail.isFolder
-                                ? `Pasta ${vagDetail.vagao} em ${item.fullName}`
-                                : `Vagão ${vagDetail.vagao} em ${item.fullName}`,
-                              fullName: `${vagDetail.vagao} (${vagDetail.totalNotas} notas • ${vagDetail.pesoFormatted})`,
-                              files: vagDetail.files,
-                            })
-                            setModalSearch("")
-                            setExpandedIndex(null)
-                          }}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-50 dark:bg-amber-950/70 border border-amber-200 dark:border-amber-800 text-[11px] font-mono text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900 transition-colors cursor-pointer"
-                          title={`${vagDetail.isFolder ? "Pasta" : "Vagão"} ${vagDetail.vagao}: ${vagDetail.totalNotas} nota(s) vinculada(s). Clique para ver notas.`}
-                        >
-                          {vagDetail.isFolder ? (
-                            <Folder className="h-3 w-3 text-amber-600 shrink-0" />
-                          ) : (
-                            <TrainFront className="h-3 w-3 text-amber-600 shrink-0" />
-                          )}
-                          <strong>{vagDetail.vagao}</strong>
-                          <span className="text-[10px] text-amber-700/70 dark:text-amber-300/70 font-sans">
-                            ({vagDetail.totalNotas} NF)
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+            <div className="max-h-[360px] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+              <table className="min-w-full text-xs">
+                <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 uppercase text-[10px]">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Ordem</th>
+                    <th className="px-3 py-2 text-left">Pasta / Arquivo</th>
+                    <th className="px-3 py-2 text-left">Placa / Vagão</th>
+                    <th className="px-3 py-2 text-left">Transbordo</th>
+                    <th className="px-3 py-2 text-center">Notas</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                  {stats.vagoesEmSequencia.map((item) => (
+                    <tr key={`${item.ordem}-${item.identificador}`} className="bg-white dark:bg-zinc-900">
+                      <td className="px-3 py-2 font-mono text-zinc-500">{item.ordem}</td>
+                      <td className="px-3 py-2 font-medium">{item.pasta}</td>
+                      <td className="px-3 py-2 font-mono font-bold">{item.identificador}</td>
+                      <td className="px-3 py-2">{item.transbordo || "Não Informado"}</td>
+                      <td className="px-3 py-2 text-center">{item.files.length}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </CardContent>
